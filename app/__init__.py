@@ -22,6 +22,7 @@ def create_app(config_override: dict | None = None) -> Flask:
     # Ensure instance and upload directories exist
     os.makedirs(app.instance_path, exist_ok=True)
     os.makedirs(app.config["UPLOAD_DIR"], exist_ok=True)
+    os.makedirs(app.config["JOB_LOGS_DIR"], exist_ok=True)
 
     # Initialize extensions
     db.init_app(app)

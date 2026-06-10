@@ -183,6 +183,7 @@ def submit_job(
     submit_dict: dict[str, str],
     count: int = 1,
     itemdata: list[dict[str, str]] | None = None,
+    log_dir: str | None = None,
 ) -> int:
     """Submit a job to the local schedd.
 
@@ -191,11 +192,19 @@ def submit_job(
         count: Number of procs to queue.
         itemdata: Optional list of dicts for queue-from-list (each dict
                   is a set of variable assignments for one proc).
+        log_dir: Optional path to a directory where logs, stdout, and stderr will be stored.
 
     Returns:
         The ClusterId of the submitted job.
     """
-    sub = htcondor.Submit(submit_dict)
+    sub_dict = dict(submit_dict)
+    if log_dir:
+        import os
+        sub_dict["output"] = os.path.join(log_dir, "job_$(ClusterId)_$(ProcId).out")
+        sub_dict["error"] = os.path.join(log_dir, "job_$(ClusterId)_$(ProcId).err")
+        sub_dict["log"] = os.path.join(log_dir, "job_$(ClusterId).log")
+
+    sub = htcondor.Submit(sub_dict)
     schedd = get_schedd()
     if itemdata:
         result = schedd.submit(sub, itemdata=iter(itemdata))
@@ -206,16 +215,23 @@ def submit_job(
     return cluster_id
 
 
-def submit_from_file(file_content: str) -> tuple[int, int]:
+def submit_from_file(file_content: str, log_dir: str | None = None) -> tuple[int, int]:
     """Submit a job from raw submit file content.
 
     Args:
         file_content: The text content of a .sub file.
+        log_dir: Optional path to a directory where logs, stdout, and stderr will be stored.
 
     Returns:
         Tuple of (cluster_id, num_procs).
     """
     sub = htcondor.Submit(file_content)
+    if log_dir:
+        import os
+        sub["output"] = os.path.join(log_dir, "job_$(ClusterId)_$(ProcId).out")
+        sub["error"] = os.path.join(log_dir, "job_$(ClusterId)_$(ProcId).err")
+        sub["log"] = os.path.join(log_dir, "job_$(ClusterId).log")
+
     schedd = get_schedd()
     result = schedd.submit(sub)
     cluster_id = result.cluster()
@@ -254,40 +270,71 @@ def act_on_job(action: str, job_spec: str) -> dict[str, Any]:
     }
 
 
-def get_job_log(cluster_id: int, proc_id: int = 0, tail: int = 200) -> str:
-    """Try to read the job's log file.
+def get_job_file_content(file_path: str, tail: int = 500) -> str:
+    """Safely reads the last N lines of a file path."""
+    import os
+    if not file_path or not os.path.exists(file_path):
+        return ""
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        return "".join(lines[-tail:])
+    except Exception as e:
+        return f"Error reading file {file_path}: {e}"
 
-    This searches for the log file by querying the job's ClassAd for
-    the UserLog attribute.
 
-    Args:
-        cluster_id: The ClusterId.
-        proc_id: The ProcId (default 0).
-        tail: Number of lines from the end to return.
+def get_job_log_file_paths(cluster_id: int, proc_id: int = 0) -> dict[str, str]:
+    """Retrieve log, stdout, and stderr file paths for a job."""
+    paths = {"log": "", "out": "", "err": ""}
+    # Try database first
+    try:
+        from app.models import JobSubmission
+        submission = JobSubmission.query.filter_by(cluster_id=cluster_id).first()
+        if submission and submission.log_dir:
+            import os
+            log_dir = submission.log_dir
+            paths["log"] = os.path.join(log_dir, f"job_{cluster_id}.log")
+            paths["out"] = os.path.join(log_dir, f"job_{cluster_id}_{proc_id}.out")
+            paths["err"] = os.path.join(log_dir, f"job_{cluster_id}_{proc_id}.err")
+            if os.path.exists(paths["log"]):
+                return paths
+    except Exception as e:
+        logger.error("Error querying JobSubmission DB: %s", e)
 
-    Returns:
-        The log content as a string, or an error message.
-    """
+    # Fallback to ClassAd query
     try:
         jobs = query_jobs(
             constraint=f"ClusterId == {cluster_id} && ProcId == {proc_id}",
-            projection=["UserLog"],
+            projection=["UserLog", "Out", "Err"],
         )
         if not jobs:
-            # Try history
             jobs = query_history(
                 constraint=f"ClusterId == {cluster_id} && ProcId == {proc_id}",
-                projection=["UserLog"],
+                projection=["UserLog", "Out", "Err"],
                 limit=1,
             )
-        if not jobs or "UserLog" not in jobs[0]:
-            return f"No log file found for job {cluster_id}.{proc_id}"
-
-        log_path = jobs[0]["UserLog"]
-        with open(log_path) as f:
-            lines = f.readlines()
-        return "".join(lines[-tail:])
-    except FileNotFoundError:
-        return f"Log file not found on disk for job {cluster_id}.{proc_id}"
+        if jobs:
+            job = jobs[0]
+            if "UserLog" in job:
+                paths["log"] = job["UserLog"]
+            if "Out" in job:
+                paths["out"] = job["Out"]
+            if "Err" in job:
+                paths["err"] = job["Err"]
     except Exception as e:
-        return f"Error reading log: {e}"
+        logger.error("Error querying ClassAds for log paths: %s", e)
+
+    return paths
+
+
+def get_job_log(cluster_id: int, proc_id: int = 0, tail: int = 200) -> str:
+    """Try to read the job's log file using resolved paths."""
+    paths = get_job_log_file_paths(cluster_id, proc_id)
+    log_path = paths.get("log")
+    if not log_path:
+        return f"No log file path found for job {cluster_id}.{proc_id}"
+    
+    content = get_job_file_content(log_path, tail=tail)
+    if not content:
+        return f"Log file not found on disk or empty for job {cluster_id}.{proc_id} at {log_path}"
+    return content

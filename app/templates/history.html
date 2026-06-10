@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}History — Condor Web UI{% endblock %}
+
+{% block content %}
+<section class="tab-panel active" id="panel-history">
+    <div class="page-header">
+        <h1>Job History</h1>
+        <div class="header-actions">
+            <input type="text" class="search-input" id="history-search" placeholder="Search history...">
+            <select class="filter-select" id="history-limit">
+                <option value="50">Last 50</option>
+                <option value="100" selected>Last 100</option>
+                <option value="200">Last 200</option>
+                <option value="500">Last 500</option>
+            </select>
+            <button class="btn btn-ghost" id="refresh-history-btn" title="Refresh">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="23,4 23,10 17,10" />
+                    <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10" />
+                </svg>
+            </button>
+        </div>
+    </div>
+    <div class="card">
+        <div class="table-container">
+            <table class="data-table" id="history-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Owner</th>
+                        <th>Executable</th>
+                        <th>Status</th>
+                        <th>Exit Code</th>
+                        <th>Submitted</th>
+                        <th>Completed</th>
+                        <th>Wall Time</th>
+                    </tr>
+                </thead>
+                <tbody id="history-tbody">
+                    <tr class="empty-row">
+                        <td colspan="8">Click refresh to load history</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/history.js"></script>
+{% endblock %}

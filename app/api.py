@@ -132,11 +132,16 @@ def submit():
     name = data.get("name", "Untitled Job")
 
     try:
+        import uuid
+        job_uuid = f"job_{uuid.uuid4().hex}"
+        log_dir = os.path.join(current_app.config["JOB_LOGS_DIR"], job_uuid)
+        os.makedirs(log_dir, exist_ok=True)
+
         if itemdata:
-            cluster_id = submit_job(submit_dict, count=len(itemdata), itemdata=itemdata)
+            cluster_id = submit_job(submit_dict, count=len(itemdata), itemdata=itemdata, log_dir=log_dir)
             num_procs = len(itemdata)
         else:
-            cluster_id = submit_job(submit_dict, count=count)
+            cluster_id = submit_job(submit_dict, count=count, log_dir=log_dir)
             num_procs = count
 
         # Record in database
@@ -145,6 +150,7 @@ def submit():
             name=name,
             submit_description=json.dumps(submit_dict),
             num_procs=num_procs,
+            log_dir=log_dir,
         )
         db.session.add(submission)
         db.session.commit()
@@ -172,13 +178,20 @@ def submit_file():
 
     try:
         content = file.read().decode("utf-8")
-        cluster_id, num_procs = submit_from_file(content)
+        
+        import uuid
+        job_uuid = f"job_{uuid.uuid4().hex}"
+        log_dir = os.path.join(current_app.config["JOB_LOGS_DIR"], job_uuid)
+        os.makedirs(log_dir, exist_ok=True)
+
+        cluster_id, num_procs = submit_from_file(content, log_dir=log_dir)
 
         submission = JobSubmission(
             cluster_id=cluster_id,
             name=name,
             submit_description=content,
             num_procs=num_procs,
+            log_dir=log_dir,
         )
         db.session.add(submission)
         db.session.commit()
@@ -283,6 +296,50 @@ def job_log(cluster_id: int):
     try:
         log_content = get_job_log(cluster_id, proc_id=proc_id, tail=tail)
         return jsonify({"cluster_id": cluster_id, "proc_id": proc_id, "log": log_content})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@api_bp.route("/jobs/<int:cluster_id>/details")
+def job_details(cluster_id: int):
+    """Get complete job details, including all ClassAd attributes and file contents."""
+    proc_id = request.args.get("proc", 0, type=int)
+    tail = request.args.get("tail", 500, type=int)
+    try:
+        # 1. Fetch ClassAd attributes
+        # Query active queue first
+        jobs = query_jobs(constraint=f"ClusterId == {cluster_id} && ProcId == {proc_id}")
+        if not jobs:
+            # Try history
+            jobs = query_history(
+                constraint=f"ClusterId == {cluster_id} && ProcId == {proc_id}",
+                limit=1,
+            )
+        job = jobs[0] if jobs else {}
+
+        # 2. Get log, stdout, and stderr file paths
+        from app.condor import get_job_log_file_paths, get_job_file_content
+        paths = get_job_log_file_paths(cluster_id, proc_id=proc_id)
+
+        # 3. Read file contents
+        log_content = get_job_file_content(paths.get("log", ""), tail=tail)
+        stdout_content = get_job_file_content(paths.get("out", ""), tail=tail)
+        stderr_content = get_job_file_content(paths.get("err", ""), tail=tail)
+
+        # Let's also check if we have a JobSubmission DB record
+        submission = JobSubmission.query.filter_by(cluster_id=cluster_id).first()
+        submission_name = submission.name if submission else "Job Subbed Outside Web UI"
+
+        return jsonify({
+            "cluster_id": cluster_id,
+            "proc_id": proc_id,
+            "job": job,
+            "submission_name": submission_name,
+            "paths": paths,
+            "log": log_content or "No log content yet or file not found.",
+            "stdout": stdout_content or "No stdout content yet or file not found.",
+            "stderr": stderr_content or "No stderr content yet or file not found."
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

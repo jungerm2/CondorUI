@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard — Condor Web UI{% endblock %}
+
+{% block content %}
+<section class="tab-panel active" id="panel-dashboard">
+    <div class="page-header">
+        <h1>Dashboard</h1>
+        <div class="header-actions">
+            <button class="btn btn-ghost" id="refresh-btn" title="Refresh">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="23,4 23,10 17,10" />
+                    <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10" />
+                </svg>
+            </button>
+            <span class="auto-refresh-label">Auto-refresh: <span id="refresh-countdown">30</span>s</span>
+        </div>
+    </div>
+
+    <!-- Stats Cards -->
+    <div class="stats-grid" id="stats-grid">
+        <div class="stat-card stat-total">
+            <div class="stat-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path
+                        d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" />
+                </svg>
+            </div>
+            <div class="stat-info">
+                <span class="stat-value" id="stat-total">—</span>
+                <span class="stat-label">Total Jobs</span>
+            </div>
+        </div>
+        <div class="stat-card stat-idle">
+            <div class="stat-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+            </div>
+            <div class="stat-info">
+                <span class="stat-value" id="stat-idle">—</span>
+                <span class="stat-label">Idle</span>
+            </div>
+        </div>
+        <div class="stat-card stat-running">
+            <div class="stat-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <polygon points="5,3 19,12 5,21" />
+                </svg>
+            </div>
+            <div class="stat-info">
+                <span class="stat-value" id="stat-running">—</span>
+                <span class="stat-label">Running</span>
+            </div>
+        </div>
+        <div class="stat-card stat-held">
+            <div class="stat-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="15" y1="9" x2="9" y2="15" />
+                    <line x1="9" y1="9" x2="15" y2="15" />
+                </svg>
+            </div>
+            <div class="stat-info">
+                <span class="stat-value" id="stat-held">—</span>
+                <span class="stat-label">Held</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Jobs Table -->
+    <div class="card">
+        <div class="card-header">
+            <h2>Active Jobs</h2>
+            <div class="table-controls">
+                <input type="text" class="search-input" id="job-search" placeholder="Search jobs...">
+                <select class="filter-select" id="status-filter">
+                    <option value="">All Statuses</option>
+                    <option value="1">Idle</option>
+                    <option value="2">Running</option>
+                    <option value="5">Held</option>
+                    <option value="6">Transferring</option>
+                </select>
+            </div>
+        </div>
+        <div class="table-container">
+            <table class="data-table" id="jobs-table">
+                <thead>
+                    <tr>
+                        <th class="sortable" data-sort="ClusterId">ID</th>
+                        <th class="sortable" data-sort="Owner">Owner</th>
+                        <th class="sortable" data-sort="Cmd">Executable</th>
+                        <th class="sortable" data-sort="JobStatus">Status</th>
+                        <th>Host</th>
+                        <th class="sortable" data-sort="QDate">Submitted</th>
+                        <th>Resources</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="jobs-tbody">
+                    <tr class="empty-row">
+                        <td colspan="8">Loading...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/dashboard.js"></script>
+{% endblock %}

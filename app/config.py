@@ -22,6 +22,11 @@ class Config:
         "UPLOAD_DIR", os.path.join(BASE_DIR, "uploads")
     )
 
+    # Directory for job stdout, stderr, and user logs (outside project root)
+    JOB_LOGS_DIR = os.environ.get(
+        "JOB_LOGS_DIR", os.path.join(os.path.dirname(BASE_DIR), "condor_job_logs")
+    )
+
     # OSDF staging path for file transfers — uploaded files are copied here
     # so HTCondor can cache them via OSDF.
     OSDF_STAGING_PATH = os.environ.get(
