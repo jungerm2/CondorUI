@@ -1,23 +1,86 @@
 let currentHistory = [];
 let sortField = 'ClusterId';
 let sortAsc = false;
+let historyLoadInProgress = false;
+
+// Frontend cache for history data — persists across page navigations via sessionStorage
+const HISTORY_CACHE_KEY = 'condor_history_cache';
+const HISTORY_CACHE_TTL_MS = 120_000; // 2 minutes
+
+function getCachedHistory() {
+    try {
+        const raw = sessionStorage.getItem(HISTORY_CACHE_KEY);
+        if (!raw) return null;
+        const cached = JSON.parse(raw);
+        if (Date.now() - cached.timestamp > HISTORY_CACHE_TTL_MS) {
+            sessionStorage.removeItem(HISTORY_CACHE_KEY);
+            return null;
+        }
+        return cached.data;
+    } catch {
+        return null;
+    }
+}
+
+function setCachedHistory(data) {
+    try {
+        sessionStorage.setItem(HISTORY_CACHE_KEY, JSON.stringify({
+            timestamp: Date.now(),
+            data: data,
+        }));
+    } catch {
+        // sessionStorage may be full; ignore
+    }
+}
 
 async function loadHistory() {
+    // Prevent concurrent duplicate loads
+    if (historyLoadInProgress) return;
+    historyLoadInProgress = true;
+
     const limit = $('#history-limit').value;
+
+    // Show cached data immediately (non-blocking)
+    const cached = getCachedHistory();
+    if (cached) {
+        currentHistory = cached;
+        renderHistoryTable();
+    }
+
     try {
         const data = await api(`/history?limit=${limit}`);
         if (data.daemon_unavailable) {
             currentHistory = [];
+            setCachedHistory([]);
             const tbody = $('#history-tbody');
             if (tbody) {
                 tbody.innerHTML = `<tr class="empty-row"><td colspan="8">⚠️ HTCondor daemon is not available. This is expected on a development machine without a running condor_schedd.</td></tr>`;
             }
             return;
         }
-        currentHistory = data.jobs || [];
+        const jobs = data.jobs || [];
+        currentHistory = jobs;
+        setCachedHistory(jobs);
         renderHistoryTable();
     } catch (e) {
-        toast('Failed to load history: ' + e.message, 'error');
+        const msg = e.message || '';
+        // If we already have cached data displayed, just show a toast — don't replace the table
+        if (cached && cached.length > 0) {
+            toast('Could not refresh history (using cached data). ' + msg, 'warning');
+            return;
+        }
+        // Detect timeout errors and show a more helpful message
+        if (msg.includes('timed out') || msg.includes('timeout') || msg.includes('NetworkError') || msg.includes('Failed to fetch')) {
+            toast('History query timed out. The HTCondor schedd may be slow or unresponsive. Try again later.', 'error');
+            const tbody = $('#history-tbody');
+            if (tbody) {
+                tbody.innerHTML = `<tr class="empty-row"><td colspan="8">⚠️ History query timed out. The HTCondor schedd may be slow or unresponsive. <button class="btn btn-sm" onclick="loadHistory()">Retry</button></td></tr>`;
+            }
+        } else {
+            toast('Failed to load history: ' + msg, 'error');
+        }
+    } finally {
+        historyLoadInProgress = false;
     }
 }
 

@@ -62,6 +62,14 @@ async function api(endpoint, options = {}) {
     }
 }
 
+// Simple escaping to prevent XSS in innerHTML
+function escHtml(str) {
+    if (str == null) return '';
+    const div = document.createElement('div');
+    div.textContent = String(str);
+    return div.innerHTML;
+}
+
 // Common Formatting Helpers
 function formatDate(timestamp) {
     if (!timestamp) return '—';
@@ -129,20 +137,25 @@ function initTheme() {
 
 // Connection Status Monitor
 function initConnectionMonitor() {
-    const statusDot = $('.connection-status .status-dot');
-    const statusText = $('.connection-status .status-text');
+    const container = $('.connection-status');
+    const statusDot = container ? container.querySelector('.status-dot') : null;
+    const statusText = container ? container.querySelector('.status-text') : null;
+
+    if (!container || !statusDot || !statusText) return;
 
     async function checkStatus() {
         try {
             const response = await fetch('/api/health');
             if (response.ok) {
-                statusDot.className = 'status-dot status-connected';
+                container.classList.remove('disconnected');
+                container.classList.add('connected');
                 statusText.textContent = 'Connected';
             } else {
                 throw new Error('Not OK');
             }
         } catch (error) {
-            statusDot.className = 'status-dot status-disconnected';
+            container.classList.remove('connected');
+            container.classList.add('disconnected');
             statusText.textContent = 'Disconnected';
         }
     }

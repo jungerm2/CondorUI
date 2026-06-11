@@ -74,23 +74,23 @@ function updateFileContentDisplay() {
 }
 
 function updateDownloadLinks(paths) {
-    // Build download URLs for full file content
-    const baseUrl = `/api/jobs/${clusterId}/${procId}/files?tail=0`;
+    // Build download URLs — use ?download=1&file=... to trigger file download from the API
+    const baseUrl = `/api/jobs/${clusterId}/${procId}/files`;
 
     const downloadLog = $('#download-log-btn');
     const downloadStdout = $('#download-stdout-btn');
     const downloadStderr = $('#download-stderr-btn');
 
     if (downloadLog) {
-        downloadLog.href = paths.log ? baseUrl : '#';
+        downloadLog.href = paths.log ? `${baseUrl}?tail=0&download=1&file=log` : '#';
         downloadLog.style.display = paths.log ? 'inline-flex' : 'none';
     }
     if (downloadStdout) {
-        downloadStdout.href = paths.out ? baseUrl : '#';
+        downloadStdout.href = paths.out ? `${baseUrl}?tail=0&download=1&file=out` : '#';
         downloadStdout.style.display = paths.out ? 'inline-flex' : 'none';
     }
     if (downloadStderr) {
-        downloadStderr.href = paths.err ? baseUrl : '#';
+        downloadStderr.href = paths.err ? `${baseUrl}?tail=0&download=1&file=err` : '#';
         downloadStderr.style.display = paths.err ? 'inline-flex' : 'none';
     }
 }
@@ -172,7 +172,7 @@ function renderActions(statusVal) {
     if (holdBtn) {
         holdBtn.addEventListener('click', async () => {
             try {
-                await api(`/jobs/${clusterId}.${procId}`, { method: 'POST', body: JSON.stringify({ action: 'hold' }) });
+                await api(`/jobs/${clusterId}.${procId}/hold`, { method: 'POST' });
                 toast('Job held successfully');
                 loadJobDetails();
             } catch (err) {
@@ -184,7 +184,7 @@ function renderActions(statusVal) {
     if (releaseBtn) {
         releaseBtn.addEventListener('click', async () => {
             try {
-                await api(`/jobs/${clusterId}.${procId}`, { method: 'POST', body: JSON.stringify({ action: 'release' }) });
+                await api(`/jobs/${clusterId}.${procId}/release`, { method: 'POST' });
                 toast('Job released successfully');
                 loadJobDetails();
             } catch (err) {

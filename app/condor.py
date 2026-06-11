@@ -7,19 +7,24 @@ from __future__ import annotations
 
 import getpass
 import logging
+import os
 import socket
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from typing import Any
 
 from cachetools import TTLCache
 
 logger = logging.getLogger(__name__)
 
-# Connection timeout for daemon checks (seconds)
-_SCHEDD_TIMEOUT = 5
-
 # Default to only showing the current user's jobs for performance
 CURRENT_USER = getpass.getuser()
 DEFAULT_CONSTRAINT = f'Owner == "{CURRENT_USER}"'
+
+# Timeout for schedd queries (seconds) — prevents hanging on unresponsive daemons
+SCHEDD_QUERY_TIMEOUT = 15
+
+# Shared thread pool for running schedd queries with a timeout
+_schedd_executor = ThreadPoolExecutor(max_workers=4)
 
 # --- Attempt to import the HTCondor bindings ---
 try:
@@ -155,6 +160,31 @@ def _classad_to_dict(ad: Any) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _run_with_timeout(func, timeout: int = SCHEDD_QUERY_TIMEOUT):
+    """Run a callable in a background thread with a timeout.
+
+    Args:
+        func: Zero-argument callable to execute.
+        timeout: Maximum seconds to wait.
+
+    Returns:
+        The return value of *func*.
+
+    Raises:
+        TimeoutError: If *func* does not complete within *timeout* seconds.
+        Exception: Any exception raised by *func*.
+    """
+    future = _schedd_executor.submit(func)
+    try:
+        return future.result(timeout=timeout)
+    except TimeoutError:
+        logger.error("Schedd query timed out after %ds", timeout)
+        raise
+    except Exception:
+        logger.error("Schedd query failed", exc_info=True)
+        raise
+
+
 def query_jobs(
     constraint: str = DEFAULT_CONSTRAINT,
     projection: list[str] | None = None,
@@ -163,6 +193,8 @@ def query_jobs(
 
     Results are cached for 5 seconds to avoid hammering the schedd
     on rapid page loads / auto-refresh.
+
+    A 15-second timeout is applied to prevent hanging on unresponsive daemons.
 
     Args:
         constraint: ClassAd expression to filter jobs.
@@ -178,7 +210,11 @@ def query_jobs(
         return _query_cache[key]
 
     schedd = get_schedd()
-    ads = schedd.query(constraint=constraint, projection=proj)
+
+    def _do_query():
+        return schedd.query(constraint=constraint, projection=proj)
+
+    ads = _run_with_timeout(_do_query)
     jobs = []
     for ad in ads:
         d = _classad_to_dict(ad)
@@ -200,6 +236,8 @@ def query_history(
 
     Results are cached for 30 seconds since history data rarely changes.
 
+    A 15-second timeout is applied to prevent hanging on unresponsive daemons.
+
     Args:
         constraint: ClassAd expression to filter jobs.
         projection: List of attributes to return.
@@ -216,11 +254,14 @@ def query_history(
 
     schedd = get_schedd()
     try:
-        ads = schedd.history(
-            constraint=constraint,
-            projection=proj,
-            match=limit,
-        )
+        def _do_history():
+            return schedd.history(
+                constraint=constraint,
+                projection=proj,
+                match=limit,
+            )
+
+        ads = _run_with_timeout(_do_history)
         jobs = []
         for ad in ads:
             d = _classad_to_dict(ad)
@@ -232,6 +273,9 @@ def query_history(
 
         _history_cache[key] = jobs
         return jobs
+    except TimeoutError:
+        logger.error("History query timed out after %ds", SCHEDD_QUERY_TIMEOUT)
+        return []
     except Exception as e:
         logger.error("Failed to query history: %s", e)
         return []
@@ -403,12 +447,11 @@ def get_job_file_content(file_path: str, tail: int = 500) -> str:
 def get_job_log_file_paths(cluster_id: int, proc_id: int = 0) -> dict[str, str]:
     """Retrieve log, stdout, and stderr file paths for a job."""
     paths = {"log": "", "out": "", "err": ""}
-    # Try database first
+    # Try database first — lazy import to avoid circular dependency at module level
     try:
-        from app.models import JobSubmission
-        submission = JobSubmission.query.filter_by(cluster_id=cluster_id).first()
+        from app.models import JobSubmission as _JobSubmission
+        submission = _JobSubmission.query.filter_by(cluster_id=cluster_id).first()
         if submission and submission.log_dir:
-            import os
             log_dir = submission.log_dir
             paths["log"] = os.path.join(log_dir, f"job_{cluster_id}.log")
             paths["out"] = os.path.join(log_dir, f"job_{cluster_id}_{proc_id}.out")

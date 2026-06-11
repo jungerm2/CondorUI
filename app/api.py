@@ -7,7 +7,7 @@ import logging
 import os
 import shutil
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, jsonify, request, send_file
 
 from app import db
 from app.condor import (
@@ -67,7 +67,6 @@ def list_jobs():
         limit     — Max results to return (default 200, max 5000)
         offset    — Number of results to skip (default 0)
     """
-    # Check daemon availability first
     if not daemon_available():
         return jsonify({
             "jobs": [],
@@ -99,12 +98,10 @@ def list_jobs():
     try:
         limit = request.args.get("limit", 200, type=int)
         offset = request.args.get("offset", 0, type=int)
-        # Cap limit to prevent excessive queries
         limit = min(limit, 5000)
 
         jobs = query_jobs(constraint=constraint)
         total = len(jobs)
-        # Apply pagination
         paginated = jobs[offset:offset + limit]
         has_more = (offset + limit) < total
 
@@ -120,24 +117,23 @@ def list_jobs():
         return jsonify({"error": str(e)}), 500
 
 
-@api_bp.route("/jobs/<int:cluster_id>")
-def get_cluster(cluster_id: int):
-    """Get all procs for a specific cluster."""
+@api_bp.route("/jobs/<cluster_id>")
+def get_cluster(cluster_id):
+    """Get all procs for a specific cluster. Accepts bare cluster IDs or cluster.proc format."""
     if not daemon_available():
         return jsonify({
             "cluster_id": cluster_id,
             "jobs": [],
             "count": 0,
             "daemon_unavailable": True,
-            "message": "HTCondor daemon is not available. This is expected on a development machine without a running condor_schedd."
+            "message": "HTCondor daemon is not available."
         })
     try:
-        jobs = query_jobs(constraint=f"ClusterId == {cluster_id}")
+        # Split cluster.proc if given, but query by cluster ID
+        cid = cluster_id.split(".")[0] if "." in str(cluster_id) else cluster_id
+        jobs = query_jobs(constraint=f"ClusterId == {cid}")
         if not jobs:
-            # Check history — use a reasonable limit
-            jobs = query_history(
-                constraint=f"ClusterId == {cluster_id}", limit=200
-            )
+            jobs = query_history(constraint=f"ClusterId == {cid}", limit=200)
         return jsonify({"cluster_id": cluster_id, "jobs": jobs, "count": len(jobs)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -151,7 +147,7 @@ def list_history():
             "jobs": [],
             "count": 0,
             "daemon_unavailable": True,
-            "message": "HTCondor daemon is not available. This is expected on a development machine without a running condor_schedd."
+            "message": "HTCondor daemon is not available."
         })
     limit = request.args.get("limit", current_app.config["MAX_HISTORY_RESULTS"], type=int)
     constraint = request.args.get("constraint", DEFAULT_CONSTRAINT)
@@ -168,7 +164,7 @@ def get_stats():
     if not daemon_available():
         return jsonify({
             "daemon_unavailable": True,
-            "message": "HTCondor daemon is not available. This is expected on a development machine without a running condor_schedd."
+            "message": "HTCondor daemon is not available."
         })
     try:
         counts = get_job_status_counts()
@@ -184,16 +180,7 @@ def get_stats():
 
 @api_bp.route("/submit", methods=["POST"])
 def submit():
-    """Submit a job from a JSON submit description.
-
-    Expected JSON body:
-    {
-        "name": "My Job",
-        "submit": { "executable": "/bin/sleep", "arguments": "60", ... },
-        "count": 1,
-        "itemdata": [{"var": "val"}, ...]  // optional
-    }
-    """
+    """Submit a job from a JSON submit description."""
     data = request.get_json()
     if not data or "submit" not in data:
         return jsonify({"error": "Missing 'submit' in request body"}), 400
@@ -216,7 +203,6 @@ def submit():
             cluster_id = submit_job(submit_dict, count=count, log_dir=log_dir)
             num_procs = count
 
-        # Record in database
         submission = JobSubmission(
             cluster_id=cluster_id,
             name=name,
@@ -284,14 +270,7 @@ def submit_file():
 
 @api_bp.route("/upload", methods=["POST"])
 def upload_files():
-    """Upload files, optionally staging them to the OSDF cache directory.
-
-    Files are saved to the local upload dir.  If OSDF_STAGING_PATH is
-    configured, they are additionally copied there so that HTCondor can
-    fetch them via OSDF.
-
-    Returns the list of saved file paths (both local and OSDF).
-    """
+    """Upload files, optionally staging them to the OSDF cache directory."""
     if "files" not in request.files:
         return jsonify({"error": "No files in request"}), 400
 
@@ -313,7 +292,11 @@ def upload_files():
             osdf_dest = os.path.join(osdf_path, f.filename)
             os.makedirs(os.path.dirname(osdf_dest), exist_ok=True)
             shutil.copy2(local_path, osdf_dest)
+            # Use proper osdf:/// URI format
+            entry["osdf_uri"] = f"osdf:///{f.filename}"
             entry["osdf_path"] = osdf_dest
+        else:
+            entry["osdf_uri"] = ""
 
         saved.append(entry)
 
@@ -326,7 +309,7 @@ def upload_files():
 
 
 @api_bp.route("/jobs/<job_id>/hold", methods=["POST"])
-def hold_job(job_id: str):
+def hold_job(job_id):
     """Hold a job."""
     try:
         result = act_on_job("hold", job_id)
@@ -336,7 +319,7 @@ def hold_job(job_id: str):
 
 
 @api_bp.route("/jobs/<job_id>/release", methods=["POST"])
-def release_job(job_id: str):
+def release_job(job_id):
     """Release a held job."""
     try:
         result = act_on_job("release", job_id)
@@ -346,7 +329,7 @@ def release_job(job_id: str):
 
 
 @api_bp.route("/jobs/<job_id>", methods=["DELETE"])
-def remove_job(job_id: str):
+def remove_job(job_id):
     """Remove a job."""
     try:
         result = act_on_job("remove", job_id)
@@ -378,14 +361,27 @@ def job_files(cluster_id: int, proc_id: int):
 
     Query parameters:
         tail — Number of lines to return from the end of each file (default 500, 0 = all)
+        download — If set to '1', returns a file download instead of JSON
+        file — Which file to download: 'log', 'out', or 'err' (only used when download=1)
     """
     tail = request.args.get("tail", 500, type=int)
+    is_download = request.args.get("download", "0") == "1"
+
     try:
         paths = get_job_log_file_paths(cluster_id, proc_id=proc_id)
 
-        log_content = get_job_file_content(paths.get("log", ""), tail=tail) if tail > 0 else ""
-        stdout_content = get_job_file_content(paths.get("out", ""), tail=tail) if tail > 0 else ""
-        stderr_content = get_job_file_content(paths.get("err", ""), tail=tail) if tail > 0 else ""
+        if is_download:
+            file_type = request.args.get("file", "log")
+            file_path = paths.get(file_type)
+            if not file_path or not os.path.exists(file_path):
+                return jsonify({"error": f"File not found: {file_type}"}), 404
+
+            filename_map = {"log": f"job_{cluster_id}.log", "out": f"job_{cluster_id}_{proc_id}.out", "err": f"job_{cluster_id}_{proc_id}.err"}
+            return send_file(file_path, as_attachment=True, download_name=filename_map.get(file_type, f"job_{cluster_id}_{proc_id}.txt"))
+
+        log_content = get_job_file_content(paths.get("log", ""), tail=tail)
+        stdout_content = get_job_file_content(paths.get("out", ""), tail=tail)
+        stderr_content = get_job_file_content(paths.get("err", ""), tail=tail)
 
         return jsonify({
             "cluster_id": cluster_id,
@@ -405,26 +401,23 @@ def job_details(cluster_id: int):
     proc_id = request.args.get("proc", 0, type=int)
     tail = request.args.get("tail", 500, type=int)
     try:
-        # 1. Fetch ClassAd attributes
-        # Query active queue first
+        # Fetch ClassAd attributes
         jobs = query_jobs(constraint=f"ClusterId == {cluster_id} && ProcId == {proc_id}")
         if not jobs:
-            # Try history
             jobs = query_history(
                 constraint=f"ClusterId == {cluster_id} && ProcId == {proc_id}",
                 limit=1,
             )
         job = jobs[0] if jobs else {}
 
-        # 2. Get log, stdout, and stderr file paths
+        # Get log, stdout, and stderr file paths
         paths = get_job_log_file_paths(cluster_id, proc_id=proc_id)
 
-        # 3. Read file contents
+        # Read file contents
         log_content = get_job_file_content(paths.get("log", ""), tail=tail)
         stdout_content = get_job_file_content(paths.get("out", ""), tail=tail)
         stderr_content = get_job_file_content(paths.get("err", ""), tail=tail)
 
-        # Let's also check if we have a JobSubmission DB record
         submission = JobSubmission.query.filter_by(cluster_id=cluster_id).first()
         submission_name = submission.name if submission else "Job Subbed Outside Web UI"
 

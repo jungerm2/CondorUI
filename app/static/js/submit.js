@@ -81,10 +81,15 @@ function initInputFilesUpload() {
                 });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error || 'Upload failed');
-                
-                uploadedFiles.push(data.osdf_uri);
+
+                // Use osdf_uri if available (provided by server when OSDF staging is configured)
+                // Fall back to local_path if OSDF not configured
+                const uploaded = data.uploaded[0];
+                const uri = uploaded.osdf_uri || uploaded.local_path;
+                uploadedFiles.push(uri);
                 renderUploadedFiles();
-                toast(`${file.name} uploaded and staged to OSDF`);
+                const msg = uploaded.osdf_uri ? `${file.name} uploaded and staged to OSDF` : `${file.name} uploaded locally`;
+                toast(msg);
             } catch (err) {
                 toast(`Upload failed: ${err.message}`, 'error');
             }
@@ -153,10 +158,10 @@ function initSubmitFileUpload() {
         reader.onload = (e) => {
             previewEl.innerHTML = `
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                    <strong>${file.name}</strong>
+                    <strong>${escHtml(file.name)}</strong>
                     <span class="file-size">${(file.size / 1024).toFixed(2)} KB</span>
                 </div>
-                <pre class="monospace" style="background: var(--bg-secondary); padding: 12px; border-radius: 6px; overflow-x: auto; max-height: 250px; border: 1px solid var(--border-color);">${e.target.result}</pre>
+                <pre class="monospace" style="background: var(--bg-secondary); padding: 12px; border-radius: 6px; overflow-x: auto; max-height: 250px; border: 1px solid var(--border-color);">${escHtml(e.target.result)}</pre>
             `;
             submitBtn.removeAttribute('disabled');
         };
@@ -171,7 +176,6 @@ function buildSubmitDict() {
         universe: universe,
     };
 
-    // Executable vs Shell mode
     const isShell = $('#execmode-shell-btn').classList.contains('active');
     if (isShell) {
         d.shell = $('#job-shell-cmd').value.trim();
@@ -187,12 +191,11 @@ function buildSubmitDict() {
     const args = $('#job-arguments').value.trim();
     if (args) d.arguments = args;
 
-    // Combine form input transfer file list with uploaded files list
     let transferInputs = ($('#job-transfer-input').value || '')
         .split(',')
         .map(x => x.trim())
         .filter(x => x);
-    
+
     uploadedFiles.forEach(uri => {
         if (!transferInputs.includes(uri)) {
             transferInputs.push(uri);
@@ -203,12 +206,10 @@ function buildSubmitDict() {
         d.transfer_input_files = transferInputs.join(', ');
     }
 
-    // Resources
     d.request_cpus = $('#job-cpus').value;
     d.request_memory = $('#job-memory').value;
     d.request_disk = $('#job-disk').value;
 
-    // Output/Error/Log paths - if not empty
     const output = $('#job-output').value.trim();
     if (output) d.output = output;
     const error = $('#job-error').value.trim();
@@ -216,7 +217,6 @@ function buildSubmitDict() {
     const log = $('#job-log').value.trim();
     if (log) d.log = log;
 
-    // Custom attrs
     $$('.attr-row').forEach(row => {
         const key = row.querySelector('.attr-key').value.trim();
         const val = row.querySelector('.attr-value').value.trim();
@@ -245,7 +245,6 @@ async function submitFormJob() {
             body: JSON.stringify({ name, submit, count })
         });
         toast(`Submitted successfully! Cluster ID: ${res.cluster_id}`);
-        // Reset or navigate to dashboard
         setTimeout(() => window.location.href = '/', 1500);
     } catch (err) {
         toast(`Submission failed: ${err.message}`, 'error');
@@ -263,17 +262,18 @@ async function submitRawJob() {
 
     toast('Submitting job...');
     try {
-        const res = await api('/submit/file', {
+        // Use FormData (not the api() helper) to avoid JSON Content-Type header
+        const formData = new FormData();
+        formData.append('name', name);
+        const blob = new Blob([content], { type: 'text/plain' });
+        formData.append('file', blob, 'submit.sub');
+
+        const response = await fetch('/api/submit/file', {
             method: 'POST',
-            // Since it's /submit/file, we must send a Form
-            body: (() => {
-                const fd = new FormData();
-                fd.append('name', name);
-                const file = new Blob([content], { type: 'text/plain' });
-                fd.append('file', file, 'submit.sub');
-                return fd;
-            })()
+            body: formData
         });
+        const res = await response.json();
+        if (!response.ok) throw new Error(res.error || 'Submit failed');
         toast(`Submitted successfully! Cluster ID: ${res.cluster_id}`);
         setTimeout(() => window.location.href = '/', 1500);
     } catch (err) {
@@ -309,13 +309,11 @@ async function submitUploadedFileJob() {
 function syncFormToRaw() {
     const submit = buildSubmitDict();
     let rawText = '';
-    
-    // Formatting standard .sub layout
+
     rawText += `universe = ${submit.universe || 'vanilla'}\n`;
     if (submit.container_image) {
         rawText += `container_image = ${submit.container_image}\n`;
     }
-    // Shell and executable are mutually exclusive
     if (submit.shell) {
         rawText += `shell = ${submit.shell}\n`;
     } else if (submit.executable) {
@@ -327,18 +325,17 @@ function syncFormToRaw() {
     if (submit.transfer_input_files) {
         rawText += `transfer_input_files = ${submit.transfer_input_files}\n`;
     }
-    
+
     rawText += `\n# Resources\n`;
     rawText += `request_cpus = ${submit.request_cpus || '1'}\n`;
     rawText += `request_memory = ${submit.request_memory || '1 GB'}\n`;
     rawText += `request_disk = ${submit.request_disk || '1 GB'}\n`;
-    
+
     rawText += `\n# Output & Logs\n`;
     if (submit.output) rawText += `output = ${submit.output}\n`;
     if (submit.error) rawText += `error = ${submit.error}\n`;
     if (submit.log) rawText += `log = ${submit.log}\n`;
-    
-    // Extras
+
     let hasExtras = false;
     $$('.attr-row').forEach(row => {
         const key = row.querySelector('.attr-key').value.trim();
@@ -362,19 +359,18 @@ function syncFormToRaw() {
 function syncRawToForm() {
     const rawText = $('#raw-submit-editor').value;
     const lines = rawText.split('\n');
-    
-    // Reset extra attributes container
+
     const container = $('#extra-attrs');
     container.innerHTML = '';
     uploadedFiles = [];
 
     lines.forEach(line => {
-        line = line.split('#')[0].trim(); // Remove comment
+        line = line.split('#')[0].trim();
         if (!line || !line.includes('=')) return;
 
-        const parts = line.split('=');
-        const key = parts[0].trim().toLowerCase();
-        const val = parts.slice(1).join('=').trim();
+        const eqIdx = line.indexOf('=');
+        const key = line.substring(0, eqIdx).trim().toLowerCase();
+        const val = line.substring(eqIdx + 1).trim();
 
         switch (key) {
             case 'universe':
@@ -385,7 +381,6 @@ function syncRawToForm() {
                 $('#job-container-image').value = val;
                 break;
             case 'executable':
-                // Switch to Executable mode
                 $('#execmode-exec-btn').classList.add('active');
                 $('#execmode-shell-btn').classList.remove('active');
                 $('#exec-field').style.display = 'block';
@@ -394,7 +389,6 @@ function syncRawToForm() {
                 $('#job-executable').value = val;
                 break;
             case 'shell':
-                // Switch to Shell mode
                 $('#execmode-shell-btn').classList.add('active');
                 $('#execmode-exec-btn').classList.remove('active');
                 $('#shell-field').style.display = 'block';
@@ -406,14 +400,12 @@ function syncRawToForm() {
                 $('#job-arguments').value = val;
                 break;
             case 'transfer_input_files':
-                // Parse out staged osdf files
                 const files = val.split(',').map(f => f.trim());
                 files.forEach(f => {
                     if (f.startsWith('osdf:///')) {
                         uploadedFiles.push(f);
                     }
                 });
-                // Find and keep only non-osdf inputs for the local text box
                 const nonOsdf = files.filter(f => !f.startsWith('osdf:///'));
                 $('#job-transfer-input').value = nonOsdf.join(', ');
                 break;
@@ -437,12 +429,13 @@ function syncRawToForm() {
                 break;
             default:
                 // Handle as custom ClassAd
+                // Try to detect queue directive
                 if (key !== 'queue') {
                     const row = document.createElement('div');
                     row.className = 'attr-row';
                     row.innerHTML = `
-                        <input type="text" value="${parts[0].trim()}" class="form-input attr-key">
-                        <input type="text" value="${val}" class="form-input attr-value">
+                        <input type="text" value="${escHtml(line.substring(0, eqIdx).trim())}" class="form-input attr-key">
+                        <input type="text" value="${escHtml(val)}" class="form-input attr-value">
                         <button class="btn btn-ghost remove-attr-btn" title="Remove">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                 <line x1="18" y1="6" x2="6" y2="18" />
@@ -456,7 +449,6 @@ function syncRawToForm() {
                 break;
         }
 
-        // Try to match "queue <count>"
         const queueMatch = line.match(/^queue\s+(\d+)/i);
         if (queueMatch) {
             $('#job-count').value = queueMatch[1];
@@ -471,8 +463,8 @@ function syncRawToForm() {
         const fileItem = document.createElement('div');
         fileItem.className = 'uploaded-file-item';
         fileItem.innerHTML = `
-            <span class="file-name monospace">${name}</span>
-            <span class="file-uri monospace">${uri}</span>
+            <span class="file-name monospace">${escHtml(name)}</span>
+            <span class="file-uri monospace">${escHtml(uri)}</span>
             <button class="btn btn-ghost btn-sm remove-file-btn" data-idx="${idx}" title="Remove file" style="color: var(--danger-color);">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                     <line x1="18" y1="6" x2="6" y2="18" />
@@ -497,11 +489,14 @@ function checkSelectedTemplate() {
             const tmpl = JSON.parse(raw);
             toast(`Loaded template: ${tmpl.name}`);
             $('#job-name').value = tmpl.name;
-            
-            if (tmpl.description.trim().startsWith('{')) {
-                const submit = JSON.parse(tmpl.description);
+
+            // Use submit_data for the actual submit description, with description as fallback
+            const submitStr = tmpl.submit_data || tmpl.description || '';
+            if (!submitStr) return;
+
+            if (submitStr.trim().startsWith('{')) {
+                const submit = JSON.parse(submitStr);
                 if (submit.shell) {
-                    // Switch to Shell mode
                     $('#execmode-shell-btn').classList.add('active');
                     $('#execmode-exec-btn').classList.remove('active');
                     $('#shell-field').style.display = 'block';
@@ -522,14 +517,14 @@ function checkSelectedTemplate() {
                 if (submit.output) $('#job-output').value = submit.output;
                 if (submit.error) $('#job-error').value = submit.error;
                 if (submit.log) $('#job-log').value = submit.log;
-                
+
                 if (submit.transfer_input_files) {
                     const files = submit.transfer_input_files.split(',').map(f => f.trim());
                     uploadedFiles = files.filter(f => f.startsWith('osdf:///'));
                     const nonOsdf = files.filter(f => !f.startsWith('osdf:///'));
                     $('#job-transfer-input').value = nonOsdf.join(', ');
                 }
-                
+
                 const standardKeys = ['universe', 'container_image', 'executable', 'arguments', 'shell', 'request_cpus', 'request_memory', 'request_disk', 'output', 'error', 'log', 'transfer_input_files'];
                 const container = $('#extra-attrs');
                 container.innerHTML = '';
@@ -538,8 +533,8 @@ function checkSelectedTemplate() {
                         const row = document.createElement('div');
                         row.className = 'attr-row';
                         row.innerHTML = `
-                            <input type="text" value="${key}" class="form-input attr-key">
-                            <input type="text" value="${val}" class="form-input attr-value">
+                            <input type="text" value="${escHtml(key)}" class="form-input attr-key">
+                            <input type="text" value="${escHtml(String(val))}" class="form-input attr-value">
                             <button class="btn btn-ghost remove-attr-btn" title="Remove">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                     <line x1="18" y1="6" x2="6" y2="18" />
@@ -555,7 +550,7 @@ function checkSelectedTemplate() {
                 // Switch to Raw mode
                 const rawBtn = $('#mode-raw-btn');
                 if (rawBtn) rawBtn.click();
-                $('#raw-submit-editor').value = tmpl.description;
+                $('#raw-submit-editor').value = submitStr;
                 $('#raw-job-name').value = tmpl.name;
             }
         } catch (e) {
@@ -568,7 +563,7 @@ async function saveAsTemplate(mode) {
     const name = prompt('Enter a name for this template:');
     if (!name) return;
 
-    let description = '';
+    let submit_data = '';
     if (mode === 'form') {
         const submit = buildSubmitDict();
         if (!submit.executable && !submit.shell) {
@@ -576,10 +571,10 @@ async function saveAsTemplate(mode) {
             toast(isShell ? 'Shell command is required to save template' : 'Executable is required to save template', 'warning');
             return;
         }
-        description = JSON.stringify(submit);
+        submit_data = JSON.stringify(submit);
     } else {
-        description = $('#raw-submit-editor').value.trim();
-        if (!description) {
+        submit_data = $('#raw-submit-editor').value.trim();
+        if (!submit_data) {
             toast('Submit description cannot be empty', 'warning');
             return;
         }
@@ -589,7 +584,7 @@ async function saveAsTemplate(mode) {
     try {
         await api('/templates', {
             method: 'POST',
-            body: JSON.stringify({ name, description })
+            body: JSON.stringify({ name, submit_data })
         });
         toast('Template saved successfully!');
     } catch (err) {
@@ -603,7 +598,6 @@ document.addEventListener('DOMContentLoaded', () => {
     initInputFilesUpload();
     initSubmitFileUpload();
 
-    // Show/hide container image input depending on universe choice
     $('#job-universe').addEventListener('change', (e) => {
         const containerGroup = $('#container-image-group');
         if (e.target.value === 'container') {
@@ -613,7 +607,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Executable / Shell toggle
     function initExecShellToggle() {
         const execBtn = $('#execmode-exec-btn');
         const shellBtn = $('#execmode-shell-btn');
@@ -639,27 +632,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     initExecShellToggle();
 
-        // Tab mode transition sync — propagate job name when switching
     $('#mode-raw-btn').addEventListener('click', () => {
-        // Copy form job name to raw job name
         $('#raw-job-name').value = $('#job-name').value.trim() || 'Untitled Job';
         syncFormToRaw();
     });
     $('#mode-form-btn').addEventListener('click', () => {
-        // Copy raw job name to form job name
         $('#job-name').value = $('#raw-job-name').value.trim() || '';
         syncRawToForm();
     });
 
-    // Submission triggers
     $('#submit-form-btn').addEventListener('click', submitFormJob);
     $('#submit-raw-btn').addEventListener('click', submitRawJob);
     $('#submit-file-btn').addEventListener('click', submitUploadedFileJob);
 
-    // Save as template triggers
     $('#save-as-tmpl-btn').addEventListener('click', () => saveAsTemplate('form'));
-    
-    // Inject save as template button in raw actions
+
     const rawSaveBtn = document.createElement('button');
     rawSaveBtn.className = 'btn btn-ghost btn-lg';
     rawSaveBtn.id = 'raw-save-as-tmpl-btn';
@@ -675,6 +662,5 @@ document.addEventListener('DOMContentLoaded', () => {
     $('#mode-raw .submit-actions').insertBefore(rawSaveBtn, $('#submit-raw-btn'));
     rawSaveBtn.addEventListener('click', () => saveAsTemplate('raw'));
 
-    // Check template load
     checkSelectedTemplate();
 });

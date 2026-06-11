@@ -31,32 +31,42 @@ function renderTemplatesGrid(templates) {
         card.style.display = 'flex';
         card.style.flexDirection = 'column';
         card.style.justifyContent = 'space-between';
-        
+
+        // Build description preview from submit_data (or description as fallback)
+        const submitStr = tmpl.submit_data || tmpl.description || '';
         let descPreview = '';
         try {
-            if (tmpl.description.trim().startsWith('{')) {
-                const parsed = JSON.parse(tmpl.description);
-                descPreview = `Universe: ${parsed.universe || 'vanilla'}, Executable: ${basename(parsed.executable)}`;
+            if (submitStr.trim().startsWith('{')) {
+                const parsed = JSON.parse(submitStr);
+                descPreview = `Universe: ${parsed.universe || 'vanilla'}, Executable: ${escHtml(basename(parsed.executable))}`;
             } else {
-                descPreview = tmpl.description.split('\n').slice(0, 3).join('\n');
+                descPreview = submitStr.split('\n').slice(0, 3).join('\n');
             }
         } catch (e) {
-            descPreview = tmpl.description;
+            descPreview = submitStr;
         }
+
+        const name = escHtml(tmpl.name);
+        const descLines = descPreview.split('\n').slice(0, 3).join('\n');
 
         card.innerHTML = `
             <div class="card-header" style="border-bottom: none; padding-bottom: 0;">
-                <h3 style="margin: 0; font-size: 1.1rem; color: var(--text-primary);">${tmpl.name}</h3>
+                <h3 style="margin: 0; font-size: 1.1rem; color: var(--text-primary);">${name}</h3>
             </div>
             <div class="card-body" style="flex-grow: 1; padding: 12px 16px;">
-                <pre class="monospace" style="background: var(--bg-secondary); padding: 8px; border-radius: 4px; font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: pre-wrap; max-height: 100px;">${descPreview}</pre>
+                <pre class="monospace" style="background: var(--bg-secondary); padding: 8px; border-radius: 4px; font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: pre-wrap; max-height: 100px;">${escHtml(descLines)}</pre>
                 <span style="font-size: 0.75rem; color: var(--text-muted);">Saved: ${formatDate(new Date(tmpl.created_at).getTime()/1000)}</span>
             </div>
             <div class="card-footer" style="display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border-color); padding: 12px 16px; background: var(--bg-secondary);">
                 <button class="btn btn-ghost btn-sm delete-tmpl-btn" data-id="${tmpl.id}" style="color: var(--danger-color);">Delete</button>
-                <button class="btn btn-primary btn-sm use-tmpl-btn" data-tmpl='${JSON.stringify(tmpl).replace(/'/g, "&apos;")}'>Use Template</button>
+                <button class="btn btn-primary btn-sm use-tmpl-btn" style="cursor: pointer;">Use Template</button>
             </div>
         `;
+
+        // Set the template data via dataset to avoid XSS through HTML attribute injection
+        const useBtn = card.querySelector('.use-tmpl-btn');
+        useBtn.dataset.tmpl = JSON.stringify(tmpl);
+
         grid.appendChild(card);
     });
 

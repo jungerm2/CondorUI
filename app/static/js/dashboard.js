@@ -3,9 +3,15 @@ let sortField = 'ClusterId';
 let sortAsc = false;
 let refreshTimer = null;
 let countdownInterval = null;
+let refreshInProgress = false;
+let countdown = 30;
 const REFRESH_RATE = 30; // seconds
 
 async function loadJobs() {
+    // Prevent concurrent refresh calls
+    if (refreshInProgress) return;
+    refreshInProgress = true;
+
     try {
         const data = await api('/jobs');
         if (data.daemon_unavailable) {
@@ -22,11 +28,12 @@ async function loadJobs() {
         renderStats();
     } catch (e) {
         toast('Failed to load active jobs: ' + e.message, 'error');
-        // Show empty state instead of leaving stale "Loading..." in the table
         const tbody = $('#jobs-tbody');
         if (tbody) {
             tbody.innerHTML = `<tr class="empty-row"><td colspan="8">Unable to connect to HTCondor. ${e.message}</td></tr>`;
         }
+    } finally {
+        refreshInProgress = false;
     }
 }
 
@@ -51,13 +58,11 @@ function getFilteredJobs() {
     const statusVal = $('#status-filter').value;
 
     return currentJobs.filter(job => {
-        // Text filter
         const matchesText = !query ||
             (job.ClusterId.toString().includes(query)) ||
             (job.Owner && job.Owner.toLowerCase().includes(query)) ||
             (job.Cmd && job.Cmd.toLowerCase().includes(query));
 
-        // Status filter
         const matchesStatus = !statusVal || job.JobStatus.toString() === statusVal;
 
         return matchesText && matchesStatus;
@@ -75,7 +80,6 @@ function renderJobsTable() {
         let valA = a[sortField];
         let valB = b[sortField];
 
-        // Handle numeric conversion where appropriate
         if (sortField === 'ClusterId' || sortField === 'JobStatus' || sortField === 'QDate') {
             valA = parseFloat(valA) || 0;
             valB = parseFloat(valB) || 0;
@@ -100,26 +104,27 @@ function renderJobsTable() {
         const statusName = getStatusName(job.JobStatus);
         const subDate = formatDate(job.QDate);
 
-        // CPU / Mem request info
         const cpus = job.RequestCpus || '1';
         const mem = job.RequestMemory || '—';
         const resStr = `${cpus} CPU, ${mem}`;
 
+        const jobSpec = `${job.ClusterId}.${job.ProcId}`;
+
         // Buttons based on status
         let actionButtons = '';
         if (parseInt(job.JobStatus) === 5) {
-            // Held
+            // Held → show release button
             actionButtons = `
-                <button class="btn btn-sm btn-ghost release-btn" data-id="${job.ClusterId}.${job.ProcId}" title="Release Job">
+                <button class="btn btn-sm btn-ghost release-btn" data-id="${jobSpec}" title="Release Job">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                         <polygon points="5,3 19,12 5,21" />
                     </svg>
                 </button>
             `;
         } else if (parseInt(job.JobStatus) === 1 || parseInt(job.JobStatus) === 2) {
-            // Idle or Running
+            // Idle or Running → show hold button
             actionButtons = `
-                <button class="btn btn-sm btn-ghost hold-btn" data-id="${job.ClusterId}.${job.ProcId}" title="Hold Job">
+                <button class="btn btn-sm btn-ghost hold-btn" data-id="${jobSpec}" title="Hold Job">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                         <rect x="6" y="4" width="4" height="16" />
                         <rect x="14" y="4" width="4" height="16" />
@@ -129,7 +134,7 @@ function renderJobsTable() {
         }
 
         actionButtons += `
-            <button class="btn btn-sm btn-ghost remove-btn" data-id="${job.ClusterId}.${job.ProcId}" title="Remove Job" style="color: var(--danger-color);">
+            <button class="btn btn-sm btn-ghost remove-btn" data-id="${jobSpec}" title="Remove Job" style="color: var(--danger-color);">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                     <line x1="18" y1="6" x2="6" y2="18" />
                     <line x1="6" y1="6" x2="18" y2="18" />
@@ -138,7 +143,7 @@ function renderJobsTable() {
         `;
 
         tr.innerHTML = `
-            <td><a href="/job/${job.ClusterId}/${job.ProcId}" class="job-id-link">${job.ClusterId}.${job.ProcId}</a></td>
+            <td><a href="/job/${job.ClusterId}/${job.ProcId}" class="job-id-link">${jobSpec}</a></td>
             <td>${job.Owner || '—'}</td>
             <td class="monospace" title="${job.Cmd}">${basename(job.Cmd)}</td>
             <td><span class="status-badge ${statusClass}">${statusName}</span></td>
@@ -150,7 +155,7 @@ function renderJobsTable() {
         tbody.appendChild(tr);
     });
 
-    // Add listeners to actions
+    // Add listeners to actions — use correct API endpoints
     $$('.hold-btn').forEach(btn => btn.addEventListener('click', handleHold));
     $$('.release-btn').forEach(btn => btn.addEventListener('click', handleRelease));
     $$('.remove-btn').forEach(btn => btn.addEventListener('click', handleRemove));
@@ -159,8 +164,9 @@ function renderJobsTable() {
 async function handleHold(e) {
     const jobId = e.currentTarget.dataset.id;
     try {
-        await api(`/jobs/${jobId}`, { method: 'POST', body: JSON.stringify({ action: 'hold' }) });
+        await api(`/jobs/${jobId}/hold`, { method: 'POST' });
         toast(`Job ${jobId} held successfully`);
+        countdown = REFRESH_RATE;
         loadJobs();
     } catch (err) {
         toast(`Failed to hold job: ${err.message}`, 'error');
@@ -170,8 +176,9 @@ async function handleHold(e) {
 async function handleRelease(e) {
     const jobId = e.currentTarget.dataset.id;
     try {
-        await api(`/jobs/${jobId}`, { method: 'POST', body: JSON.stringify({ action: 'release' }) });
+        await api(`/jobs/${jobId}/release`, { method: 'POST' });
         toast(`Job ${jobId} released successfully`);
+        countdown = REFRESH_RATE;
         loadJobs();
     } catch (err) {
         toast(`Failed to release job: ${err.message}`, 'error');
@@ -184,14 +191,16 @@ async function handleRemove(e) {
     try {
         await api(`/jobs/${jobId}`, { method: 'DELETE' });
         toast(`Job ${jobId} removed successfully`);
+        countdown = REFRESH_RATE;
         loadJobs();
     } catch (err) {
         toast(`Failed to remove job: ${err.message}`, 'error');
     }
 }
 
+
 function startAutoRefresh() {
-    let countdown = REFRESH_RATE;
+    countdown = REFRESH_RATE;
     $('#refresh-countdown').textContent = countdown;
 
     if (countdownInterval) clearInterval(countdownInterval);
@@ -209,7 +218,6 @@ document.addEventListener('DOMContentLoaded', () => {
     loadJobs();
     startAutoRefresh();
 
-    // Event listeners
     $('#refresh-btn').addEventListener('click', () => {
         loadJobs();
         startAutoRefresh();
