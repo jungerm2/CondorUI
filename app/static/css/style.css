@@ -56,6 +56,11 @@
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* Smooth theme transitions */
+* {
+    transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease, fill 0.25s ease, stroke 0.25s ease;
+}
+
 html { font-size: 14px; }
 
 body {
@@ -92,6 +97,12 @@ body {
 
 .logo { display: flex; align-items: center; gap: 10px; }
 .logo-icon { width: 28px; height: 28px; color: var(--accent-cyan); }
+/* Show sun icon by default (dark mode), hide moon icon */
+.icon-sun { display: block; }
+.icon-moon { display: none; }
+/* In light mode, show moon icon, hide sun icon */
+.light-theme .icon-sun { display: none; }
+.light-theme .icon-moon { display: block; }
 .logo-text { font-size: 1.2rem; font-weight: 700; background: var(--accent-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
 
 .nav-links { list-style: none; padding: 12px 10px; flex: 1; }

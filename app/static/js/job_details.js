@@ -39,6 +39,16 @@ async function loadJobDetails() {
         }
         $('#quick-walltime').textContent = wallTime;
 
+        // Populate additional metadata
+        $('#meta-cluster-id').textContent = `${clusterId}.${procId}`;
+        $('#meta-submitted').textContent = job.QDate ? formatDate(job.QDate) : '—';
+        $('#meta-completed').textContent = job.CompletionDate ? formatDate(job.CompletionDate) : '—';
+        $('#meta-cpus').textContent = job.RequestCpus || '—';
+        $('#meta-memory').textContent = job.RequestMemory ? `${job.RequestMemory} MB` : '—';
+        $('#meta-disk').textContent = job.RequestDisk ? `${job.RequestDisk} KB` : '—';
+        $('#meta-hold-reason').textContent = job.HoldReason || '—';
+        $('#meta-exit-code').textContent = job.ExitCode !== undefined ? job.ExitCode : '—';
+
         // Save file contents
         fileContents.log = data.log;
         fileContents.stdout = data.stdout;
@@ -50,6 +60,9 @@ async function loadJobDetails() {
 
         // Render action buttons
         renderActions(statusVal);
+
+        // Update download links
+        updateDownloadLinks(data.paths);
     } catch (e) {
         toast('Failed to load job details: ' + e.message, 'error');
     }
@@ -58,6 +71,28 @@ async function loadJobDetails() {
 function updateFileContentDisplay() {
     const outputEl = $('#file-content-output');
     outputEl.textContent = fileContents[activeFileTab];
+}
+
+function updateDownloadLinks(paths) {
+    // Build download URLs for full file content
+    const baseUrl = `/api/jobs/${clusterId}/${procId}/files?tail=0`;
+
+    const downloadLog = $('#download-log-btn');
+    const downloadStdout = $('#download-stdout-btn');
+    const downloadStderr = $('#download-stderr-btn');
+
+    if (downloadLog) {
+        downloadLog.href = paths.log ? baseUrl : '#';
+        downloadLog.style.display = paths.log ? 'inline-flex' : 'none';
+    }
+    if (downloadStdout) {
+        downloadStdout.href = paths.out ? baseUrl : '#';
+        downloadStdout.style.display = paths.out ? 'inline-flex' : 'none';
+    }
+    if (downloadStderr) {
+        downloadStderr.href = paths.err ? baseUrl : '#';
+        downloadStderr.style.display = paths.err ? 'inline-flex' : 'none';
+    }
 }
 
 function renderAttributesTable(job) {

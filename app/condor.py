@@ -7,9 +7,15 @@ from __future__ import annotations
 
 import getpass
 import logging
+import socket
 from typing import Any
 
+from cachetools import TTLCache
+
 logger = logging.getLogger(__name__)
+
+# Connection timeout for daemon checks (seconds)
+_SCHEDD_TIMEOUT = 5
 
 # Default to only showing the current user's jobs for performance
 CURRENT_USER = getpass.getuser()
@@ -68,6 +74,80 @@ DEFAULT_PROJECTION: list[str] = [
     "CumulativeRemoteUserCpu",
 ]
 
+# ---------------------------------------------------------------------------
+# TTL Cache — prevents hammering the schedd on rapid page loads
+# ---------------------------------------------------------------------------
+# Separate caches with different TTLs:
+#   - Active jobs: short TTL (5s) since state changes frequently
+#   - History: longer TTL (30s) since historical data is static
+#   - Status counts: short TTL (5s) to keep dashboard stats current
+# Each cache holds up to 256 distinct query keys.
+
+_query_cache: TTLCache = TTLCache(maxsize=256, ttl=5.0)
+_history_cache: TTLCache = TTLCache(maxsize=256, ttl=30.0)
+_counts_cache: TTLCache = TTLCache(maxsize=16, ttl=5.0)
+
+
+def _cache_key(prefix: str, constraint: str, projection: tuple[str, ...] | None) -> str:
+    """Build a deterministic cache key from function name and arguments."""
+    proj_str = ",".join(sorted(projection)) if projection else "default"
+    return f"{prefix}:{constraint}:{proj_str}"
+
+
+def clear_cache() -> None:
+    """Clear all cached data (called after submits/actions so new state is visible)."""
+    _query_cache.clear()
+    _history_cache.clear()
+    _counts_cache.clear()
+
+
+# ---------------------------------------------------------------------------
+# Daemon availability check
+# ---------------------------------------------------------------------------
+
+
+def daemon_available() -> bool:
+    """Quick check if the HTCondor daemon is reachable.
+    
+    Returns False immediately on machines without a running condor daemon,
+    rather than letting the caller hang for 30+ seconds.
+    
+    Uses a combination of env var checks and subprocess to avoid hanging.
+    """
+    import os
+    import subprocess
+
+    # If no CONDOR_CONFIG is set and no default config exists, daemon is unavailable
+    condor_config = os.environ.get("CONDOR_CONFIG", "")
+    if not condor_config:
+        # Check default locations
+        default_configs = [
+            "/etc/condor/condor_config",
+            "/etc/condor/config.d/00root",
+        ]
+        has_default_config = any(os.path.exists(p) for p in default_configs)
+        if not has_default_config:
+            return False
+
+    # Try a quick condor_ping to see if the schedd is alive (timeout 3s)
+    try:
+        result = subprocess.run(
+            ["condor_ping", "schedd"],
+            capture_output=True,
+            timeout=3,
+            text=True,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
+        pass
+
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Schedd helpers
+# ---------------------------------------------------------------------------
+
 
 def get_schedd() -> htcondor.Schedd:
     """Return a Schedd handle to the local scheduler."""
@@ -89,11 +169,19 @@ def _classad_to_dict(ad: Any) -> dict[str, Any]:
     return result
 
 
+# ---------------------------------------------------------------------------
+# Job queries with caching
+# ---------------------------------------------------------------------------
+
+
 def query_jobs(
     constraint: str = DEFAULT_CONSTRAINT,
     projection: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Query active jobs from the schedd.
+
+    Results are cached for 5 seconds to avoid hammering the schedd
+    on rapid page loads / auto-refresh.
 
     Args:
         constraint: ClassAd expression to filter jobs.
@@ -102,8 +190,13 @@ def query_jobs(
     Returns:
         List of job dicts.
     """
-    schedd = get_schedd()
     proj = projection or DEFAULT_PROJECTION
+    key = _cache_key("query_jobs", constraint, tuple(proj) if proj else None)
+
+    if key in _query_cache:
+        return _query_cache[key]
+
+    schedd = get_schedd()
     ads = schedd.query(constraint=constraint, projection=proj)
     jobs = []
     for ad in ads:
@@ -112,6 +205,8 @@ def query_jobs(
         status_code = d.get("JobStatus")
         d["JobStatusName"] = JOB_STATUS_MAP.get(status_code, f"Unknown({status_code})")
         jobs.append(d)
+
+    _query_cache[key] = jobs
     return jobs
 
 
@@ -122,6 +217,8 @@ def query_history(
 ) -> list[dict[str, Any]]:
     """Query completed jobs from the schedd history.
 
+    Results are cached for 30 seconds since history data rarely changes.
+
     Args:
         constraint: ClassAd expression to filter jobs.
         projection: List of attributes to return.
@@ -130,8 +227,13 @@ def query_history(
     Returns:
         List of job dicts.
     """
-    schedd = get_schedd()
     proj = projection or DEFAULT_PROJECTION
+    key = _cache_key("query_history", constraint, tuple(proj) if proj else None)
+
+    if key in _history_cache:
+        return _history_cache[key]
+
+    schedd = get_schedd()
     try:
         ads = schedd.history(
             constraint=constraint,
@@ -146,6 +248,8 @@ def query_history(
                 status_code, f"Unknown({status_code})"
             )
             jobs.append(d)
+
+        _history_cache[key] = jobs
         return jobs
     except Exception as e:
         logger.error("Failed to query history: %s", e)
@@ -155,9 +259,18 @@ def query_history(
 def get_job_status_counts() -> dict[str, int]:
     """Get aggregate counts of jobs by status.
 
+    Only queries the JobStatus attribute for maximum performance.
+    Results are cached for 5 seconds.
+
     Returns:
         Dict mapping status names to counts, plus a 'Total' key.
     """
+    key = _cache_key("job_status_counts", DEFAULT_CONSTRAINT, None)
+
+    if key in _counts_cache:
+        return _counts_cache[key]
+
+    # Only request JobStatus — much faster than full projection
     jobs = query_jobs(
         constraint=DEFAULT_CONSTRAINT,
         projection=["JobStatus"],
@@ -176,7 +289,14 @@ def get_job_status_counts() -> dict[str, int]:
         status = job.get("JobStatusName", "Unknown")
         counts[status] = counts.get(status, 0) + 1
         counts["Total"] += 1
+
+    _counts_cache[key] = counts
     return counts
+
+
+# ---------------------------------------------------------------------------
+# Job submission
+# ---------------------------------------------------------------------------
 
 
 def submit_job(
@@ -212,6 +332,10 @@ def submit_job(
         result = schedd.submit(sub, count=count)
     cluster_id = result.cluster()
     logger.info("Submitted cluster %d (%d procs)", cluster_id, count)
+
+    # Invalidate cache so subsequent queries see the new job immediately
+    clear_cache()
+
     return cluster_id
 
 
@@ -239,7 +363,16 @@ def submit_from_file(file_content: str, log_dir: str | None = None) -> tuple[int
     logger.info(
         "Submitted cluster %d (%d procs) from file", cluster_id, num_procs
     )
+
+    # Invalidate cache so subsequent queries see the new job immediately
+    clear_cache()
+
     return cluster_id, num_procs
+
+
+# ---------------------------------------------------------------------------
+# Job actions
+# ---------------------------------------------------------------------------
 
 
 def act_on_job(action: str, job_spec: str) -> dict[str, Any]:
@@ -263,11 +396,20 @@ def act_on_job(action: str, job_spec: str) -> dict[str, Any]:
     schedd = get_schedd()
     result = schedd.act(action_map[action], job_spec)
     logger.info("Action '%s' on '%s': %s", action, job_spec, result)
+
+    # Invalidate cache after job action so new state is visible
+    clear_cache()
+
     return {
         "action": action,
         "job_spec": job_spec,
         "result": str(result),
     }
+
+
+# ---------------------------------------------------------------------------
+# Job log / file helpers
+# ---------------------------------------------------------------------------
 
 
 def get_job_file_content(file_path: str, tail: int = 500) -> str:
@@ -333,7 +475,7 @@ def get_job_log(cluster_id: int, proc_id: int = 0, tail: int = 200) -> str:
     log_path = paths.get("log")
     if not log_path:
         return f"No log file path found for job {cluster_id}.{proc_id}"
-    
+
     content = get_job_file_content(log_path, tail=tail)
     if not content:
         return f"Log file not found on disk or empty for job {cluster_id}.{proc_id} at {log_path}"

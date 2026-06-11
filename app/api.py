@@ -13,7 +13,10 @@ from app import db
 from app.condor import (
     DEFAULT_CONSTRAINT,
     act_on_job,
+    daemon_available,
+    get_job_file_content,
     get_job_log,
+    get_job_log_file_paths,
     get_job_status_counts,
     query_history,
     query_jobs,
@@ -38,13 +41,45 @@ def handle_error(e: Exception):
 
 
 # ---------------------------------------------------------------------------
+# Health check
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route("/health")
+def health_check():
+    """Lightweight health check — does not query the schedd."""
+    return jsonify({"status": "ok"})
+
+
+# ---------------------------------------------------------------------------
 # Job queries
 # ---------------------------------------------------------------------------
 
 
 @api_bp.route("/jobs")
 def list_jobs():
-    """List active jobs, with optional filters."""
+    """List active jobs, with optional filters and pagination.
+
+    Query parameters:
+        owner     — Filter by owner username
+        status    — Filter by JobStatus code (1=Idle, 2=Running, 5=Held, etc.)
+        cluster_id — Filter by cluster ID
+        limit     — Max results to return (default 200, max 5000)
+        offset    — Number of results to skip (default 0)
+    """
+    # Check daemon availability first
+    if not daemon_available():
+        return jsonify({
+            "jobs": [],
+            "count": 0,
+            "total": 0,
+            "has_more": False,
+            "limit": 0,
+            "offset": 0,
+            "daemon_unavailable": True,
+            "message": "HTCondor daemon is not available. This is expected on a development machine without a running condor_schedd."
+        })
+
     constraint_parts: list[str] = []
 
     owner = request.args.get("owner")
@@ -62,8 +97,25 @@ def list_jobs():
     constraint = " && ".join(constraint_parts) if constraint_parts else DEFAULT_CONSTRAINT
 
     try:
+        limit = request.args.get("limit", 200, type=int)
+        offset = request.args.get("offset", 0, type=int)
+        # Cap limit to prevent excessive queries
+        limit = min(limit, 5000)
+
         jobs = query_jobs(constraint=constraint)
-        return jsonify({"jobs": jobs, "count": len(jobs)})
+        total = len(jobs)
+        # Apply pagination
+        paginated = jobs[offset:offset + limit]
+        has_more = (offset + limit) < total
+
+        return jsonify({
+            "jobs": paginated,
+            "count": len(paginated),
+            "total": total,
+            "has_more": has_more,
+            "limit": limit,
+            "offset": offset,
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -71,12 +123,20 @@ def list_jobs():
 @api_bp.route("/jobs/<int:cluster_id>")
 def get_cluster(cluster_id: int):
     """Get all procs for a specific cluster."""
+    if not daemon_available():
+        return jsonify({
+            "cluster_id": cluster_id,
+            "jobs": [],
+            "count": 0,
+            "daemon_unavailable": True,
+            "message": "HTCondor daemon is not available. This is expected on a development machine without a running condor_schedd."
+        })
     try:
         jobs = query_jobs(constraint=f"ClusterId == {cluster_id}")
         if not jobs:
-            # Check history
+            # Check history — use a reasonable limit
             jobs = query_history(
-                constraint=f"ClusterId == {cluster_id}", limit=1000
+                constraint=f"ClusterId == {cluster_id}", limit=200
             )
         return jsonify({"cluster_id": cluster_id, "jobs": jobs, "count": len(jobs)})
     except Exception as e:
@@ -86,6 +146,13 @@ def get_cluster(cluster_id: int):
 @api_bp.route("/history")
 def list_history():
     """List completed jobs from condor_history."""
+    if not daemon_available():
+        return jsonify({
+            "jobs": [],
+            "count": 0,
+            "daemon_unavailable": True,
+            "message": "HTCondor daemon is not available. This is expected on a development machine without a running condor_schedd."
+        })
     limit = request.args.get("limit", current_app.config["MAX_HISTORY_RESULTS"], type=int)
     constraint = request.args.get("constraint", DEFAULT_CONSTRAINT)
     try:
@@ -98,6 +165,11 @@ def list_history():
 @api_bp.route("/stats")
 def get_stats():
     """Get aggregate job status counts."""
+    if not daemon_available():
+        return jsonify({
+            "daemon_unavailable": True,
+            "message": "HTCondor daemon is not available. This is expected on a development machine without a running condor_schedd."
+        })
     try:
         counts = get_job_status_counts()
         return jsonify(counts)
@@ -178,7 +250,7 @@ def submit_file():
 
     try:
         content = file.read().decode("utf-8")
-        
+
         import uuid
         job_uuid = f"job_{uuid.uuid4().hex}"
         log_dir = os.path.join(current_app.config["JOB_LOGS_DIR"], job_uuid)
@@ -284,7 +356,7 @@ def remove_job(job_id: str):
 
 
 # ---------------------------------------------------------------------------
-# Job logs
+# Job logs & file content
 # ---------------------------------------------------------------------------
 
 
@@ -296,6 +368,33 @@ def job_log(cluster_id: int):
     try:
         log_content = get_job_log(cluster_id, proc_id=proc_id, tail=tail)
         return jsonify({"cluster_id": cluster_id, "proc_id": proc_id, "log": log_content})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@api_bp.route("/jobs/<int:cluster_id>/<int:proc_id>/files")
+def job_files(cluster_id: int, proc_id: int):
+    """Get log, stdout, and stderr file contents for a specific job proc.
+
+    Query parameters:
+        tail — Number of lines to return from the end of each file (default 500, 0 = all)
+    """
+    tail = request.args.get("tail", 500, type=int)
+    try:
+        paths = get_job_log_file_paths(cluster_id, proc_id=proc_id)
+
+        log_content = get_job_file_content(paths.get("log", ""), tail=tail) if tail > 0 else ""
+        stdout_content = get_job_file_content(paths.get("out", ""), tail=tail) if tail > 0 else ""
+        stderr_content = get_job_file_content(paths.get("err", ""), tail=tail) if tail > 0 else ""
+
+        return jsonify({
+            "cluster_id": cluster_id,
+            "proc_id": proc_id,
+            "paths": paths,
+            "log": log_content or "No log content yet or file not found.",
+            "stdout": stdout_content or "No stdout content yet or file not found.",
+            "stderr": stderr_content or "No stderr content yet or file not found.",
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -318,7 +417,6 @@ def job_details(cluster_id: int):
         job = jobs[0] if jobs else {}
 
         # 2. Get log, stdout, and stderr file paths
-        from app.condor import get_job_log_file_paths, get_job_file_content
         paths = get_job_log_file_paths(cluster_id, proc_id=proc_id)
 
         # 3. Read file contents

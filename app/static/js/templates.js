@@ -1,7 +1,7 @@
 async function loadTemplates() {
     try {
-        const templates = await api('/templates');
-        renderTemplatesGrid(templates);
+        const data = await api('/templates');
+        renderTemplatesGrid(data.templates || []);
     } catch (e) {
         toast('Failed to load templates: ' + e.message, 'error');
     }

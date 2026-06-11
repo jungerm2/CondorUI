@@ -26,7 +26,7 @@ function toast(message, type = 'info') {
     }, 3000);
 }
 
-// API client wrapper
+// API client wrapper with timeout
 async function api(endpoint, options = {}) {
     const url = `${API_BASE}${endpoint}`;
     const headers = {
@@ -34,8 +34,17 @@ async function api(endpoint, options = {}) {
         ...options.headers
     };
 
+    // Add a 30-second timeout to prevent hanging
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+
     try {
-        const response = await fetch(url, { ...options, headers });
+        const response = await fetch(url, {
+            ...options,
+            headers,
+            signal: options.signal || controller.signal,
+        });
+        clearTimeout(timeoutId);
         const data = await response.json();
 
         if (!response.ok) {
@@ -43,6 +52,11 @@ async function api(endpoint, options = {}) {
         }
         return data;
     } catch (error) {
+        clearTimeout(timeoutId);
+        if (error.name === 'AbortError') {
+            console.error(`API Timeout (${endpoint}): Request timed out after 30s`);
+            throw new Error('Request timed out. The server may be unavailable.');
+        }
         console.error(`API Error (${endpoint}):`, error);
         throw error;
     }
@@ -97,16 +111,18 @@ function basename(path) {
 
 // Theme Management
 function initTheme() {
-    const savedTheme = localStorage.getItem('theme') || 'dark';
-    document.documentElement.setAttribute('data-theme', savedTheme);
+    let savedTheme = localStorage.getItem('theme');
+    if (!savedTheme) {
+        savedTheme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    }
+    document.documentElement.classList.toggle('light-theme', savedTheme === 'light');
 
     const toggle = $('#theme-toggle');
     if (toggle) {
         toggle.addEventListener('click', () => {
-            const current = document.documentElement.getAttribute('data-theme');
-            const newTheme = current === 'dark' ? 'light' : 'dark';
-            document.documentElement.setAttribute('data-theme', newTheme);
-            localStorage.setItem('theme', newTheme);
+            const isLight = document.documentElement.classList.contains('light-theme');
+            document.documentElement.classList.toggle('light-theme', !isLight);
+            localStorage.setItem('theme', isLight ? 'dark' : 'light');
         });
     }
 }
@@ -118,9 +134,13 @@ function initConnectionMonitor() {
 
     async function checkStatus() {
         try {
-            await api('/stats');
-            statusDot.className = 'status-dot status-connected';
-            statusText.textContent = 'Connected';
+            const response = await fetch('/api/health');
+            if (response.ok) {
+                statusDot.className = 'status-dot status-connected';
+                statusText.textContent = 'Connected';
+            } else {
+                throw new Error('Not OK');
+            }
         } catch (error) {
             statusDot.className = 'status-dot status-disconnected';
             statusText.textContent = 'Disconnected';

@@ -5,8 +5,16 @@ let sortAsc = false;
 async function loadHistory() {
     const limit = $('#history-limit').value;
     try {
-        const jobs = await api(`/history?limit=${limit}`);
-        currentHistory = jobs;
+        const data = await api(`/history?limit=${limit}`);
+        if (data.daemon_unavailable) {
+            currentHistory = [];
+            const tbody = $('#history-tbody');
+            if (tbody) {
+                tbody.innerHTML = `<tr class="empty-row"><td colspan="8">⚠️ HTCondor daemon is not available. This is expected on a development machine without a running condor_schedd.</td></tr>`;
+            }
+            return;
+        }
+        currentHistory = data.jobs || [];
         renderHistoryTable();
     } catch (e) {
         toast('Failed to load history: ' + e.message, 'error');

@@ -7,12 +7,26 @@ const REFRESH_RATE = 30; // seconds
 
 async function loadJobs() {
     try {
-        const jobs = await api('/jobs');
-        currentJobs = jobs;
+        const data = await api('/jobs');
+        if (data.daemon_unavailable) {
+            currentJobs = [];
+            const tbody = $('#jobs-tbody');
+            if (tbody) {
+                tbody.innerHTML = `<tr class="empty-row"><td colspan="8">⚠️ HTCondor daemon is not available. This is expected on a development machine without a running condor_schedd.</td></tr>`;
+            }
+            renderStats();
+            return;
+        }
+        currentJobs = data.jobs || [];
         renderJobsTable();
         renderStats();
     } catch (e) {
         toast('Failed to load active jobs: ' + e.message, 'error');
+        // Show empty state instead of leaving stale "Loading..." in the table
+        const tbody = $('#jobs-tbody');
+        if (tbody) {
+            tbody.innerHTML = `<tr class="empty-row"><td colspan="8">Unable to connect to HTCondor. ${e.message}</td></tr>`;
+        }
     }
 }
 
@@ -38,7 +52,7 @@ function getFilteredJobs() {
 
     return currentJobs.filter(job => {
         // Text filter
-        const matchesText = !query || 
+        const matchesText = !query ||
             (job.ClusterId.toString().includes(query)) ||
             (job.Owner && job.Owner.toLowerCase().includes(query)) ||
             (job.Cmd && job.Cmd.toLowerCase().includes(query));
