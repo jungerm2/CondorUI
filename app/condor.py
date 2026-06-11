@@ -107,41 +107,22 @@ def clear_cache() -> None:
 
 
 def daemon_available() -> bool:
-    """Quick check if the HTCondor daemon is reachable.
-    
-    Returns False immediately on machines without a running condor daemon,
-    rather than letting the caller hang for 30+ seconds.
-    
-    Uses a combination of env var checks and subprocess to avoid hanging.
+    """Quick check if the HTCondor scheduler daemon (schedd) is reachable.
+
+    Tries a lightweight ``schedd.query(limit=1)`` and returns ``True`` if
+    it succeeds.  If the daemon is unreachable or the Python bindings are
+    not installed, returns ``False``.
+
+    The caller should **not** rely on this as a gate — the rest of the API
+    gracefully returns empty results when the daemon is unavailable.
     """
-    import os
-    import subprocess
-
-    # If no CONDOR_CONFIG is set and no default config exists, daemon is unavailable
-    condor_config = os.environ.get("CONDOR_CONFIG", "")
-    if not condor_config:
-        # Check default locations
-        default_configs = [
-            "/etc/condor/condor_config",
-            "/etc/condor/config.d/00root",
-        ]
-        has_default_config = any(os.path.exists(p) for p in default_configs)
-        if not has_default_config:
-            return False
-
-    # Try a quick condor_ping to see if the schedd is alive (timeout 3s)
     try:
-        result = subprocess.run(
-            ["condor_ping", "schedd"],
-            capture_output=True,
-            timeout=3,
-            text=True,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
-        pass
-
-    return False
+        schedd = get_schedd()
+        schedd.query(constraint="JobStatus == 1", projection=["ClusterId"], limit=1)
+        return True
+    except Exception:
+        logger.debug("daemon_available: schedd unreachable", exc_info=True)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -319,10 +300,7 @@ def submit_job(
     """
     sub_dict = dict(submit_dict)
     if log_dir:
-        import os
-        sub_dict["output"] = os.path.join(log_dir, "job_$(ClusterId)_$(ProcId).out")
-        sub_dict["error"] = os.path.join(log_dir, "job_$(ClusterId)_$(ProcId).err")
-        sub_dict["log"] = os.path.join(log_dir, "job_$(ClusterId).log")
+        sub_dict["LogsDir"] = log_dir
 
     sub = htcondor.Submit(sub_dict)
     schedd = get_schedd()
@@ -351,10 +329,7 @@ def submit_from_file(file_content: str, log_dir: str | None = None) -> tuple[int
     """
     sub = htcondor.Submit(file_content)
     if log_dir:
-        import os
-        sub["output"] = os.path.join(log_dir, "job_$(ClusterId)_$(ProcId).out")
-        sub["error"] = os.path.join(log_dir, "job_$(ClusterId)_$(ProcId).err")
-        sub["log"] = os.path.join(log_dir, "job_$(ClusterId).log")
+        sub["LogsDir"] = log_dir
 
     schedd = get_schedd()
     result = schedd.submit(sub)

@@ -72,7 +72,7 @@ function initInputFilesUpload() {
     async function handleUploadFiles(files) {
         for (const file of files) {
             const formData = new FormData();
-            formData.append('file', file);
+            formData.append('files', file);
             toast(`Uploading ${file.name}...`);
             try {
                 const res = await fetch('/api/upload', {
@@ -169,8 +169,15 @@ function buildSubmitDict() {
     const universe = $('#job-universe').value;
     const d = {
         universe: universe,
-        executable: $('#job-executable').value.trim()
     };
+
+    // Executable vs Shell mode
+    const isShell = $('#execmode-shell-btn').classList.contains('active');
+    if (isShell) {
+        d.shell = $('#job-shell-cmd').value.trim();
+    } else {
+        d.executable = $('#job-executable').value.trim();
+    }
 
     if (universe === 'container') {
         const img = $('#job-container-image').value.trim();
@@ -225,8 +232,9 @@ async function submitFormJob() {
     const count = parseInt($('#job-count').value) || 1;
     const submit = buildSubmitDict();
 
-    if (!submit.executable) {
-        toast('Executable is required', 'warning');
+    if (!submit.executable && !submit.shell) {
+        const isShell = $('#execmode-shell-btn').classList.contains('active');
+        toast(isShell ? 'Shell command is required' : 'Executable is required', 'warning');
         return;
     }
 
@@ -307,9 +315,14 @@ function syncFormToRaw() {
     if (submit.container_image) {
         rawText += `container_image = ${submit.container_image}\n`;
     }
-    rawText += `executable = ${submit.executable || ''}\n`;
-    if (submit.arguments) {
-        rawText += `arguments = ${submit.arguments}\n`;
+    // Shell and executable are mutually exclusive
+    if (submit.shell) {
+        rawText += `shell = ${submit.shell}\n`;
+    } else if (submit.executable) {
+        rawText += `executable = ${submit.executable}\n`;
+        if (submit.arguments) {
+            rawText += `arguments = ${submit.arguments}\n`;
+        }
     }
     if (submit.transfer_input_files) {
         rawText += `transfer_input_files = ${submit.transfer_input_files}\n`;
@@ -372,7 +385,22 @@ function syncRawToForm() {
                 $('#job-container-image').value = val;
                 break;
             case 'executable':
+                // Switch to Executable mode
+                $('#execmode-exec-btn').classList.add('active');
+                $('#execmode-shell-btn').classList.remove('active');
+                $('#exec-field').style.display = 'block';
+                $('#shell-field').style.display = 'none';
+                $('#args-field').style.display = 'block';
                 $('#job-executable').value = val;
+                break;
+            case 'shell':
+                // Switch to Shell mode
+                $('#execmode-shell-btn').classList.add('active');
+                $('#execmode-exec-btn').classList.remove('active');
+                $('#shell-field').style.display = 'block';
+                $('#exec-field').style.display = 'none';
+                $('#args-field').style.display = 'none';
+                $('#job-shell-cmd').value = val;
                 break;
             case 'arguments':
                 $('#job-arguments').value = val;
@@ -472,6 +500,15 @@ function checkSelectedTemplate() {
             
             if (tmpl.description.trim().startsWith('{')) {
                 const submit = JSON.parse(tmpl.description);
+                if (submit.shell) {
+                    // Switch to Shell mode
+                    $('#execmode-shell-btn').classList.add('active');
+                    $('#execmode-exec-btn').classList.remove('active');
+                    $('#shell-field').style.display = 'block';
+                    $('#exec-field').style.display = 'none';
+                    $('#args-field').style.display = 'none';
+                    $('#job-shell-cmd').value = submit.shell;
+                }
                 if (submit.universe) {
                     $('#job-universe').value = submit.universe;
                     $('#job-universe').dispatchEvent(new Event('change'));
@@ -493,7 +530,7 @@ function checkSelectedTemplate() {
                     $('#job-transfer-input').value = nonOsdf.join(', ');
                 }
                 
-                const standardKeys = ['universe', 'container_image', 'executable', 'arguments', 'request_cpus', 'request_memory', 'request_disk', 'output', 'error', 'log', 'transfer_input_files'];
+                const standardKeys = ['universe', 'container_image', 'executable', 'arguments', 'shell', 'request_cpus', 'request_memory', 'request_disk', 'output', 'error', 'log', 'transfer_input_files'];
                 const container = $('#extra-attrs');
                 container.innerHTML = '';
                 for (const [key, val] of Object.entries(submit)) {
@@ -534,8 +571,9 @@ async function saveAsTemplate(mode) {
     let description = '';
     if (mode === 'form') {
         const submit = buildSubmitDict();
-        if (!submit.executable) {
-            toast('Executable is required to save template', 'warning');
+        if (!submit.executable && !submit.shell) {
+            const isShell = $('#execmode-shell-btn').classList.contains('active');
+            toast(isShell ? 'Shell command is required to save template' : 'Executable is required to save template', 'warning');
             return;
         }
         description = JSON.stringify(submit);
@@ -575,9 +613,43 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Tab mode transition sync
-    $('#mode-raw-btn').addEventListener('click', syncFormToRaw);
-    $('#mode-form-btn').addEventListener('click', syncRawToForm);
+    // Executable / Shell toggle
+    function initExecShellToggle() {
+        const execBtn = $('#execmode-exec-btn');
+        const shellBtn = $('#execmode-shell-btn');
+        const execField = $('#exec-field');
+        const shellField = $('#shell-field');
+        const argsField = $('#args-field');
+
+        execBtn.addEventListener('click', () => {
+            execBtn.classList.add('active');
+            shellBtn.classList.remove('active');
+            execField.style.display = 'block';
+            shellField.style.display = 'none';
+            argsField.style.display = 'block';
+        });
+
+        shellBtn.addEventListener('click', () => {
+            shellBtn.classList.add('active');
+            execBtn.classList.remove('active');
+            shellField.style.display = 'block';
+            execField.style.display = 'none';
+            argsField.style.display = 'none';
+        });
+    }
+    initExecShellToggle();
+
+        // Tab mode transition sync — propagate job name when switching
+    $('#mode-raw-btn').addEventListener('click', () => {
+        // Copy form job name to raw job name
+        $('#raw-job-name').value = $('#job-name').value.trim() || 'Untitled Job';
+        syncFormToRaw();
+    });
+    $('#mode-form-btn').addEventListener('click', () => {
+        // Copy raw job name to form job name
+        $('#job-name').value = $('#raw-job-name').value.trim() || '';
+        syncRawToForm();
+    });
 
     // Submission triggers
     $('#submit-form-btn').addEventListener('click', submitFormJob);

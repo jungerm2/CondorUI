@@ -43,11 +43,22 @@
                                 class="form-input">
                         </div>
                         <div class="form-group">
+                            <div class="exec-shell-toggle">
+                                <button class="toggle-btn active" data-execmode="executable" id="execmode-exec-btn">Executable</button>
+                                <button class="toggle-btn" data-execmode="shell" id="execmode-shell-btn">Shell</button>
+                            </div>
+                        </div>
+                        <div class="form-group execmode-field" id="exec-field">
                             <label for="job-executable">Executable</label>
                             <input type="text" id="job-executable" placeholder="/bin/sleep" class="form-input"
                                 required>
                         </div>
-                        <div class="form-group">
+                        <div class="form-group execmode-field" id="shell-field" style="display:none;">
+                            <label for="job-shell-cmd">Shell Command</label>
+                            <input type="text" id="job-shell-cmd" placeholder="sleep 60" class="form-input"
+                                required>
+                        </div>
+                        <div class="form-group execmode-field" id="args-field">
                             <label for="job-arguments">Arguments</label>
                             <input type="text" id="job-arguments" placeholder="60" class="form-input">
                         </div>
@@ -80,17 +91,17 @@
                         </div>
                         <div class="form-group">
                             <label for="job-output">Output File</label>
-                            <input type="text" id="job-output" placeholder="job_$(ClusterId)_$(ProcId).out"
+                            <input type="text" id="job-output" value="$LogsDir/job_$(ClusterId)_$(ProcId).out"
                                 class="form-input">
                         </div>
                         <div class="form-group">
                             <label for="job-error">Error File</label>
-                            <input type="text" id="job-error" placeholder="job_$(ClusterId)_$(ProcId).err"
+                            <input type="text" id="job-error" value="$LogsDir/job_$(ClusterId)_$(ProcId).err"
                                 class="form-input">
                         </div>
                         <div class="form-group">
                             <label for="job-log">Log File</label>
-                            <input type="text" id="job-log" placeholder="job_$(ClusterId).log"
+                            <input type="text" id="job-log" value="$LogsDir/job_$(ClusterId).log"
                                 class="form-input">
                         </div>
                         <div class="form-group">
@@ -177,9 +188,9 @@
 executable = /bin/sleep
 arguments = 60
 
-output = job.out
-error = job.err
-log = job.log
+output = $LogsDir/job_$(ClusterId)_$(ProcId).out
+error = $LogsDir/job_$(ClusterId)_$(ProcId).err
+log = $LogsDir/job_$(ClusterId).log
 
 request_cpus = 1
 request_memory = 1 GB
