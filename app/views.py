@@ -25,8 +25,9 @@ def templates_page():
 
 @views_bp.route("/history")
 def history_page():
-    """Serve the history page."""
-    return render_template("history.html", active_page="history")
+    """Redirect to dashboard (history is now merged into the dashboard page)."""
+    from flask import redirect, url_for
+    return redirect(url_for("views.index"))
 
 
 @views_bp.route("/job/<int:cluster_id>")
