@@ -394,6 +394,41 @@ def submit_from_file(file_content: str, log_dir: str | None = None) -> tuple[int
 # ---------------------------------------------------------------------------
 
 
+def qedit_job(cluster_id: int, proc_id: int, attr: str, value: str) -> dict[str, Any]:
+    """Edit a ClassAd attribute on a job using condor_qedit.
+
+    Args:
+        cluster_id: The cluster ID of the job.
+        proc_id: The proc ID of the job.
+        attr: The attribute name to edit (e.g., 'request_disk').
+        value: The new value for the attribute.
+
+    Returns:
+        Dict with qedit result details.
+    """
+    schedd = get_schedd()
+    job_spec = f"{cluster_id}.{proc_id}"
+
+    # Build a ClassAd with the attribute to edit
+    ad = classad.ClassAd()
+    ad[attr] = value
+
+    # Use schedd.edit() to modify the job's attributes
+    result = schedd.edit(job_spec, attr, value)
+    logger.info("qedit %s: %s = %s → %s", job_spec, attr, value, result)
+
+    # Invalidate cache so subsequent queries see the updated attributes
+    clear_cache()
+
+    return {
+        "action": "qedit",
+        "job_spec": job_spec,
+        "attr": attr,
+        "value": value,
+        "result": str(result),
+    }
+
+
 def act_on_job(action: str, job_spec: str) -> dict[str, Any]:
     """Perform an action on a job or set of jobs.
 

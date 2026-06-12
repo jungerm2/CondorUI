@@ -7,8 +7,14 @@ let fileContents = {
     stderr: ''
 };
 let activeFileTab = 'log';
+let detailsRefreshTimer = null;
+let detailsRefreshInProgress = false;
 
 async function loadJobDetails() {
+    // Prevent concurrent refresh calls
+    if (detailsRefreshInProgress) return;
+    detailsRefreshInProgress = true;
+
     try {
         const data = await api(`/jobs/${clusterId}/details?proc=${procId}&tail=1000`);
         
@@ -26,7 +32,7 @@ async function loadJobDetails() {
 
         // Populate quick metrics
         $('#quick-owner').textContent = job.Owner || '—';
-        $('#quick-executable').textContent = job.Cmd ? basename(job.Cmd) : '—';
+        $('#quick-executable').textContent = formatCommand(job.Cmd, job.Args);
         $('#quick-host').textContent = job.RemoteHost ? basename(job.RemoteHost) : (job.LastRemoteHost ? basename(job.LastRemoteHost) : '—');
         
         let wallTime = '—';
@@ -39,15 +45,18 @@ async function loadJobDetails() {
         }
         $('#quick-walltime').textContent = wallTime;
 
-        // Populate additional metadata
+        // Populate additional metadata with formatted resources
         $('#meta-cluster-id').textContent = `${clusterId}.${procId}`;
         $('#meta-submitted').textContent = job.QDate ? formatDate(job.QDate) : '—';
         $('#meta-completed').textContent = job.CompletionDate ? formatDate(job.CompletionDate) : '—';
         $('#meta-cpus').textContent = job.RequestCpus || '—';
-        $('#meta-memory').textContent = job.RequestMemory ? `${job.RequestMemory} MB` : '—';
-        $('#meta-disk').textContent = job.RequestDisk ? `${job.RequestDisk} KB` : '—';
+        $('#meta-memory').textContent = formatMemory(job.RequestMemory);
+        $('#meta-disk').textContent = formatDisk(job.RequestDisk);
         $('#meta-hold-reason').textContent = job.HoldReason || '—';
         $('#meta-exit-code').textContent = job.ExitCode !== undefined ? job.ExitCode : '—';
+
+        // Parse logs for usage data
+        parseLogsForUsage(data.log);
 
         // Save file contents
         fileContents.log = data.log;
@@ -59,13 +68,149 @@ async function loadJobDetails() {
         renderAttributesTable(job);
 
         // Render action buttons
-        renderActions(statusVal);
+        renderActions(statusVal, data.log);
 
         // Update download links
         updateDownloadLinks(data.paths);
+
+        // Start auto-refresh if job is not complete
+        startDetailsAutoRefresh(statusVal);
     } catch (e) {
         toast('Failed to load job details: ' + e.message, 'error');
+    } finally {
+        detailsRefreshInProgress = false;
     }
+}
+
+/**
+ * Parse the log content for Partitionable Resources usage.
+ * Looks for lines like:
+ *   Disk (KB)            :     3000  1048576   1048576
+ *   Memory (MB)          :              1024      1024
+ */
+function parseLogsForUsage(logContent) {
+    if (!logContent) return;
+
+    const usageContainer = $('#job-usage-container');
+    if (!usageContainer) return;
+
+    // Find Partitionable Resources section
+    const lines = logContent.split('\n');
+    let inResourceSection = false;
+    let usageLines = [];
+
+    for (const line of lines) {
+        if (line.includes('Partitionable Resources')) {
+            inResourceSection = true;
+            continue;
+        }
+        if (inResourceSection) {
+            // Empty line or non-resource line ends the section
+            if (line.trim() === '' || (!line.includes(':') && !line.includes('|'))) {
+                if (usageLines.length > 0) break;
+                inResourceSection = false;
+                continue;
+            }
+            usageLines.push(line);
+        }
+    }
+
+    if (usageLines.length === 0) {
+        usageContainer.innerHTML = `<p class="usage-notes">No resource usage data found in log yet.</p>`;
+        return;
+    }
+
+    // Parse resource lines
+    // Format: Cpus : 1 1
+    //         Disk (KB) : 3000 1048576 1048576
+    //         Memory (MB) : 1024 1024
+    let html = '<div class="usage-grid">';
+
+    for (const line of usageLines) {
+        const parts = line.split(':');
+        if (parts.length < 2) continue;
+
+        const resourceName = parts[0].trim();
+        const values = parts.slice(1).join(':').trim().split(/\s+/).filter(v => v);
+
+        if (values.length === 0) continue;
+
+        // Determine which values correspond to Usage, Request, Allocated
+        let usageVal = '—', requestVal = '—', allocatedVal = '—';
+
+        if (resourceName.toLowerCase().includes('cpus') || resourceName.toLowerCase().includes('gpus')) {
+            if (values.length >= 1) requestVal = values[values.length >= 2 ? values.length - 2 : 0];
+            if (values.length >= 1) allocatedVal = values[values.length - 1];
+            if (values.length >= 3) usageVal = values[0];
+        } else if (resourceName.toLowerCase().includes('disk') || resourceName.toLowerCase().includes('memory')) {
+            if (values.length >= 3) {
+                usageVal = values[0];
+                requestVal = values[1];
+                allocatedVal = values[2];
+            } else if (values.length === 2) {
+                requestVal = values[0];
+                allocatedVal = values[1];
+            } else if (values.length === 1) {
+                allocatedVal = values[0];
+            }
+        } else {
+            if (values.length >= 3) {
+                usageVal = values[0];
+                requestVal = values[1];
+                allocatedVal = values[2];
+            } else if (values.length >= 1) {
+                allocatedVal = values[values.length - 1];
+            }
+        }
+
+        // Format the values based on resource type
+        let usageDisplay = usageVal;
+        let requestDisplay = requestVal;
+        let allocatedDisplay = allocatedVal;
+
+        if (resourceName.toLowerCase().includes('memory')) {
+            // Memory values are in MB
+            usageDisplay = usageVal !== '—' ? formatBytes(usageVal, 'MB') : '—';
+            requestDisplay = requestVal !== '—' ? formatBytes(requestVal, 'MB') : '—';
+            allocatedDisplay = allocatedVal !== '—' ? formatBytes(allocatedVal, 'MB') : '—';
+        } else if (resourceName.toLowerCase().includes('disk')) {
+            // Disk values are in KB
+            usageDisplay = usageVal !== '—' ? formatBytes(usageVal, 'KB') : '—';
+            requestDisplay = requestVal !== '—' ? formatBytes(requestVal, 'KB') : '—';
+            allocatedDisplay = allocatedVal !== '—' ? formatBytes(allocatedVal, 'KB') : '—';
+        }
+
+        let usagePercent = '';
+        if (usageVal !== '—' && requestVal !== '—' && parseFloat(requestVal) > 0) {
+            const pct = (parseFloat(usageVal) / parseFloat(requestVal) * 100);
+            if (pct > 0) {
+                usagePercent = `<span class="usage-pct ${pct > 100 ? 'usage-exceeded' : pct > 90 ? 'usage-warning' : ''}">(${pct.toFixed(0)}%)</span>`;
+            }
+        }
+
+        html += `
+            <div class="usage-item">
+                <span class="usage-label">${resourceName}</span>
+                <div class="usage-values">
+                    <div class="usage-value">
+                        <span class="usage-value-label">Usage</span>
+                        <span class="usage-value-num">${usageDisplay} ${usagePercent}</span>
+                    </div>
+                    <div class="usage-value">
+                        <span class="usage-value-label">Requested</span>
+                        <span class="usage-value-num">${requestDisplay}</span>
+                    </div>
+                    <div class="usage-value">
+                        <span class="usage-value-label">Allocated</span>
+                        <span class="usage-value-num">${allocatedDisplay}</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    html += '</div>';
+    usageContainer.innerHTML = html;
 }
 
 function updateFileContentDisplay() {
@@ -120,7 +265,7 @@ function renderAttributesTable(job) {
     });
 }
 
-function renderActions(statusVal) {
+function renderActions(statusVal, logContent) {
     const container = $('#job-actions-container');
     container.innerHTML = '';
     
@@ -132,7 +277,7 @@ function renderActions(statusVal) {
     if (!isActive) return;
 
     if (status === 5) {
-        // Held
+        // Held — show release and qedit buttons
         container.innerHTML = `
             <button class="btn btn-primary" id="action-release-btn">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="margin-right: 8px;">
@@ -140,7 +285,26 @@ function renderActions(statusVal) {
                 </svg>
                 Release Job
             </button>
+            <button class="btn btn-ghost" id="action-qedit-btn" style="border: 1px solid var(--border-color);">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="margin-right: 8px;">
+                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+                    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+                </svg>
+                Edit Job (qedit)
+            </button>
         `;
+
+        // Check if the hold was due to exceeded resources — if so, auto-show the qedit dialog
+        const isResourceExceeded = logContent && (
+            logContent.includes('exceeded allocated disk') ||
+            logContent.includes('exceeded allocated memory')
+        );
+        if (isResourceExceeded) {
+            setTimeout(() => {
+                const qeditBtn = $('#action-qedit-btn');
+                if (qeditBtn) qeditBtn.style.border = '2px solid var(--status-held)';
+            }, 100);
+        }
     } else {
         // Running or Idle
         container.innerHTML = `
@@ -168,6 +332,7 @@ function renderActions(statusVal) {
     const holdBtn = $('#action-hold-btn');
     const releaseBtn = $('#action-release-btn');
     const removeBtn = $('#action-remove-btn');
+    const qeditBtn = $('#action-qedit-btn');
 
     if (holdBtn) {
         holdBtn.addEventListener('click', async () => {
@@ -204,6 +369,144 @@ function renderActions(statusVal) {
                 toast(`Failed to remove job: ${err.message}`, 'error');
             }
         });
+    }
+
+    if (qeditBtn) {
+        qeditBtn.addEventListener('click', openQeditDialog);
+    }
+}
+
+/**
+ * Open a modal dialog for editing job attributes (condor_qedit).
+ */
+function openQeditDialog() {
+    // Create modal overlay
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay active';
+    overlay.id = 'qedit-modal';
+    overlay.innerHTML = `
+        <div class="modal">
+            <div class="modal-header">
+                <h2>Edit Job Attributes</h2>
+                <button class="btn btn-ghost btn-sm" id="qedit-close-btn" style="padding: 4px 8px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 16px; color: var(--text-secondary);">
+                    Edit ClassAd attributes for job <strong>${clusterId}.${procId}</strong>.
+                    Changes take effect immediately via <code>condor_qedit</code>.
+                </p>
+                <div class="form-group">
+                    <label for="qedit-attr-key">Attribute Name</label>
+                    <input type="text" id="qedit-attr-key" class="form-input" placeholder="e.g., request_disk" value="request_disk">
+                </div>
+                <div class="form-group">
+                    <label for="qedit-attr-value">New Value</label>
+                    <input type="text" id="qedit-attr-value" class="form-input" placeholder="e.g., 4096" value="4096">
+                </div>
+                <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 16px;">
+                    Common edits: <code>request_disk</code>, <code>request_memory</code>, <code>request_cpus</code>, <code>hold_reason</code>.
+                    Use numeric values (e.g., disk in KB, memory in MB).
+                </p>
+                <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                    <button class="btn btn-ghost" id="qedit-cancel-btn">Cancel</button>
+                    <button class="btn btn-primary" id="qedit-apply-btn">Apply Changes</button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    // Bind events
+    const closeBtn = $('#qedit-close-btn');
+    const cancelBtn = $('#qedit-cancel-btn');
+    const applyBtn = $('#qedit-apply-btn');
+    const keyInput = $('#qedit-attr-key');
+    const valueInput = $('#qedit-attr-value');
+
+    function closeModal() {
+        overlay.remove();
+    }
+
+    closeBtn.addEventListener('click', closeModal);
+    cancelBtn.addEventListener('click', closeModal);
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) closeModal();
+    });
+
+    applyBtn.addEventListener('click', async () => {
+        const attr = keyInput.value.trim();
+        const value = valueInput.value.trim();
+
+        if (!attr || !value) {
+            toast('Both attribute name and value are required', 'warning');
+            return;
+        }
+
+        applyBtn.disabled = true;
+        applyBtn.textContent = 'Applying...';
+
+        try {
+            await api('/qedit', {
+                method: 'POST',
+                body: JSON.stringify({
+                    cluster_id: clusterId,
+                    proc_id: procId,
+                    attr: attr,
+                    value: value,
+                })
+            });
+            toast(`Updated ${attr} = ${value} for job ${clusterId}.${procId}`);
+            // Also release the job after qedit if it was held due to resource exceeded
+            try {
+                await api(`/jobs/${clusterId}.${procId}/release`, { method: 'POST' });
+                toast('Job released after edit');
+            } catch (err) {
+                // Release might fail if job wasn't held; that's fine
+            }
+            closeModal();
+            loadJobDetails();
+        } catch (err) {
+            toast(`Failed to edit job: ${err.message}`, 'error');
+            applyBtn.disabled = false;
+            applyBtn.textContent = 'Apply Changes';
+        }
+    });
+
+    // Allow Enter key to submit
+    valueInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') applyBtn.click();
+    });
+
+    // Focus on value input
+    setTimeout(() => valueInput.focus(), 100);
+}
+
+/**
+ * Start auto-refresh if the job is not in a completed/removed state.
+ */
+function startDetailsAutoRefresh(statusVal) {
+    const status = parseInt(statusVal);
+    // Completed (4), Removed (3) — no refresh needed
+    const needsRefresh = ![3, 4].includes(status);
+
+    if (needsRefresh) {
+        // Refresh every 15 seconds
+        if (detailsRefreshTimer) clearInterval(detailsRefreshTimer);
+        detailsRefreshTimer = setInterval(() => {
+            loadJobDetails();
+        }, 15000);
+    } else {
+        // Stop refreshing
+        if (detailsRefreshTimer) {
+            clearInterval(detailsRefreshTimer);
+            detailsRefreshTimer = null;
+        }
     }
 }
 

@@ -105,8 +105,9 @@ function renderJobsTable() {
         const subDate = formatDate(job.QDate);
 
         const cpus = job.RequestCpus || '1';
-        const mem = job.RequestMemory || '—';
-        const resStr = `${cpus} CPU, ${mem}`;
+        const mem = formatMemory(job.RequestMemory);
+        const disk = formatDisk(job.RequestDisk);
+        const resStr = `${cpus} CPU, ${mem}, ${disk}`;
 
         const jobSpec = `${job.ClusterId}.${job.ProcId}`;
 
@@ -145,7 +146,7 @@ function renderJobsTable() {
         tr.innerHTML = `
             <td><a href="/job/${job.ClusterId}/${job.ProcId}" class="job-id-link">${jobSpec}</a></td>
             <td>${job.Owner || '—'}</td>
-            <td class="monospace" title="${job.Cmd}">${basename(job.Cmd)}</td>
+            <td class="monospace" title="${job.Cmd || job.Args || ''}">${formatCommand(job.Cmd, job.Args)}</td>
             <td><span class="status-badge ${statusClass}">${statusName}</span></td>
             <td class="monospace" style="font-size: 0.8rem;">${job.RemoteHost ? basename(job.RemoteHost) : '—'}</td>
             <td>${subDate}</td>

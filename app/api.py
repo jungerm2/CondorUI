@@ -18,6 +18,7 @@ from app.condor import (
     get_job_log,
     get_job_log_file_paths,
     get_job_status_counts,
+    qedit_job,
     query_history,
     query_jobs,
     submit_from_file,
@@ -58,15 +59,7 @@ def health_check():
 
 @api_bp.route("/jobs")
 def list_jobs():
-    """List active jobs, with optional filters and pagination.
-
-    Query parameters:
-        owner     — Filter by owner username
-        status    — Filter by JobStatus code (1=Idle, 2=Running, 5=Held, etc.)
-        cluster_id — Filter by cluster ID
-        limit     — Max results to return (default 200, max 5000)
-        offset    — Number of results to skip (default 0)
-    """
+    """List active jobs, with optional filters and pagination."""
     if not daemon_available():
         return jsonify({
             "jobs": [],
@@ -76,7 +69,7 @@ def list_jobs():
             "limit": 0,
             "offset": 0,
             "daemon_unavailable": True,
-            "message": "HTCondor daemon is not available. This is expected on a development machine without a running condor_schedd."
+            "message": "HTCondor daemon is not available."
         })
 
     constraint_parts: list[str] = []
@@ -119,7 +112,7 @@ def list_jobs():
 
 @api_bp.route("/jobs/<cluster_id>")
 def get_cluster(cluster_id):
-    """Get all procs for a specific cluster. Accepts bare cluster IDs or cluster.proc format."""
+    """Get all procs for a specific cluster."""
     if not daemon_available():
         return jsonify({
             "cluster_id": cluster_id,
@@ -129,7 +122,6 @@ def get_cluster(cluster_id):
             "message": "HTCondor daemon is not available."
         })
     try:
-        # Split cluster.proc if given, but query by cluster ID
         cid = cluster_id.split(".")[0] if "." in str(cluster_id) else cluster_id
         jobs = query_jobs(constraint=f"ClusterId == {cid}")
         if not jobs:
@@ -139,20 +131,136 @@ def get_cluster(cluster_id):
         return jsonify({"error": str(e)}), 500
 
 
+# ---------------------------------------------------------------------------
+# History — reads from our local database (avoids slow condor_history queries)
+# ---------------------------------------------------------------------------
+
+
 @api_bp.route("/history")
 def list_history():
-    """List completed jobs from condor_history."""
-    if not daemon_available():
-        return jsonify({
-            "jobs": [],
-            "count": 0,
-            "daemon_unavailable": True,
-            "message": "HTCondor daemon is not available."
-        })
+    """List all known submissions with real-time status from the schedd.
+
+    Reads from the local JobSubmission table (fast), then cross-references
+    with the schedd to show the actual status of each cluster.  Clusters
+    still in the schedd (idle / running / held) show their real status;
+    clusters no longer in the schedd are marked Completed.
+    """
     limit = request.args.get("limit", current_app.config["MAX_HISTORY_RESULTS"], type=int)
-    constraint = request.args.get("constraint", DEFAULT_CONSTRAINT)
     try:
-        jobs = query_history(constraint=constraint, limit=limit)
+        submissions = (
+            JobSubmission.query.order_by(JobSubmission.submitted_at.desc())
+            .limit(limit)
+            .all()
+        )
+
+        # Build a cluster_id → status lookup from the schedd (fast, cached)
+        schedd_statuses: dict[int, dict] = {}
+        if daemon_available():
+            try:
+                cluster_ids = sorted({s.cluster_id for s in submissions})
+                if cluster_ids:
+                    constraint = " || ".join(
+                        f"ClusterId == {cid}" for cid in cluster_ids
+                    )
+                    active_jobs = query_jobs(
+                        constraint=constraint,
+                        projection=[
+                            "ClusterId", "ProcId", "JobStatus", "Owner",
+                            "Cmd", "Args", "QDate", "JobStartDate",
+                            "CompletionDate", "HoldReason", "RemoteHost",
+                            "RemoteWallClockTime", "ExitCode", "ExitBySignal",
+                            "JobBatchName",
+                        ],
+                    )
+                    # Only keep the first proc per cluster (ProcId == 0 prefered)
+                    for job in active_jobs:
+                        cid = job.get("ClusterId")
+                        if cid is not None:
+                            # Keep proc 0 if available, otherwise overwrite
+                            if cid not in schedd_statuses or job.get("ProcId") == 0:
+                                schedd_statuses[cid] = job
+            except Exception:
+                logger.warning("Could not query schedd for history statuses", exc_info=True)
+
+        from app.condor import JOB_STATUS_MAP
+
+        # Transform local DB records into the job-like format expected by the frontend
+        jobs = []
+        for sub in submissions:
+            schedd_job = schedd_statuses.get(sub.cluster_id)
+
+            if schedd_job:
+                # Use the real status from the schedd
+                real_status = schedd_job.get("JobStatus", 4)
+                jobs.append({
+                    "ClusterId": sub.cluster_id,
+                    "ProcId": schedd_job.get("ProcId", 0),
+                    "JobStatus": real_status,
+                    "JobStatusName": JOB_STATUS_MAP.get(real_status, "Unknown"),
+                    "Owner": schedd_job.get("Owner", "—"),
+                    "Cmd": schedd_job.get("Cmd", ""),
+                    "Args": schedd_job.get("Args", ""),
+                    "RequestCpus": schedd_job.get("RequestCpus", "—"),
+                    "RequestMemory": schedd_job.get("RequestMemory", "—"),
+                    "RequestDisk": schedd_job.get("RequestDisk", "—"),
+                    "QDate": schedd_job.get("QDate", 0),
+                    "JobStartDate": schedd_job.get("JobStartDate"),
+                    "CompletionDate": schedd_job.get("CompletionDate"),
+                    "HoldReason": schedd_job.get("HoldReason", ""),
+                    "RemoteHost": schedd_job.get("RemoteHost", ""),
+                    "ImageSize": schedd_job.get("ImageSize", 0),
+                    "DiskUsage": schedd_job.get("DiskUsage", 0),
+                    "ExitCode": schedd_job.get("ExitCode", 0),
+                    "ExitBySignal": schedd_job.get("ExitBySignal", False),
+                    "JobCurrentStartDate": schedd_job.get("JobCurrentStartDate"),
+                    "NumJobStarts": schedd_job.get("NumJobStarts", 1),
+                    "NumShadowStarts": schedd_job.get("NumShadowStarts", 1),
+                    "JobBatchName": schedd_job.get("JobBatchName", sub.name),
+                    "RemoteWallClockTime": schedd_job.get("RemoteWallClockTime", 0),
+                    "CumulativeRemoteSysCpu": schedd_job.get("CumulativeRemoteSysCpu", 0),
+                    "CumulativeRemoteUserCpu": schedd_job.get("CumulativeRemoteUserCpu", 0),
+                })
+            else:
+                # Job is no longer in the schedd — mark as Completed
+                cmd = ""
+                try:
+                    if sub.submit_description.strip().startswith("{"):
+                        desc = json.loads(sub.submit_description)
+                        cmd = desc.get("executable", desc.get("shell", ""))
+                except (json.JSONDecodeError, AttributeError):
+                    cmd = ""
+
+                qdate = int(sub.submitted_at.timestamp()) if sub.submitted_at else 0
+
+                jobs.append({
+                    "ClusterId": sub.cluster_id,
+                    "ProcId": 0,
+                    "JobStatus": 4,
+                    "JobStatusName": "Completed",
+                    "Owner": "—",
+                    "Cmd": cmd,
+                    "Args": "",
+                    "RequestCpus": "—",
+                    "RequestMemory": "—",
+                    "RequestDisk": "—",
+                    "QDate": qdate,
+                    "JobStartDate": None,
+                    "CompletionDate": qdate,
+                    "HoldReason": "",
+                    "RemoteHost": "",
+                    "ImageSize": 0,
+                    "DiskUsage": 0,
+                    "ExitCode": 0,
+                    "ExitBySignal": False,
+                    "JobCurrentStartDate": None,
+                    "NumJobStarts": 1,
+                    "NumShadowStarts": 1,
+                    "JobBatchName": sub.name,
+                    "RemoteWallClockTime": 0,
+                    "CumulativeRemoteSysCpu": 0,
+                    "CumulativeRemoteUserCpu": 0,
+                })
+
         return jsonify({"jobs": jobs, "count": len(jobs)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -292,7 +400,6 @@ def upload_files():
             osdf_dest = os.path.join(osdf_path, f.filename)
             os.makedirs(os.path.dirname(osdf_dest), exist_ok=True)
             shutil.copy2(local_path, osdf_dest)
-            # Use proper osdf:/// URI format
             entry["osdf_uri"] = f"osdf:///{f.filename}"
             entry["osdf_path"] = osdf_dest
         else:
@@ -357,13 +464,7 @@ def job_log(cluster_id: int):
 
 @api_bp.route("/jobs/<int:cluster_id>/<int:proc_id>/files")
 def job_files(cluster_id: int, proc_id: int):
-    """Get log, stdout, and stderr file contents for a specific job proc.
-
-    Query parameters:
-        tail — Number of lines to return from the end of each file (default 500, 0 = all)
-        download — If set to '1', returns a file download instead of JSON
-        file — Which file to download: 'log', 'out', or 'err' (only used when download=1)
-    """
+    """Get log, stdout, and stderr file contents for a specific job proc."""
     tail = request.args.get("tail", 500, type=int)
     is_download = request.args.get("download", "0") == "1"
 
@@ -397,11 +498,10 @@ def job_files(cluster_id: int, proc_id: int):
 
 @api_bp.route("/jobs/<int:cluster_id>/details")
 def job_details(cluster_id: int):
-    """Get complete job details, including all ClassAd attributes and file contents."""
+    """Get complete job details."""
     proc_id = request.args.get("proc", 0, type=int)
     tail = request.args.get("tail", 500, type=int)
     try:
-        # Fetch ClassAd attributes
         jobs = query_jobs(constraint=f"ClusterId == {cluster_id} && ProcId == {proc_id}")
         if not jobs:
             jobs = query_history(
@@ -410,10 +510,8 @@ def job_details(cluster_id: int):
             )
         job = jobs[0] if jobs else {}
 
-        # Get log, stdout, and stderr file paths
         paths = get_job_log_file_paths(cluster_id, proc_id=proc_id)
 
-        # Read file contents
         log_content = get_job_file_content(paths.get("log", ""), tail=tail)
         stdout_content = get_job_file_content(paths.get("out", ""), tail=tail)
         stderr_content = get_job_file_content(paths.get("err", ""), tail=tail)
@@ -498,8 +596,39 @@ def delete_template(template_id: int):
 
 
 # ---------------------------------------------------------------------------
-# Submission history (from our database, not condor_history)
+# Submission history (from our database)
 # ---------------------------------------------------------------------------
+
+
+@api_bp.route("/qedit", methods=["POST"])
+def qedit_job_route():
+    """Edit a ClassAd attribute on a job (condor_qedit).
+
+    Request JSON:
+    {
+        "cluster_id": 123,
+        "proc_id": 0,
+        "attr": "request_disk",
+        "value": "4096"
+    }
+    """
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Missing request body"}), 400
+
+    cluster_id = data.get("cluster_id")
+    proc_id = data.get("proc_id", 0)
+    attr = data.get("attr")
+    value = data.get("value")
+
+    if not cluster_id or not attr or not value:
+        return jsonify({"error": "Missing required fields: cluster_id, attr, value"}), 400
+
+    try:
+        result = qedit_job(cluster_id, proc_id, attr, value)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @api_bp.route("/submissions")

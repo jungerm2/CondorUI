@@ -40,44 +40,17 @@ async function loadHistory() {
 
     const limit = $('#history-limit').value;
 
-    // Show cached data immediately (non-blocking)
-    const cached = getCachedHistory();
-    if (cached) {
-        currentHistory = cached;
-        renderHistoryTable();
-    }
-
     try {
         const data = await api(`/history?limit=${limit}`);
-        if (data.daemon_unavailable) {
-            currentHistory = [];
-            setCachedHistory([]);
-            const tbody = $('#history-tbody');
-            if (tbody) {
-                tbody.innerHTML = `<tr class="empty-row"><td colspan="8">⚠️ HTCondor daemon is not available. This is expected on a development machine without a running condor_schedd.</td></tr>`;
-            }
-            return;
-        }
         const jobs = data.jobs || [];
         currentHistory = jobs;
         setCachedHistory(jobs);
         renderHistoryTable();
     } catch (e) {
-        const msg = e.message || '';
-        // If we already have cached data displayed, just show a toast — don't replace the table
-        if (cached && cached.length > 0) {
-            toast('Could not refresh history (using cached data). ' + msg, 'warning');
-            return;
-        }
-        // Detect timeout errors and show a more helpful message
-        if (msg.includes('timed out') || msg.includes('timeout') || msg.includes('NetworkError') || msg.includes('Failed to fetch')) {
-            toast('History query timed out. The HTCondor schedd may be slow or unresponsive. Try again later.', 'error');
-            const tbody = $('#history-tbody');
-            if (tbody) {
-                tbody.innerHTML = `<tr class="empty-row"><td colspan="8">⚠️ History query timed out. The HTCondor schedd may be slow or unresponsive. <button class="btn btn-sm" onclick="loadHistory()">Retry</button></td></tr>`;
-            }
-        } else {
-            toast('Failed to load history: ' + msg, 'error');
+        toast('Failed to load history: ' + e.message, 'error');
+        const tbody = $('#history-tbody');
+        if (tbody) {
+            tbody.innerHTML = `<tr class="empty-row"><td colspan="8">Unable to load history. ${e.message}</td></tr>`;
         }
     } finally {
         historyLoadInProgress = false;
@@ -122,16 +95,20 @@ function renderHistoryTable() {
         }
 
         const exitCode = job.ExitCode !== undefined ? job.ExitCode : '—';
+        const cpus = job.RequestCpus || '—';
+        const mem = formatMemory(job.RequestMemory);
+        const disk = formatDisk(job.RequestDisk);
 
         tr.innerHTML = `
             <td><a href="/job/${job.ClusterId}/${job.ProcId}" class="job-id-link">${job.ClusterId}.${job.ProcId}</a></td>
             <td>${job.Owner || '—'}</td>
-            <td class="monospace" title="${job.Cmd}">${basename(job.Cmd)}</td>
+            <td class="monospace" title="${job.Cmd || job.Args || ''}">${formatCommand(job.Cmd, job.Args)}</td>
             <td><span class="status-badge ${statusClass}">${statusName}</span></td>
             <td class="monospace">${exitCode}</td>
             <td>${qDate}</td>
             <td>${compDate}</td>
             <td>${wallTime}</td>
+            <td style="font-size: 0.85rem;">${cpus} CPU, ${mem}, ${disk}</td>
         `;
         tbody.appendChild(tr);
     });

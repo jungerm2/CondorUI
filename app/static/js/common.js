@@ -79,6 +79,7 @@ function formatDate(timestamp) {
 
 function formatDuration(seconds) {
     if (!seconds && seconds !== 0) return '—';
+    if (seconds === 0) return '—';
     if (seconds < 60) return `${seconds}s`;
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -86,6 +87,91 @@ function formatDuration(seconds) {
     const hours = Math.floor(mins / 60);
     const remMins = mins % 60;
     return `${hours}h ${remMins}m`;
+}
+
+/**
+ * Format a byte/size value into a human-readable string.
+ * Accepts a value in KB and optionally the unit the value is in.
+ * Returns a string like "1.5 GB", "800 MB", "4.2 KB", etc.
+ */
+function formatBytes(value, inputUnit = 'KB') {
+    if (value === undefined || value === null || value === '—') return '—';
+    const num = parseFloat(value);
+    if (isNaN(num) || num === 0) return '0';
+
+    // Normalize to bytes
+    const unitLower = (inputUnit || '').toLowerCase();
+    let bytes = num;
+    if (unitLower === 'kb') bytes = num * 1024;
+    else if (unitLower === 'mb') bytes = num * 1024 * 1024;
+    else if (unitLower === 'gb') bytes = num * 1024 * 1024 * 1024;
+    else if (unitLower === 'tb') bytes = num * 1024 * 1024 * 1024 * 1024;
+    // If no unit or unknown, assume KB (HTCondor default)
+    else bytes = num * 1024;
+
+    const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+    let unitIndex = 0;
+    let size = bytes;
+
+    while (size >= 1024 && unitIndex < units.length - 1) {
+        size /= 1024;
+        unitIndex++;
+    }
+
+    return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+/**
+ * Format memory value — accepts any input (e.g., "1 GB", "1024", "1024 MB")
+ * and returns a human-readable string.
+ */
+function formatMemory(value) {
+    if (!value || value === '—') return '—';
+    const str = String(value);
+    // Try to match "number unit" pattern
+    const match = str.match(/^([\d.]+)\s*(GB|MB|KB|B)?$/i);
+    if (match) {
+        const num = parseFloat(match[1]);
+        const unit = (match[2] || '').toUpperCase();
+        if (unit === 'GB') return `${num} GB`;
+        if (unit === 'MB') return `${num} MB`;
+        if (unit === 'KB') return `${num} KB`;
+        if (unit === 'B') return `${num} B`;
+        // No unit — assume MB for memory
+        return formatBytes(num, 'MB');
+    }
+    return str;
+}
+
+/**
+ * Format disk value — similar to formatMemory but assumes KB by default.
+ */
+function formatDisk(value) {
+    if (!value || value === '—') return '—';
+    const str = String(value);
+    const match = str.match(/^([\d.]+)\s*(GB|MB|KB|B)?$/i);
+    if (match) {
+        const num = parseFloat(match[1]);
+        const unit = (match[2] || '').toUpperCase();
+        if (unit === 'GB') return `${num} GB`;
+        if (unit === 'MB') return `${num} MB`;
+        if (unit === 'KB') return `${num} KB`;
+        if (unit === 'B') return `${num} B`;
+        // No unit — assume KB for disk
+        return formatBytes(num, 'KB');
+    }
+    return str;
+}
+
+/**
+ * Return the executable or shell command for display.
+ * If Args is provided, appends it to the command.
+ */
+function formatCommand(cmd, args) {
+    const name = basename(cmd || '');
+    if (!name) return '—';
+    if (args) return `${name} ${args}`;
+    return name;
 }
 
 function getStatusClass(statusCode) {

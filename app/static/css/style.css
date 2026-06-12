@@ -391,7 +391,7 @@ select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg widt
 
 .submit-mode { display: none; }
 .submit-mode.active { display: block; }
-.submit-actions { margin-top: 20px; display: flex; justify-content: flex-end; }
+.submit-actions { margin-top: 20px; display: flex; justify-content: flex-end; gap: 12px; }
 
 /* ===== Code Editor ===== */
 .code-editor {
@@ -483,6 +483,65 @@ select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg widt
     font-family: var(--font-mono); font-size: 0.78rem;
     line-height: 1.7; max-height: 300px; overflow: auto;
     color: var(--text-secondary); white-space: pre-wrap; word-break: break-all;
+}
+
+/* ===== Resource Usage Grid (Job Details) ===== */
+.usage-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.usage-item {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    padding: 12px 16px;
+}
+.usage-label {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+    font-weight: 600;
+}
+.usage-values {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+}
+.usage-value {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.usage-value-label {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+.usage-value-num {
+    font-size: 0.95rem;
+    font-family: var(--font-mono);
+    color: var(--text-primary);
+    font-weight: 500;
+}
+.usage-pct {
+    font-size: 0.75rem;
+    margin-left: 4px;
+    font-weight: 600;
+}
+.usage-pct.usage-warning {
+    color: var(--status-idle);
+}
+.usage-pct.usage-exceeded {
+    color: var(--status-held);
+}
+.usage-notes {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    font-style: italic;
 }
 
 /* ===== Toast Notifications ===== */
