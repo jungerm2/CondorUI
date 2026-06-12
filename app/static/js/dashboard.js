@@ -54,7 +54,7 @@ async function loadJobs() {
         toast('Failed to load jobs: ' + e.message, 'error');
         const tbody = $('#jobs-tbody');
         if (tbody) {
-            tbody.innerHTML = `<tr class="empty-row"><td colspan="11">Unable to load jobs. ${e.message}</td></tr>`;
+            tbody.innerHTML = `<tr class="empty-row"><td colspan="10">Unable to load jobs. ${e.message}</td></tr>`;
         }
     } finally {
         refreshInProgress = false;
@@ -152,10 +152,12 @@ function updateSelectionUI() {
 
     const deleteBtn = $('#delete-btn');
     const editBtn = $('#edit-btn');
+    const holdBtn = $('#hold-btn');
     const releaseBtn = $('#release-btn');
 
     deleteBtn.disabled = count === 0;
     editBtn.disabled = count === 0;
+    holdBtn.disabled = count === 0;
     releaseBtn.disabled = count === 0;
 
     // Update select-all checkbox
@@ -181,7 +183,7 @@ function renderTable() {
     filtered = sortJobs(filtered);
 
     if (filtered.length === 0) {
-        tbody.innerHTML = `<tr class="empty-row"><td colspan="11">No jobs found</td></tr>`;
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="10">No jobs found</td></tr>`;
         updateSelectionUI();
         return;
     }
@@ -209,36 +211,10 @@ function renderTable() {
 
         const isChecked = selectedIds.has(jobKey);
 
-        // Action buttons based on status
-        const statusNum = parseInt(job.JobStatus);
-        let actionButtons = '';
-        if (statusNum === 5) {
-            // Held → release button
-            actionButtons = `
-                <button class="btn btn-sm btn-ghost release-btn" data-id="${jobKey}" title="Release Job">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                        <polygon points="5,3 19,12 5,21" />
-                    </svg>
-                </button>
-            `;
-        } else if (statusNum === 1 || statusNum === 2) {
-            // Idle or Running → hold button
-            actionButtons = `
-                <button class="btn btn-sm btn-ghost hold-btn" data-id="${jobKey}" title="Hold Job">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                        <rect x="6" y="4" width="4" height="16" />
-                        <rect x="14" y="4" width="4" height="16" />
-                    </svg>
-                </button>
-            `;
-        }
-        // For completed/removed (3,4), no action buttons
-
         tr.innerHTML = `
             <td style="text-align: center;">
                 <input type="checkbox" class="row-checkbox" data-job-key="${escHtml(jobKey)}" ${isChecked ? 'checked' : ''}>
             </td>
-            <td><div style="display: flex; gap: 4px;">${actionButtons}</div></td>
             <td><a href="/job/${job.ClusterId}/${job.ProcId}" class="job-id-link">${job.ClusterId}.${job.ProcId}</a></td>
             <td>${escHtml(job.Owner || '—')}</td>
             <td class="monospace" title="${escHtml(job.Cmd || job.Args || '')}">${formatCommand(job.Cmd, job.Args)}</td>
@@ -252,7 +228,7 @@ function renderTable() {
 
         // Row click toggles checkbox
         tr.addEventListener('click', (e) => {
-            if (e.target.closest('a') || e.target.closest('input[type="checkbox"]') || e.target.closest('button')) return;
+            if (e.target.closest('a') || e.target.closest('input[type="checkbox"]')) return;
             const cb = tr.querySelector('.row-checkbox');
             if (cb) {
                 cb.checked = !cb.checked;
@@ -276,40 +252,8 @@ function renderTable() {
         });
     });
 
-    // Bind action button events
-    $$('.hold-btn').forEach(btn => btn.addEventListener('click', handleHold));
-    $$('.release-btn').forEach(btn => btn.addEventListener('click', handleRelease));
-
     updateSortArrows();
     updateSelectionUI();
-}
-
-// ---------------------------------------------------------------------------
-// Single-job actions (hold/release/remove from action buttons)
-// ---------------------------------------------------------------------------
-
-async function handleHold(e) {
-    const jobId = e.currentTarget.dataset.id;
-    try {
-        await api(`/jobs/${jobId}/hold`, { method: 'POST' });
-        toast(`Job ${jobId} held successfully`);
-        countdown = REFRESH_RATE;
-        loadJobs();
-    } catch (err) {
-        toast(`Failed to hold job: ${err.message}`, 'error');
-    }
-}
-
-async function handleRelease(e) {
-    const jobId = e.currentTarget.dataset.id;
-    try {
-        await api(`/jobs/${jobId}/release`, { method: 'POST' });
-        toast(`Job ${jobId} released successfully`);
-        countdown = REFRESH_RATE;
-        loadJobs();
-    } catch (err) {
-        toast(`Failed to release job: ${err.message}`, 'error');
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -335,6 +279,24 @@ async function deleteSelected() {
     } catch (err) {
         toast(`Failed to delete: ${err.message}`, 'error');
     }
+}
+
+async function holdSelected() {
+    if (selectedIds.size === 0) return;
+
+    const clusterIds = [...selectedIds].map(key => parseInt(key.split('.')[0]));
+
+    let heldCount = 0;
+    for (const cid of clusterIds) {
+        try {
+            await api(`/jobs/${cid}.0/hold`, { method: 'POST' });
+            heldCount++;
+        } catch {
+            // Job may already be held or not in schedd; skip
+        }
+    }
+    toast(`Held ${heldCount} job(s)`);
+    await loadJobs();
 }
 
 async function releaseSelected() {
@@ -440,5 +402,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Batch action buttons
     $('#delete-btn').addEventListener('click', deleteSelected);
     $('#edit-btn').addEventListener('click', editSelected);
+    $('#hold-btn').addEventListener('click', holdSelected);
     $('#release-btn').addEventListener('click', releaseSelected);
 });

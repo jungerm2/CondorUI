@@ -30,6 +30,44 @@ logger = logging.getLogger(__name__)
 api_bp = Blueprint("api", __name__, url_prefix="/api")
 
 
+def _resolve_shell_commands(jobs: list[dict]) -> None:
+    """Resolve /bin/sh commands to the original shell command from the DB.
+
+    For any job in the list with Cmd == "/bin/sh", look up the submission
+    record in the local database and replace Cmd with the original shell
+    command (e.g., "ls -al") stored in the submit_description.
+
+    Modifies the list in-place.
+    """
+    shell_job_ids = [
+        j.get("ClusterId") for j in jobs if j.get("Cmd") == "/bin/sh"
+    ]
+    if not shell_job_ids:
+        return
+
+    submissions = JobSubmission.query.filter(
+        JobSubmission.cluster_id.in_(shell_job_ids)
+    ).all()
+    sub_map = {s.cluster_id: s for s in submissions}
+
+    for job in jobs:
+        if job.get("Cmd") != "/bin/sh":
+            continue
+        sub = sub_map.get(job.get("ClusterId"))
+        if not sub:
+            continue
+        try:
+            desc = sub.submit_description
+            if desc and desc.strip().startswith("{"):
+                parsed = json.loads(desc)
+                shell_cmd = parsed.get("shell", "")
+                if shell_cmd:
+                    job["Cmd"] = shell_cmd
+                    job["Args"] = ""
+        except (json.JSONDecodeError, AttributeError):
+            pass
+
+
 # ---------------------------------------------------------------------------
 # Error handlers
 # ---------------------------------------------------------------------------
@@ -97,6 +135,10 @@ def list_jobs():
         total = len(jobs)
         paginated = jobs[offset:offset + limit]
         has_more = (offset + limit) < total
+
+        # Resolve shell commands (/bin/sh) to the original shell command
+        # from the submission record in the local database.
+        _resolve_shell_commands(paginated)
 
         return jsonify({
             "jobs": paginated,
@@ -170,6 +212,7 @@ def list_history():
                             "CompletionDate", "HoldReason", "RemoteHost",
                             "RemoteWallClockTime", "ExitCode", "ExitBySignal",
                             "JobBatchName",
+                            "RequestCpus", "RequestMemory", "RequestDisk",
                         ],
                     )
                     # Only keep the first proc per cluster (ProcId == 0 prefered)
@@ -192,14 +235,31 @@ def list_history():
             if schedd_job:
                 # Use the real status from the schedd
                 real_status = schedd_job.get("JobStatus", 4)
+                cmd = schedd_job.get("Cmd", "")
+                args = schedd_job.get("Args", "")
+
+                # If the command is /bin/sh (shell job), try to extract the original
+                # shell command from the submission record in the local database.
+                if cmd == "/bin/sh":
+                    try:
+                        desc = sub.submit_description
+                        if desc and desc.strip().startswith("{"):
+                            parsed = json.loads(desc)
+                            shell_cmd = parsed.get("shell", "")
+                            if shell_cmd:
+                                cmd = shell_cmd
+                                args = ""
+                    except (json.JSONDecodeError, AttributeError):
+                        pass
+
                 jobs.append({
                     "ClusterId": sub.cluster_id,
                     "ProcId": schedd_job.get("ProcId", 0),
                     "JobStatus": real_status,
                     "JobStatusName": JOB_STATUS_MAP.get(real_status, "Unknown"),
                     "Owner": schedd_job.get("Owner", "—"),
-                    "Cmd": schedd_job.get("Cmd", ""),
-                    "Args": schedd_job.get("Args", ""),
+                    "Cmd": cmd,
+                    "Args": args,
                     "RequestCpus": schedd_job.get("RequestCpus", "—"),
                     "RequestMemory": schedd_job.get("RequestMemory", "—"),
                     "RequestDisk": schedd_job.get("RequestDisk", "—"),
@@ -510,14 +570,30 @@ def job_details(cluster_id: int):
             )
         job = jobs[0] if jobs else {}
 
+        # If the command is /bin/sh (shell job), try to extract the original
+        # shell command from the submission record in the local database.
+        submission = JobSubmission.query.filter_by(cluster_id=cluster_id).first()
+        submission_name = submission.name if submission else "Job Subbed Outside Web UI"
+
+        if job and submission and job.get("Cmd") == "/bin/sh":
+            try:
+                desc = submission.submit_description
+                if desc and desc.strip().startswith("{"):
+                    parsed = json.loads(desc)
+                    shell_cmd = parsed.get("shell", "")
+                    if shell_cmd:
+                        # Override Cmd with the original shell command for display
+                        job["Cmd"] = shell_cmd
+                        # Clear Args since the shell command is now the full Cmd
+                        job["Args"] = ""
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
         paths = get_job_log_file_paths(cluster_id, proc_id=proc_id)
 
         log_content = get_job_file_content(paths.get("log", ""), tail=tail)
         stdout_content = get_job_file_content(paths.get("out", ""), tail=tail)
         stderr_content = get_job_file_content(paths.get("err", ""), tail=tail)
-
-        submission = JobSubmission.query.filter_by(cluster_id=cluster_id).first()
-        submission_name = submission.name if submission else "Job Subbed Outside Web UI"
 
         return jsonify({
             "cluster_id": cluster_id,
