@@ -4,42 +4,11 @@
 let currentJobs = [];
 let sortField = 'QDate';
 let sortAsc = false;
-let refreshTimer = null;
 let countdownInterval = null;
 let refreshInProgress = false;
 let countdown = 30;
 const REFRESH_RATE = 30; // seconds
 let selectedIds = new Set(); // Set of "clusterId.procId" strings
-
-// Frontend cache for history data — persists across page navigations via sessionStorage
-const HISTORY_CACHE_KEY = 'condor_history_cache';
-const HISTORY_CACHE_TTL_MS = 120_000; // 2 minutes
-
-function getCachedHistory() {
-    try {
-        const raw = sessionStorage.getItem(HISTORY_CACHE_KEY);
-        if (!raw) return null;
-        const cached = JSON.parse(raw);
-        if (Date.now() - cached.timestamp > HISTORY_CACHE_TTL_MS) {
-            sessionStorage.removeItem(HISTORY_CACHE_KEY);
-            return null;
-        }
-        return cached.data;
-    } catch {
-        return null;
-    }
-}
-
-function setCachedHistory(data) {
-    try {
-        sessionStorage.setItem(HISTORY_CACHE_KEY, JSON.stringify({
-            timestamp: Date.now(),
-            data: data,
-        }));
-    } catch {
-        // sessionStorage may be full; ignore
-    }
-}
 
 async function loadJobs() {
     // Prevent concurrent refresh calls
@@ -57,9 +26,6 @@ async function loadJobs() {
 
         const activeJobs = (activeData.jobs || []).filter(j => !activeData.daemon_unavailable);
         const historyJobs = historyData.jobs || [];
-
-        // Cache history data
-        setCachedHistory(historyJobs);
 
         // Merge: active jobs take precedence by ClusterId
         const seen = new Set();
@@ -97,7 +63,7 @@ async function loadJobs() {
 
 function renderStats(activeJobs) {
     const stats = { total: 0, idle: 0, running: 0, held: 0 };
-    (activeJobs || currentJobs.filter(j => [1,2,5,6].includes(parseInt(j.JobStatus)))).forEach(job => {
+    activeJobs.forEach(job => {
         stats.total++;
         const status = parseInt(job.JobStatus);
         if (status === 1) stats.idle++;
