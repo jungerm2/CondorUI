@@ -631,6 +631,79 @@ def qedit_job_route():
         return jsonify({"error": str(e)}), 500
 
 
+@api_bp.route("/history/delete", methods=["POST"])
+def delete_history():
+    """Delete history entries from the local DB, logs, and optionally from the schedd.
+
+    Request JSON:
+    {
+        "cluster_ids": [123, 456, ...]
+    }
+    """
+    data = request.get_json()
+    if not data or "cluster_ids" not in data:
+        return jsonify({"error": "Missing 'cluster_ids' in request body"}), 400
+
+    cluster_ids = data["cluster_ids"]
+    if not isinstance(cluster_ids, list) or not cluster_ids:
+        return jsonify({"error": "'cluster_ids' must be a non-empty list"}), 400
+
+    results = []
+    for cid in cluster_ids:
+        try:
+            # 1. Remove from schedd if still active
+            if daemon_available():
+                try:
+                    act_on_job("remove", str(cid))
+                except Exception:
+                    pass  # Job may already be gone from schedd
+
+            # 2. Delete from local DB
+            submission = JobSubmission.query.filter_by(cluster_id=cid).first()
+            if submission:
+                # 3. Remove log directory from disk
+                if submission.log_dir and os.path.exists(submission.log_dir):
+                    shutil.rmtree(submission.log_dir, ignore_errors=True)
+                db.session.delete(submission)
+
+            results.append({"cluster_id": cid, "success": True})
+        except Exception as e:
+            logger.error("Failed to delete cluster %d: %s", cid, e)
+            results.append({"cluster_id": cid, "success": False, "error": str(e)})
+
+    db.session.commit()
+    return jsonify({"results": results, "count": len(results)})
+
+
+@api_bp.route("/history/release", methods=["POST"])
+def release_history():
+    """Bulk-release held jobs.
+
+    Request JSON:
+    {
+        "cluster_ids": [123, 456, ...]
+    }
+    """
+    data = request.get_json()
+    if not data or "cluster_ids" not in data:
+        return jsonify({"error": "Missing 'cluster_ids' in request body"}), 400
+
+    cluster_ids = data["cluster_ids"]
+    if not isinstance(cluster_ids, list) or not cluster_ids:
+        return jsonify({"error": "'cluster_ids' must be a non-empty list"}), 400
+
+    results = []
+    for cid in cluster_ids:
+        try:
+            result = act_on_job("release", str(cid))
+            results.append({"cluster_id": cid, "success": True, "result": str(result)})
+        except Exception as e:
+            logger.error("Failed to release cluster %d: %s", cid, e)
+            results.append({"cluster_id": cid, "success": False, "error": str(e)})
+
+    return jsonify({"results": results, "count": len(results)})
+
+
 @api_bp.route("/submissions")
 def list_submissions():
     """List submissions made through this UI (from the local database)."""

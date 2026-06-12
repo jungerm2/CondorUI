@@ -372,119 +372,13 @@ function renderActions(statusVal, logContent) {
     }
 
     if (qeditBtn) {
-        qeditBtn.addEventListener('click', openQeditDialog);
-    }
-}
-
-/**
- * Open a modal dialog for editing job attributes (condor_qedit).
- */
-function openQeditDialog() {
-    // Create modal overlay
-    const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay active';
-    overlay.id = 'qedit-modal';
-    overlay.innerHTML = `
-        <div class="modal">
-            <div class="modal-header">
-                <h2>Edit Job Attributes</h2>
-                <button class="btn btn-ghost btn-sm" id="qedit-close-btn" style="padding: 4px 8px;">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-                        <line x1="18" y1="6" x2="6" y2="18" />
-                        <line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
-                </button>
-            </div>
-            <div class="modal-body">
-                <p style="margin-bottom: 16px; color: var(--text-secondary);">
-                    Edit ClassAd attributes for job <strong>${clusterId}.${procId}</strong>.
-                    Changes take effect immediately via <code>condor_qedit</code>.
-                </p>
-                <div class="form-group">
-                    <label for="qedit-attr-key">Attribute Name</label>
-                    <input type="text" id="qedit-attr-key" class="form-input" placeholder="e.g., request_disk" value="request_disk">
-                </div>
-                <div class="form-group">
-                    <label for="qedit-attr-value">New Value</label>
-                    <input type="text" id="qedit-attr-value" class="form-input" placeholder="e.g., 4096" value="4096">
-                </div>
-                <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 16px;">
-                    Common edits: <code>request_disk</code>, <code>request_memory</code>, <code>request_cpus</code>, <code>hold_reason</code>.
-                    Use numeric values (e.g., disk in KB, memory in MB).
-                </p>
-                <div style="display: flex; gap: 8px; justify-content: flex-end;">
-                    <button class="btn btn-ghost" id="qedit-cancel-btn">Cancel</button>
-                    <button class="btn btn-primary" id="qedit-apply-btn">Apply Changes</button>
-                </div>
-            </div>
-        </div>
-    `;
-
-    document.body.appendChild(overlay);
-
-    // Bind events
-    const closeBtn = $('#qedit-close-btn');
-    const cancelBtn = $('#qedit-cancel-btn');
-    const applyBtn = $('#qedit-apply-btn');
-    const keyInput = $('#qedit-attr-key');
-    const valueInput = $('#qedit-attr-value');
-
-    function closeModal() {
-        overlay.remove();
-    }
-
-    closeBtn.addEventListener('click', closeModal);
-    cancelBtn.addEventListener('click', closeModal);
-    overlay.addEventListener('click', (e) => {
-        if (e.target === overlay) closeModal();
-    });
-
-    applyBtn.addEventListener('click', async () => {
-        const attr = keyInput.value.trim();
-        const value = valueInput.value.trim();
-
-        if (!attr || !value) {
-            toast('Both attribute name and value are required', 'warning');
-            return;
-        }
-
-        applyBtn.disabled = true;
-        applyBtn.textContent = 'Applying...';
-
-        try {
-            await api('/qedit', {
-                method: 'POST',
-                body: JSON.stringify({
-                    cluster_id: clusterId,
-                    proc_id: procId,
-                    attr: attr,
-                    value: value,
-                })
+        qeditBtn.addEventListener('click', () => {
+            openQeditDialog([{ clusterId, procId }], {
+                onComplete: loadJobDetails,
+                autoRelease: true,
             });
-            toast(`Updated ${attr} = ${value} for job ${clusterId}.${procId}`);
-            // Also release the job after qedit if it was held due to resource exceeded
-            try {
-                await api(`/jobs/${clusterId}.${procId}/release`, { method: 'POST' });
-                toast('Job released after edit');
-            } catch (err) {
-                // Release might fail if job wasn't held; that's fine
-            }
-            closeModal();
-            loadJobDetails();
-        } catch (err) {
-            toast(`Failed to edit job: ${err.message}`, 'error');
-            applyBtn.disabled = false;
-            applyBtn.textContent = 'Apply Changes';
-        }
-    });
-
-    // Allow Enter key to submit
-    valueInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') applyBtn.click();
-    });
-
-    // Focus on value input
-    setTimeout(() => valueInput.focus(), 100);
+        });
+    }
 }
 
 /**
