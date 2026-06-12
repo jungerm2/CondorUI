@@ -9,6 +9,7 @@ let fileContents = {
 let activeFileTab = 'log';
 let detailsRefreshTimer = null;
 let detailsRefreshInProgress = false;
+let submitFileContent = '';
 
 async function loadJobDetails() {
     // Prevent concurrent refresh calls
@@ -63,6 +64,9 @@ async function loadJobDetails() {
         fileContents.stdout = data.stdout;
         fileContents.stderr = data.stderr;
         updateFileContentDisplay();
+
+        // Load submit file content
+        loadSubmitFileContent(data);
 
         // Render ClassAd Attributes Table
         renderAttributesTable(job);
@@ -319,7 +323,7 @@ function renderActions(statusVal, logContent) {
     }
 
     container.innerHTML += `
-        <button class="btn btn-primary" id="action-remove-btn" style="background: var(--danger-color); border-color: var(--danger-color);">
+        <button class="btn btn-remove" id="action-remove-btn">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="margin-right: 8px;">
                 <line x1="18" y1="6" x2="6" y2="18" />
                 <line x1="6" y1="6" x2="18" y2="18" />
@@ -401,6 +405,47 @@ function startDetailsAutoRefresh(statusVal) {
             clearInterval(detailsRefreshTimer);
             detailsRefreshTimer = null;
         }
+    }
+}
+
+/**
+ * Load the submit file content for display in the Submit File tab.
+ * Fetches it from the submissions API which queries the local DB.
+ */
+async function loadSubmitFileContent(data) {
+    const outputEl = $('#submitfile-content-output');
+    if (!outputEl) return;
+
+    try {
+        // Try to get the submit description from the submission record
+        const submissions = await api('/submissions?limit=500');
+        const submission = (submissions.submissions || []).find(s => s.cluster_id === clusterId);
+        if (submission && submission.submit_description) {
+            let content = submission.submit_description;
+            // If it's a JSON object (from form builder), format it nicely
+            if (content.trim().startsWith('{')) {
+                try {
+                    const parsed = JSON.parse(content);
+                    // Convert the submit dict to a .sub file format for display
+                    let lines = [];
+                    for (const [key, val] of Object.entries(parsed)) {
+                        if (key === 'arguments' && parsed.shell) {
+                            // Arguments are embedded in the shell command for shell submissions
+                            continue;
+                        }
+                        lines.push(`${key} = ${val}`);
+                    }
+                    content = lines.join('\n');
+                } catch {
+                    // Not JSON, show as-is (raw submit file content)
+                }
+            }
+            outputEl.textContent = content;
+        } else {
+            outputEl.textContent = 'Submit file not available for this job (submitted outside the web UI or no longer in database).';
+        }
+    } catch (e) {
+        outputEl.textContent = 'Failed to load submit file: ' + e.message;
     }
 }
 

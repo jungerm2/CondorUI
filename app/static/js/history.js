@@ -75,6 +75,7 @@ function getFilteredHistory() {
             String(job.ClusterId).includes(query) ||
             (job.Owner && job.Owner.toLowerCase().includes(query)) ||
             (job.Cmd && job.Cmd.toLowerCase().includes(query)) ||
+            (job.Args && job.Args.toLowerCase().includes(query)) ||
             (job.JobBatchName && job.JobBatchName.toLowerCase().includes(query)) ||
             (getStatusName(job.JobStatus) && getStatusName(job.JobStatus).toLowerCase().includes(query))
         );

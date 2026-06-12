@@ -165,13 +165,14 @@ function formatDisk(value) {
 
 /**
  * Return the executable or shell command for display.
+ * Shows the full command path with arguments.
  * If Args is provided, appends it to the command.
  */
 function formatCommand(cmd, args) {
-    const name = basename(cmd || '');
-    if (!name) return '—';
-    if (args) return `${name} ${args}`;
-    return name;
+    if (!cmd) return '—';
+    const fullCmd = cmd.trim();
+    if (args) return `${fullCmd} ${args}`;
+    return fullCmd;
 }
 
 function getStatusClass(statusCode) {

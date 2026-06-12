@@ -61,7 +61,8 @@ function getFilteredJobs() {
         const matchesText = !query ||
             (job.ClusterId.toString().includes(query)) ||
             (job.Owner && job.Owner.toLowerCase().includes(query)) ||
-            (job.Cmd && job.Cmd.toLowerCase().includes(query));
+            (job.Cmd && job.Cmd.toLowerCase().includes(query)) ||
+            (job.Args && job.Args.toLowerCase().includes(query));
 
         const matchesStatus = !statusVal || job.JobStatus.toString() === statusVal;
 
@@ -135,7 +136,7 @@ function renderJobsTable() {
         }
 
         actionButtons += `
-            <button class="btn btn-sm btn-ghost remove-btn" data-id="${jobSpec}" title="Remove Job" style="color: var(--danger-color);">
+            <button class="btn btn-sm btn-remove remove-btn" data-id="${jobSpec}" title="Remove Job">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                     <line x1="18" y1="6" x2="6" y2="18" />
                     <line x1="6" y1="6" x2="18" y2="18" />

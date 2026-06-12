@@ -177,7 +177,7 @@
         <div class="stat-card" style="padding: 16px;">
             <div class="stat-info">
                 <span class="stat-value" id="quick-executable">—</span>
-                <span class="stat-label">Executable</span>
+                <span class="stat-label">Command</span>
             </div>
         </div>
         <div class="stat-card" style="padding: 16px;">
@@ -200,6 +200,7 @@
             <div class="details-tabs">
                 <button class="details-tab-btn active" data-tab="overview">Overview</button>
                 <button class="details-tab-btn" data-tab="files">Logs & Output</button>
+                <button class="details-tab-btn" data-tab="submitfile">Submit File</button>
                 <button class="details-tab-btn" data-tab="attributes">ClassAd Attributes</button>
             </div>
 
@@ -289,7 +290,17 @@
                 </div>
             </div>
 
-            <!-- Tab 3: ClassAd Attributes -->
+            <!-- Tab 3: Submit File -->
+            <div class="details-tab-panel" id="tab-panel-submitfile">
+                <h3 style="margin-bottom: 16px; font-size: 1rem; font-weight: 600;">Submit File</h3>
+                <div class="log-panel-container">
+                    <div class="log-output" id="submitfile-content-output" style="max-height: 600px; overflow-y: auto; font-family: var(--font-mono); font-size: 0.85rem;">
+                        Loading submit file...
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 4: ClassAd Attributes -->
             <div class="details-tab-panel" id="tab-panel-attributes">
                 <div class="table-container">
                     <table class="data-table" id="attributes-table">
