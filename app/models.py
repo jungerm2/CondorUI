@@ -1,4 +1,4 @@
-"""Database models for tracking submissions and templates."""
+"""Database models for tracking submissions, templates, and uploaded files."""
 
 from datetime import datetime, timezone
 
@@ -59,4 +59,43 @@ class SubmitTemplate(db.Model):
             "submit_data": self.submit_data,
             "created_at": self.created_at.isoformat() + "Z",
             "updated_at": self.updated_at.isoformat() + "Z",
+        }
+
+
+class UploadedFile(db.Model):
+    """A file uploaded through the web UI, optionally staged to OSDF."""
+
+    __tablename__ = "uploaded_files"
+
+    id = db.Column(db.Integer, primary_key=True)
+    filename = db.Column(db.String(255), nullable=False)
+    original_name = db.Column(db.String(255), nullable=False)
+    local_path = db.Column(db.String(512), nullable=True)  # null if moved to OSDF
+    osdf_path = db.Column(db.String(512), nullable=True)   # null if local only
+    size = db.Column(db.Integer, nullable=False, default=0)
+    uploaded_at = db.Column(
+        db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+
+    def to_dict(self) -> dict:
+        from flask import current_app
+
+        # Compute the URI
+        if self.osdf_path:
+            base_uri = current_app.config.get("OSDF_BASE_URI", "osdf:///")
+            uri = base_uri.rstrip("/") + "/" + self.filename
+        elif self.local_path:
+            uri = self.local_path
+        else:
+            uri = ""
+
+        return {
+            "id": self.id,
+            "filename": self.filename,
+            "original_name": self.original_name,
+            "local_path": self.local_path,
+            "osdf_path": self.osdf_path,
+            "uri": uri,
+            "size": self.size,
+            "uploaded_at": self.uploaded_at.isoformat() + "Z",
         }

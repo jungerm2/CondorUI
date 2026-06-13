@@ -596,6 +596,112 @@ select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg widt
 @keyframes toastIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
 @keyframes toastOut { to { opacity: 0; transform: translateX(40px); } }
 
+/* ===== Badges ===== */
+.badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.badge-local {
+    background: rgba(96, 165, 250, 0.12);
+    color: var(--status-completed);
+    border: 1px solid rgba(96, 165, 250, 0.2);
+}
+.badge-osdf {
+    background: rgba(192, 132, 252, 0.12);
+    color: var(--status-transferring);
+    border: 1px solid rgba(192, 132, 252, 0.2);
+}
+
+/* ===== Action Buttons ===== */
+.action-btns {
+    display: flex;
+    gap: 4px;
+    flex-wrap: nowrap;
+}
+
+/* ===== Danger Button ===== */
+.btn-danger {
+    background: rgba(248, 113, 113, 0.12);
+    color: var(--status-held);
+    border: 1px solid rgba(248, 113, 113, 0.2);
+}
+.btn-danger:hover {
+    background: rgba(248, 113, 113, 0.2);
+    border-color: rgba(248, 113, 113, 0.4);
+}
+
+/* ===== Submit File Items (clickable file list on submit page) ===== */
+#submit-files-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.submit-file-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all var(--transition);
+    user-select: none;
+}
+.submit-file-item:hover {
+    border-color: var(--border-hover);
+    background: rgba(100, 120, 180, 0.05);
+}
+.submit-file-item.selected {
+    border-color: rgba(34, 211, 238, 0.3);
+    background: rgba(34, 211, 238, 0.05);
+}
+.submit-file-check {
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    border: 2px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all var(--transition);
+}
+.submit-file-item.selected .submit-file-check {
+    border-color: var(--accent-cyan);
+    background: var(--accent-cyan);
+}
+.submit-file-check .check-icon {
+    opacity: 0;
+    transition: opacity var(--transition);
+    color: #0a0e1a;
+}
+.submit-file-item.selected .submit-file-check .check-icon {
+    opacity: 1;
+}
+.submit-file-info {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+.submit-file-name {
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.submit-file-meta {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
 /* ===== Responsive ===== */
 @media (max-width: 900px) {
     .sidebar { width: 60px; }

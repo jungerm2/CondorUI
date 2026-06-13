@@ -23,6 +23,12 @@ def templates_page():
     return render_template("templates.html", active_page="templates")
 
 
+@views_bp.route("/files")
+def files_page():
+    """Serve the input files management page."""
+    return render_template("files.html", active_page="files")
+
+
 @views_bp.route("/history")
 def history_page():
     """Redirect to dashboard (history is now merged into the dashboard page)."""

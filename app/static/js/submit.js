@@ -1,5 +1,6 @@
 // Local variables
-let uploadedFiles = [];
+let serverFiles = [];
+let selectedFileUris = new Set();
 let pendingSubmitFile = null;
 
 // Submission modes toggle
@@ -40,86 +41,92 @@ function initExtraAttrs() {
     });
 }
 
-// OSDF Input Files Upload & Drag/Drop
-function initInputFilesUpload() {
-    const dropzone = $('#input-file-dropzone');
-    const fileInput = $('#input-file-upload');
-    const listEl = $('#uploaded-files-list');
+// Load server-side files and render clickable list
+async function loadServerFiles() {
+    const listEl = $('#submit-files-list');
+    if (!listEl) return;
 
-    dropzone.addEventListener('click', () => fileInput.click());
+    try {
+        const data = await api('/files');
+        serverFiles = data.files || [];
+    } catch (err) {
+        listEl.innerHTML = `<p class="hint" style="color: var(--text-muted); font-size: 0.85rem;">Could not load files: ${err.message}</p>`;
+        return;
+    }
 
-    dropzone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        dropzone.classList.add('dragover');
-    });
+    if (serverFiles.length === 0) {
+        listEl.innerHTML = `
+            <p class="hint" style="color: var(--text-muted); font-size: 0.85rem;">
+                No files uploaded yet.
+                <a href="/files" style="color: var(--accent-cyan);">Upload files</a>
+            </p>`;
+        return;
+    }
 
-    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+    listEl.innerHTML = '';
+    serverFiles.forEach(f => {
+        const isSelected = selectedFileUris.has(f.uri);
+        const item = document.createElement('div');
+        item.className = `submit-file-item ${isSelected ? 'selected' : ''}`;
+        item.dataset.uri = f.uri;
+        item.dataset.id = f.id;
 
-    dropzone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dropzone.classList.remove('dragover');
-        if (e.dataTransfer.files.length) {
-            handleUploadFiles(e.dataTransfer.files);
-        }
-    });
+        const isOsdf = !!f.osdf_path;
+        const locationLabel = isOsdf ? 'OSDF' : 'Local';
 
-    fileInput.addEventListener('change', () => {
-        if (fileInput.files.length) {
-            handleUploadFiles(fileInput.files);
-        }
-    });
+        item.innerHTML = `
+            <div class="submit-file-check">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" class="check-icon">
+                    <polyline points="20,6 9,17 4,12" />
+                </svg>
+            </div>
+            <div class="submit-file-info">
+                <span class="submit-file-name monospace">${escHtml(f.filename)}</span>
+                <span class="submit-file-meta">${formatFileSize(f.size)} · ${locationLabel}</span>
+            </div>
+        `;
 
-    async function handleUploadFiles(files) {
-        for (const file of files) {
-            const formData = new FormData();
-            formData.append('files', file);
-            toast(`Uploading ${file.name}...`);
-            try {
-                const res = await fetch('/api/upload', {
-                    method: 'POST',
-                    body: formData
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || 'Upload failed');
-
-                // Use osdf_uri if available (provided by server when OSDF staging is configured)
-                // Fall back to local_path if OSDF not configured
-                const uploaded = data.uploaded[0];
-                const uri = uploaded.osdf_uri || uploaded.local_path;
-                uploadedFiles.push(uri);
-                renderUploadedFiles();
-                const msg = uploaded.osdf_uri ? `${file.name} uploaded and staged to OSDF` : `${file.name} uploaded locally`;
-                toast(msg);
-            } catch (err) {
-                toast(`Upload failed: ${err.message}`, 'error');
+        item.addEventListener('click', () => {
+            const uri = item.dataset.uri;
+            if (selectedFileUris.has(uri)) {
+                selectedFileUris.delete(uri);
+                item.classList.remove('selected');
+            } else {
+                selectedFileUris.add(uri);
+                item.classList.add('selected');
             }
-        }
-    }
-
-    function renderUploadedFiles() {
-        listEl.innerHTML = '';
-        uploadedFiles.forEach((uri, idx) => {
-            const name = basename(uri);
-            const fileItem = document.createElement('div');
-            fileItem.className = 'uploaded-file-item';
-            fileItem.innerHTML = `
-                <span class="file-name monospace">${name}</span>
-                <span class="file-uri monospace">${uri}</span>
-                <button class="btn btn-ghost btn-sm remove-file-btn" data-idx="${idx}" title="Remove file" style="color: var(--danger-color);">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                        <line x1="18" y1="6" x2="6" y2="18" />
-                        <line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
-                </button>
-            `;
-            fileItem.querySelector('.remove-file-btn').addEventListener('click', (e) => {
-                const i = parseInt(e.currentTarget.dataset.idx);
-                uploadedFiles.splice(i, 1);
-                renderUploadedFiles();
-            });
-            listEl.appendChild(fileItem);
+            // Update the transfer_input_files text field
+            updateTransferInputField();
         });
+
+        listEl.appendChild(item);
+    });
+}
+
+function formatFileSize(bytes) {
+    if (!bytes && bytes !== 0) return '—';
+    if (bytes === 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let i = 0;
+    let size = bytes;
+    while (size >= 1024 && i < units.length - 1) {
+        size /= 1024;
+        i++;
     }
+    return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+// Update the transfer_input_files text field with selected file URIs
+function updateTransferInputField() {
+    // Keep only manual entries that are NOT server-managed file URIs
+    const serverUriSet = new Set(serverFiles.map(f => f.uri));
+    const manualInput = ($('#job-transfer-input').value || '')
+        .split(',')
+        .map(x => x.trim())
+        .filter(x => x && !serverUriSet.has(x));
+
+    const allUris = [...manualInput, ...Array.from(selectedFileUris)];
+    $('#job-transfer-input').value = allUris.join(', ');
 }
 
 // .sub file upload & preview
@@ -195,12 +202,6 @@ function buildSubmitDict() {
         .split(',')
         .map(x => x.trim())
         .filter(x => x);
-
-    uploadedFiles.forEach(uri => {
-        if (!transferInputs.includes(uri)) {
-            transferInputs.push(uri);
-        }
-    });
 
     if (transferInputs.length > 0) {
         d.transfer_input_files = transferInputs.join(', ');
@@ -362,7 +363,7 @@ function syncRawToForm() {
 
     const container = $('#extra-attrs');
     container.innerHTML = '';
-    uploadedFiles = [];
+    selectedFileUris.clear();
 
     lines.forEach(line => {
         line = line.split('#')[0].trim();
@@ -401,13 +402,17 @@ function syncRawToForm() {
                 break;
             case 'transfer_input_files':
                 const files = val.split(',').map(f => f.trim());
+                // Try to match against server files by URI
                 files.forEach(f => {
-                    if (f.startsWith('osdf:///')) {
-                        uploadedFiles.push(f);
+                    const matched = serverFiles.find(sf => sf.uri === f);
+                    if (matched) {
+                        selectedFileUris.add(matched.uri);
                     }
                 });
-                const nonOsdf = files.filter(f => !f.startsWith('osdf:///'));
-                $('#job-transfer-input').value = nonOsdf.join(', ');
+                // Non-matched files go to manual input
+                const matchedUris = new Set(serverFiles.map(sf => sf.uri));
+                const nonMatched = files.filter(f => !matchedUris.has(f));
+                $('#job-transfer-input').value = nonMatched.join(', ');
                 break;
             case 'request_cpus':
                 $('#job-cpus').value = val;
@@ -429,7 +434,6 @@ function syncRawToForm() {
                 break;
             default:
                 // Handle as custom ClassAd
-                // Try to detect queue directive
                 if (key !== 'queue') {
                     const row = document.createElement('div');
                     row.className = 'attr-row';
@@ -455,29 +459,20 @@ function syncRawToForm() {
         }
     });
 
-    // Refresh uploaded files list presentation
-    const listEl = $('#uploaded-files-list');
-    listEl.innerHTML = '';
-    uploadedFiles.forEach((uri, idx) => {
-        const name = basename(uri);
-        const fileItem = document.createElement('div');
-        fileItem.className = 'uploaded-file-item';
-        fileItem.innerHTML = `
-            <span class="file-name monospace">${escHtml(name)}</span>
-            <span class="file-uri monospace">${escHtml(uri)}</span>
-            <button class="btn btn-ghost btn-sm remove-file-btn" data-idx="${idx}" title="Remove file" style="color: var(--danger-color);">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-            </button>
-        `;
-        fileItem.querySelector('.remove-file-btn').addEventListener('click', (e) => {
-            const i = parseInt(e.currentTarget.dataset.idx);
-            uploadedFiles.splice(i, 1);
-            fileItem.remove();
-        });
-        listEl.appendChild(fileItem);
+    // Refresh the file selection UI
+    refreshFileSelectionUI();
+}
+
+// Refresh the visual state of file items based on selectedFileUris
+function refreshFileSelectionUI() {
+    const items = document.querySelectorAll('#submit-files-list .submit-file-item');
+    items.forEach(item => {
+        const uri = item.dataset.uri;
+        if (selectedFileUris.has(uri)) {
+            item.classList.add('selected');
+        } else {
+            item.classList.remove('selected');
+        }
     });
 }
 
@@ -520,9 +515,16 @@ function checkSelectedTemplate() {
 
                 if (submit.transfer_input_files) {
                     const files = submit.transfer_input_files.split(',').map(f => f.trim());
-                    uploadedFiles = files.filter(f => f.startsWith('osdf:///'));
-                    const nonOsdf = files.filter(f => !f.startsWith('osdf:///'));
-                    $('#job-transfer-input').value = nonOsdf.join(', ');
+                    // Match against server files
+                    files.forEach(f => {
+                        const matched = serverFiles.find(sf => sf.uri === f);
+                        if (matched) {
+                            selectedFileUris.add(matched.uri);
+                        }
+                    });
+                    const matchedUris = new Set(serverFiles.map(sf => sf.uri));
+                    const nonMatched = files.filter(f => !matchedUris.has(f));
+                    $('#job-transfer-input').value = nonMatched.join(', ');
                 }
 
                 const standardKeys = ['universe', 'container_image', 'executable', 'arguments', 'shell', 'request_cpus', 'request_memory', 'request_disk', 'output', 'error', 'log', 'transfer_input_files'];
@@ -546,6 +548,9 @@ function checkSelectedTemplate() {
                         container.appendChild(row);
                     }
                 }
+
+                // Refresh file selection UI
+                refreshFileSelectionUI();
             } else {
                 // Switch to Raw mode
                 const rawBtn = $('#mode-raw-btn');
@@ -595,8 +600,12 @@ async function saveAsTemplate(mode) {
 document.addEventListener('DOMContentLoaded', () => {
     initModeToggle();
     initExtraAttrs();
-    initInputFilesUpload();
     initSubmitFileUpload();
+
+    // Load server files first, then check for template
+    loadServerFiles().then(() => {
+        checkSelectedTemplate();
+    });
 
     $('#job-universe').addEventListener('change', (e) => {
         const containerGroup = $('#container-image-group');
@@ -661,6 +670,4 @@ document.addEventListener('DOMContentLoaded', () => {
     `;
     $('#mode-raw .submit-actions').insertBefore(rawSaveBtn, $('#submit-raw-btn'));
     rawSaveBtn.addEventListener('click', () => saveAsTemplate('raw'));
-
-    checkSelectedTemplate();
 });

@@ -27,10 +27,15 @@ class Config:
         "JOB_LOGS_DIR", os.path.join(os.path.dirname(BASE_DIR), "condor_job_logs")
     )
 
-    # OSDF staging path for file transfers — uploaded files are copied here
+    # OSDF staging path for file transfers — uploaded files are moved here
     # so HTCondor can cache them via OSDF.
     OSDF_STAGING_PATH = os.environ.get(
         "OSDF_STAGING_PATH", ""
+    )
+
+    # Base URI prefix for OSDF-staged files (e.g., "osdf:///" or "gsiftp://...")
+    OSDF_BASE_URI = os.environ.get(
+        "OSDF_BASE_URI", "osdf:///"
     )
 
     # Maximum number of history results to return by default

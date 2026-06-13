@@ -24,7 +24,7 @@ from app.condor import (
     submit_from_file,
     submit_job,
 )
-from app.models import JobSubmission, SubmitTemplate
+from app.models import JobSubmission, SubmitTemplate, UploadedFile
 
 logger = logging.getLogger(__name__)
 api_bp = Blueprint("api", __name__, url_prefix="/api")
@@ -432,13 +432,20 @@ def submit_file():
 
 
 # ---------------------------------------------------------------------------
-# File upload (for OSDF staging)
+# File management — upload, list, rename, delete, stage to OSDF
 # ---------------------------------------------------------------------------
 
 
-@api_bp.route("/upload", methods=["POST"])
+@api_bp.route("/files", methods=["GET"])
+def list_files():
+    """List all uploaded files."""
+    files = UploadedFile.query.order_by(UploadedFile.uploaded_at.desc()).all()
+    return jsonify({"files": [f.to_dict() for f in files], "count": len(files)})
+
+
+@api_bp.route("/files", methods=["POST"])
 def upload_files():
-    """Upload files, optionally staging them to the OSDF cache directory."""
+    """Upload files and create DB records."""
     if "files" not in request.files:
         return jsonify({"error": "No files in request"}), 400
 
@@ -446,28 +453,95 @@ def upload_files():
     upload_dir = current_app.config["UPLOAD_DIR"]
     osdf_path = current_app.config.get("OSDF_STAGING_PATH", "")
 
-    saved: list[dict[str, str]] = []
+    saved: list[dict] = []
 
     for f in files:
         if not f.filename:
             continue
 
-        local_path = os.path.join(upload_dir, f.filename)
+        import uuid
+        unique_name = f"{uuid.uuid4().hex}_{f.filename}"
+        local_path = os.path.join(upload_dir, unique_name)
         f.save(local_path)
-        entry: dict[str, str] = {"filename": f.filename, "local_path": local_path}
 
-        if osdf_path:
-            osdf_dest = os.path.join(osdf_path, f.filename)
-            os.makedirs(os.path.dirname(osdf_dest), exist_ok=True)
-            shutil.copy2(local_path, osdf_dest)
-            entry["osdf_uri"] = f"osdf:///{f.filename}"
-            entry["osdf_path"] = osdf_dest
-        else:
-            entry["osdf_uri"] = ""
+        size = os.path.getsize(local_path)
 
-        saved.append(entry)
+        uploaded_file = UploadedFile(
+            filename=f.filename,
+            original_name=f.filename,
+            local_path=local_path,
+            osdf_path=None,
+            size=size,
+        )
+        db.session.add(uploaded_file)
+        db.session.flush()
+        saved.append(uploaded_file.to_dict())
 
+    db.session.commit()
     return jsonify({"uploaded": saved, "count": len(saved)}), 201
+
+
+@api_bp.route("/files/<int:file_id>", methods=["PUT"])
+def rename_file(file_id: int):
+    """Rename an uploaded file (display name only)."""
+    data = request.get_json()
+    if not data or "filename" not in data:
+        return jsonify({"error": "Missing 'filename' in request body"}), 400
+
+    uploaded_file = UploadedFile.query.get_or_404(file_id)
+    uploaded_file.filename = data["filename"]
+    db.session.commit()
+    return jsonify(uploaded_file.to_dict())
+
+
+@api_bp.route("/files/<int:file_id>", methods=["DELETE"])
+def delete_file(file_id: int):
+    """Delete an uploaded file from disk/OSDF and the database."""
+    uploaded_file = UploadedFile.query.get_or_404(file_id)
+
+    # Remove from local disk if present
+    if uploaded_file.local_path and os.path.exists(uploaded_file.local_path):
+        os.remove(uploaded_file.local_path)
+
+    # Remove from OSDF staging if present
+    if uploaded_file.osdf_path and os.path.exists(uploaded_file.osdf_path):
+        os.remove(uploaded_file.osdf_path)
+
+    db.session.delete(uploaded_file)
+    db.session.commit()
+    return jsonify({"message": f"File '{uploaded_file.filename}' deleted"})
+
+
+@api_bp.route("/files/<int:file_id>/stage", methods=["POST"])
+def stage_file(file_id: int):
+    """Move a file to the OSDF staging path with a unique name."""
+    uploaded_file = UploadedFile.query.get_or_404(file_id)
+
+    if uploaded_file.osdf_path:
+        return jsonify({"error": "File is already staged to OSDF"}), 400
+
+    if not uploaded_file.local_path or not os.path.exists(uploaded_file.local_path):
+        return jsonify({"error": "Local file not found on disk"}), 404
+
+    osdf_path = current_app.config.get("OSDF_STAGING_PATH", "")
+    if not osdf_path:
+        return jsonify({"error": "OSDF staging path is not configured"}), 400
+
+    import uuid
+    ext = os.path.splitext(uploaded_file.original_name)[1]
+    unique_name = f"{uuid.uuid4().hex}{ext}"
+    osdf_dest = os.path.join(osdf_path, unique_name)
+    os.makedirs(os.path.dirname(osdf_dest), exist_ok=True)
+
+    # Move the file (not copy) — only one copy exists
+    shutil.move(uploaded_file.local_path, osdf_dest)
+
+    uploaded_file.local_path = None
+    uploaded_file.osdf_path = osdf_dest
+    uploaded_file.filename = unique_name
+    db.session.commit()
+
+    return jsonify(uploaded_file.to_dict())
 
 
 # ---------------------------------------------------------------------------
