@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+
+{% block title %}Containers — Condor Web UI{% endblock %}
+
+{% block content %}
+<section class="tab-panel active" id="panel-containers">
+    <div class="page-header">
+        <h1>Containers</h1>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 16px;">
+
+    <!-- OSDF Not Configured Warning -->
+    <div class="alert alert-warning" id="osdf-warning" style="display:none;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="8" x2="12" y2="12" />
+            <line x1="12" y1="16" x2="12.01" y2="16" />
+        </svg>
+        <div>
+            <strong>OSDF Root Path Not Configured</strong>
+            <p>The <code>OSDF_ROOT_PATH</code> environment variable must be set to use containers. Please configure it and restart the server.</p>
+        </div>
+    </div>
+
+    <!-- Pull Container -->
+    <div class="card full-width">
+        <div class="card-header">
+            <h2>Pull Container Image</h2>
+            <span class="hint">Pull a Docker image and convert it to Apptainer .sif format</span>
+        </div>
+        <div class="card-body">
+            <div class="form-row" style="grid-template-columns: 1fr 1fr auto;">
+                <div class="form-group">
+                    <label for="pull-image-ref">Docker Image Reference</label>
+                    <input type="text" id="pull-image-ref" placeholder="docker://ubuntu:latest" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label for="pull-image-name">Display Name</label>
+                    <input type="text" id="pull-image-name" placeholder="Ubuntu Latest" class="form-input">
+                </div>
+                <div class="form-group" style="display: flex; align-items: flex-end;">
+                    <button class="btn btn-primary" id="pull-container-btn" disabled>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                            <polyline points="7,10 12,15 17,10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                        Pull
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Upload .sif -->
+    <div class="card full-width">
+        <div class="card-header">
+            <h2>Upload .sif File</h2>
+            <span class="hint">Upload a pre-built Apptainer/Singularity image</span>
+        </div>
+        <div class="card-body">
+            <div class="form-group">
+                <label for="upload-sif-name">Display Name</label>
+                <input type="text" id="upload-sif-name" placeholder="My Container" class="form-input">
+            </div>
+            <div class="dropzone" id="sif-dropzone">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40">
+                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                    <polyline points="17,8 12,3 7,8" />
+                    <line x1="12" y1="3" x2="12" y2="15" />
+                </svg>
+                <p>Drag & drop a <strong>.sif</strong> file here, or <strong>click to browse</strong></p>
+                <p class="dropzone-hint">Only .sif files are accepted</p>
+                <input type="file" id="sif-file-input" accept=".sif" hidden>
+            </div>
+            <div class="upload-progress" id="sif-upload-progress" style="display:none;">
+                <div class="progress-bar-container">
+                    <div class="progress-bar-fill" id="sif-upload-progress-fill" style="width: 0%;"></div>
+                </div>
+                <span class="progress-text" id="sif-upload-progress-text">Uploading...</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Container List -->
+    <div class="card full-width">
+        <div class="card-header">
+            <h2>Available Containers</h2>
+        </div>
+        <div class="card-body">
+            <div class="table-container" id="containers-table-container">
+                <table class="data-table" id="containers-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Source</th>
+                            <th>Size</th>
+                            <th>Created</th>
+                            <th>URI</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="containers-tbody">
+                        <!-- Populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+            <div class="empty-state" id="containers-empty" style="display:none;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48">
+                    <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" />
+                </svg>
+                <p>No containers available</p>
+                <p class="hint">Pull a Docker image or upload a .sif file to get started</p>
+            </div>
+        </div>
+    </div>
+    </div>
+</section>
+
+<!-- Rename Modal -->
+<div class="modal-overlay" id="rename-modal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Rename Container</h2>
+            <button class="btn btn-ghost btn-sm modal-close-btn" data-modal="rename-modal" style="padding: 4px 8px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+            </button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label for="rename-container-name">New name</label>
+                <input type="text" id="rename-container-name" class="form-input" placeholder="Enter new name">
+            </div>
+            <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;">
+                <button class="btn btn-ghost modal-close-btn" data-modal="rename-modal">Cancel</button>
+                <button class="btn btn-primary" id="rename-confirm-btn">Rename</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div class="modal-overlay" id="delete-modal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Delete Container</h2>
+            <button class="btn btn-ghost btn-sm modal-close-btn" data-modal="delete-modal" style="padding: 4px 8px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+            </button>
+        </div>
+        <div class="modal-body">
+            <p style="margin-bottom: 16px; color: var(--text-secondary);">
+                Are you sure you want to delete <strong id="delete-container-name-display"></strong>?
+                This will permanently remove the .sif file from disk.
+            </p>
+            <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;">
+                <button class="btn btn-ghost modal-close-btn" data-modal="delete-modal">Cancel</button>
+                <button class="btn btn-danger" id="delete-confirm-btn">Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/containers.js"></script>
+{% endblock %}

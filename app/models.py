@@ -83,7 +83,8 @@ class UploadedFile(db.Model):
         # Compute the URI
         if self.osdf_path:
             base_uri = current_app.config.get("OSDF_BASE_URI", "osdf:///")
-            uri = base_uri.rstrip("/") + "/" + self.filename
+            # Files are stored in OSDF_ROOT_PATH/uploads/<filename>
+            uri = base_uri.rstrip("/") + "/uploads/" + self.filename
         elif self.local_path:
             uri = self.local_path
         else:
@@ -98,4 +99,35 @@ class UploadedFile(db.Model):
             "uri": uri,
             "size": self.size,
             "uploaded_at": self.uploaded_at.isoformat() + "Z",
+        }
+
+
+class ContainerImage(db.Model):
+    """A container image (.sif) stored in the OSDF containers directory."""
+
+    __tablename__ = "container_images"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(255), nullable=False)
+    filename = db.Column(db.String(255), nullable=False, unique=True)
+    source = db.Column(db.String(512), nullable=True)  # e.g., "docker://ubuntu:latest"
+    size = db.Column(db.Integer, nullable=False, default=0)
+    created_at = db.Column(
+        db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+
+    def to_dict(self) -> dict:
+        from flask import current_app
+
+        base_uri = current_app.config.get("OSDF_BASE_URI", "osdf:///")
+        uri = base_uri.rstrip("/") + "/containers/" + self.filename
+
+        return {
+            "id": self.id,
+            "name": self.name,
+            "filename": self.filename,
+            "source": self.source,
+            "uri": uri,
+            "size": self.size,
+            "created_at": self.created_at.isoformat() + "Z",
         }

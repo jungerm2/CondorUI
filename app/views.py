@@ -29,6 +29,12 @@ def files_page():
     return render_template("files.html", active_page="files")
 
 
+@views_bp.route("/containers")
+def containers_page():
+    """Serve the containers management page."""
+    return render_template("containers.html", active_page="containers")
+
+
 @views_bp.route("/history")
 def history_page():
     """Redirect to dashboard (history is now merged into the dashboard page)."""

@@ -6,6 +6,8 @@ import json
 import logging
 import os
 import shutil
+import subprocess
+import uuid
 
 from flask import Blueprint, current_app, jsonify, request, send_file
 
@@ -24,7 +26,7 @@ from app.condor import (
     submit_from_file,
     submit_job,
 )
-from app.models import JobSubmission, SubmitTemplate, UploadedFile
+from app.models import ContainerImage, JobSubmission, SubmitTemplate, UploadedFile
 
 logger = logging.getLogger(__name__)
 api_bp = Blueprint("api", __name__, url_prefix="/api")
@@ -451,7 +453,6 @@ def upload_files():
 
     files = request.files.getlist("files")
     upload_dir = current_app.config["UPLOAD_DIR"]
-    osdf_path = current_app.config.get("OSDF_STAGING_PATH", "")
 
     saved: list[dict] = []
 
@@ -514,7 +515,7 @@ def delete_file(file_id: int):
 
 @api_bp.route("/files/<int:file_id>/stage", methods=["POST"])
 def stage_file(file_id: int):
-    """Move a file to the OSDF staging path with a unique name."""
+    """Move a file to the OSDF uploads subdirectory with a unique name."""
     uploaded_file = UploadedFile.query.get_or_404(file_id)
 
     if uploaded_file.osdf_path:
@@ -523,14 +524,14 @@ def stage_file(file_id: int):
     if not uploaded_file.local_path or not os.path.exists(uploaded_file.local_path):
         return jsonify({"error": "Local file not found on disk"}), 404
 
-    osdf_path = current_app.config.get("OSDF_STAGING_PATH", "")
-    if not osdf_path:
-        return jsonify({"error": "OSDF staging path is not configured"}), 400
+    osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
+    if not osdf_root:
+        return jsonify({"error": "OSDF root path is not configured"}), 400
 
     import uuid
     ext = os.path.splitext(uploaded_file.original_name)[1]
     unique_name = f"{uuid.uuid4().hex}{ext}"
-    osdf_dest = os.path.join(osdf_path, unique_name)
+    osdf_dest = os.path.join(osdf_root, "uploads", unique_name)
     os.makedirs(os.path.dirname(osdf_dest), exist_ok=True)
 
     # Move the file (not copy) — only one copy exists
@@ -542,6 +543,156 @@ def stage_file(file_id: int):
     db.session.commit()
 
     return jsonify(uploaded_file.to_dict())
+
+
+# ---------------------------------------------------------------------------
+# Container management — list, pull, upload, rename, delete
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route("/containers", methods=["GET"])
+def list_containers():
+    """List all container images."""
+    containers = ContainerImage.query.order_by(ContainerImage.created_at.desc()).all()
+    return jsonify({"containers": [c.to_dict() for c in containers], "count": len(containers)})
+
+
+@api_bp.route("/containers/pull", methods=["POST"])
+def pull_container():
+    """Pull a Docker image and convert to Apptainer .sif.
+
+    Request JSON:
+    {
+        "image": "docker://ubuntu:latest",
+        "name": "Ubuntu Latest"
+    }
+    """
+    data = request.get_json()
+    if not data or "image" not in data:
+        return jsonify({"error": "Missing 'image' in request body"}), 400
+
+    image_ref = data["image"].strip()
+    name = data.get("name", "").strip() or os.path.basename(image_ref)
+
+    osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
+    if not osdf_root:
+        return jsonify({"error": "OSDF root path is not configured"}), 400
+
+    containers_dir = os.path.join(osdf_root, "containers")
+    os.makedirs(containers_dir, exist_ok=True)
+
+    # Generate a unique filename
+    safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in name.lower())
+    unique_name = f"{uuid.uuid4().hex}_{safe_name}.sif"
+    dest_path = os.path.join(containers_dir, unique_name)
+
+    try:
+        # Run apptainer pull
+        logger.info("Pulling container: %s -> %s", image_ref, dest_path)
+        result = subprocess.run(
+            ["apptainer", "pull", dest_path, image_ref],
+            capture_output=True, text=True, timeout=600,
+        )
+        if result.returncode != 0:
+            logger.error("apptainer pull failed: %s", result.stderr)
+            return jsonify({
+                "error": f"apptainer pull failed: {result.stderr[:500]}"
+            }), 500
+
+        size = os.path.getsize(dest_path)
+
+        container = ContainerImage(
+            name=name,
+            filename=unique_name,
+            source=image_ref,
+            size=size,
+        )
+        db.session.add(container)
+        db.session.commit()
+
+        return jsonify(container.to_dict()), 201
+
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "apptainer pull timed out after 600 seconds"}), 500
+    except FileNotFoundError:
+        return jsonify({"error": "apptainer command not found. Is Apptainer/Singularity installed?"}), 500
+    except Exception as e:
+        logger.exception("Container pull failed")
+        return jsonify({"error": str(e)}), 500
+
+
+@api_bp.route("/containers/upload", methods=["POST"])
+def upload_container():
+    """Upload an existing .sif file to the containers directory."""
+    if "file" not in request.files:
+        return jsonify({"error": "No file in request"}), 400
+
+    file = request.files["file"]
+    if not file.filename:
+        return jsonify({"error": "Empty filename"}), 400
+
+    if not file.filename.lower().endswith(".sif"):
+        return jsonify({"error": "Only .sif files are accepted"}), 400
+
+    name = request.form.get("name", "").strip() or os.path.splitext(file.filename)[0]
+
+    osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
+    if not osdf_root:
+        return jsonify({"error": "OSDF root path is not configured"}), 400
+
+    containers_dir = os.path.join(osdf_root, "containers")
+    os.makedirs(containers_dir, exist_ok=True)
+
+    safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in name.lower())
+    unique_name = f"{uuid.uuid4().hex}_{safe_name}.sif"
+    dest_path = os.path.join(containers_dir, unique_name)
+
+    try:
+        file.save(dest_path)
+        size = os.path.getsize(dest_path)
+
+        container = ContainerImage(
+            name=name,
+            filename=unique_name,
+            source=f"uploaded:{file.filename}",
+            size=size,
+        )
+        db.session.add(container)
+        db.session.commit()
+
+        return jsonify(container.to_dict()), 201
+    except Exception as e:
+        logger.exception("Container upload failed")
+        return jsonify({"error": str(e)}), 500
+
+
+@api_bp.route("/containers/<int:container_id>", methods=["PUT"])
+def rename_container(container_id: int):
+    """Rename a container (display name only)."""
+    data = request.get_json()
+    if not data or "name" not in data:
+        return jsonify({"error": "Missing 'name' in request body"}), 400
+
+    container = ContainerImage.query.get_or_404(container_id)
+    container.name = data["name"]
+    db.session.commit()
+    return jsonify(container.to_dict())
+
+
+@api_bp.route("/containers/<int:container_id>", methods=["DELETE"])
+def delete_container(container_id: int):
+    """Delete a container image from disk and the database."""
+    container = ContainerImage.query.get_or_404(container_id)
+
+    osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
+    if osdf_root:
+        file_path = os.path.join(osdf_root, "containers", container.filename)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+    db.session.delete(container)
+    db.session.commit()
+    return jsonify({"message": f"Container '{container.name}' deleted"})
 
 
 # ---------------------------------------------------------------------------

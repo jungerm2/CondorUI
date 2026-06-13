@@ -1,6 +1,8 @@
 // Local variables
 let serverFiles = [];
+let serverContainers = [];
 let selectedFileUris = new Set();
+let selectedContainerUri = null;
 let pendingSubmitFile = null;
 
 // Submission modes toggle
@@ -38,6 +40,67 @@ function initExtraAttrs() {
         `;
         row.querySelector('.remove-attr-btn').addEventListener('click', () => row.remove());
         container.appendChild(row);
+    });
+}
+
+// Load server-side containers and render clickable list
+async function loadContainers() {
+    const listEl = $('#submit-containers-list');
+    if (!listEl) return;
+
+    try {
+        const data = await api('/containers');
+        serverContainers = data.containers || [];
+    } catch (err) {
+        listEl.innerHTML = `<p class="hint" style="color: var(--text-muted); font-size: 0.85rem;">Could not load containers: ${err.message}</p>`;
+        return;
+    }
+
+    if (serverContainers.length === 0) {
+        listEl.innerHTML = `
+            <p class="hint" style="color: var(--text-muted); font-size: 0.85rem;">
+                No containers available.
+                <a href="/containers" style="color: var(--accent-cyan);">Manage containers</a>
+            </p>`;
+        return;
+    }
+
+    listEl.innerHTML = '';
+    serverContainers.forEach(c => {
+        const isSelected = selectedContainerUri === c.uri;
+        const item = document.createElement('div');
+        item.className = `submit-file-item ${isSelected ? 'selected' : ''}`;
+        item.dataset.uri = c.uri;
+        item.dataset.id = c.id;
+
+        item.innerHTML = `
+            <div class="submit-file-check">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" class="check-icon">
+                    <polyline points="20,6 9,17 4,12" />
+                </svg>
+            </div>
+            <div class="submit-file-info">
+                <span class="submit-file-name">${escHtml(c.name)}</span>
+                <span class="submit-file-meta">${formatFileSize(c.size)}</span>
+            </div>
+        `;
+
+        item.addEventListener('click', () => {
+            const uri = item.dataset.uri;
+            if (selectedContainerUri === uri) {
+                selectedContainerUri = null;
+                item.classList.remove('selected');
+                $('#job-container-image').value = '';
+            } else {
+                // Deselect all others
+                listEl.querySelectorAll('.submit-file-item').forEach(el => el.classList.remove('selected'));
+                selectedContainerUri = uri;
+                item.classList.add('selected');
+                $('#job-container-image').value = uri;
+            }
+        });
+
+        listEl.appendChild(item);
     });
 }
 
@@ -602,17 +665,23 @@ document.addEventListener('DOMContentLoaded', () => {
     initExtraAttrs();
     initSubmitFileUpload();
 
-    // Load server files first, then check for template
-    loadServerFiles().then(() => {
+    // Load server files and containers, then check for template
+    Promise.all([
+        loadServerFiles(),
+        loadContainers()
+    ]).then(() => {
         checkSelectedTemplate();
     });
 
     $('#job-universe').addEventListener('change', (e) => {
         const containerGroup = $('#container-image-group');
+        const containerSelectGroup = $('#container-select-group');
         if (e.target.value === 'container') {
             containerGroup.style.display = 'block';
+            containerSelectGroup.style.display = 'block';
         } else {
             containerGroup.style.display = 'none';
+            containerSelectGroup.style.display = 'none';
         }
     });
 

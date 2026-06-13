@@ -42,6 +42,12 @@
                             <input type="text" id="job-container-image" placeholder="osdf:///path/to/image.sif"
                                 class="form-input">
                         </div>
+                        <div class="form-group" id="container-select-group" style="display:none;">
+                            <label>Available Containers</label>
+                            <div id="submit-containers-list">
+                                <p class="hint" style="color: var(--text-muted); font-size: 0.85rem;">Loading containers...</p>
+                            </div>
+                        </div>
                         <div class="form-group">
                             <div class="exec-shell-toggle">
                                 <button class="toggle-btn active" data-execmode="executable" id="execmode-exec-btn">Executable</button>

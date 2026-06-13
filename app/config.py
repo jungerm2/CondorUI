@@ -27,10 +27,10 @@ class Config:
         "JOB_LOGS_DIR", os.path.join(os.path.dirname(BASE_DIR), "condor_job_logs")
     )
 
-    # OSDF staging path for file transfers — uploaded files are moved here
-    # so HTCondor can cache them via OSDF.
-    OSDF_STAGING_PATH = os.environ.get(
-        "OSDF_STAGING_PATH", ""
+    # OSDF root path for file transfers — uploaded files and containers are
+    # stored in subdirectories under this path so HTCondor can cache them via OSDF.
+    OSDF_ROOT_PATH = os.environ.get(
+        "OSDF_ROOT_PATH", ""
     )
 
     # Base URI prefix for OSDF-staged files (e.g., "osdf:///" or "gsiftp://...")
@@ -41,5 +41,5 @@ class Config:
     # Maximum number of history results to return by default
     MAX_HISTORY_RESULTS = int(os.environ.get("MAX_HISTORY_RESULTS", "200"))
 
-    # Maximum upload size (50 MB)
-    MAX_CONTENT_LENGTH = 50 * 1024 * 1024
+    # Maximum upload size (10 GB) — containers can be very large
+    MAX_CONTENT_LENGTH = 10 * 1024 * 1024 * 1024
