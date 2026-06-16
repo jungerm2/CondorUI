@@ -183,8 +183,10 @@ function renderContainers() {
     });
 }
 
-// Pull container
-async function handlePull() {
+// SSE pull — streams apptainer output live
+let pullEventSource = null;
+
+function handlePull() {
     const imageRef = $('#pull-image-ref').value.trim();
     const name = $('#pull-image-name').value.trim() || '';
 
@@ -193,48 +195,121 @@ async function handlePull() {
         return;
     }
 
+    // Hide pull form, show log container
+    const pullFormRow = document.querySelector('#pull-container-btn').closest('.form-row');
+    const logContainer = $('#pull-log-container');
+    const logOutput = $('#pull-log-output');
     const pullBtn = $('#pull-container-btn');
+    const stopBtn = $('#pull-stop-btn');
+
+    pullFormRow.style.display = 'none';
+    logContainer.style.display = 'block';
+    logOutput.textContent = '';
     pullBtn.disabled = true;
-    pullBtn.innerHTML = `
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="animation: spin 1s linear infinite;">
-            <circle cx="12" cy="12" r="10" stroke-dasharray="32" stroke-dashoffset="32" />
-        </svg>
-        Pulling...
-    `;
+    stopBtn.disabled = false;
 
-    toast('Pulling container image... This may take a while.');
+    // Show spinner in the log header
+    const spinner = $('#pull-spinner');
+    if (spinner) spinner.style.display = 'inline-block';
 
-    try {
-        const result = await api('/containers/pull', {
-            method: 'POST',
-            body: JSON.stringify({ image: imageRef, name })
-        });
-        toast(`Container '${result.name}' pulled successfully!`);
-        $('#pull-image-ref').value = '';
-        $('#pull-image-name').value = '';
-        await loadContainers();
-    } catch (err) {
-        toast(`Pull failed: ${err.message}`, 'error');
-    } finally {
-        pullBtn.disabled = false;
-        pullBtn.innerHTML = `
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                <polyline points="7,10 12,15 17,10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-            </svg>
-            Pull
-        `;
+    const params = new URLSearchParams({ image: imageRef });
+    if (name) params.set('name', name);
+
+    pullEventSource = new EventSource(`/api/containers/pull/stream?${params}`);
+
+    pullEventSource.addEventListener('start', (e) => {
+        try {
+            const data = JSON.parse(e.data);
+            logOutput.textContent += `→ Command: ${data.command}\n`;
+            logOutput.textContent += `→ Output file: ${data.filename}\n`;
+        } catch {
+            logOutput.textContent += `→ Output file: ${e.data}\n`;
+        }
+        logOutput.scrollTop = logOutput.scrollHeight;
+    });
+
+    pullEventSource.addEventListener('message', (e) => {
+        logOutput.textContent += e.data + '\n';
+        logOutput.scrollTop = logOutput.scrollHeight;
+    });
+
+    pullEventSource.addEventListener('complete', (e) => {
+        pullEventSource.close();
+        pullEventSource = null;
+        // Hide spinner
+        const spinner = $('#pull-spinner');
+        if (spinner) spinner.style.display = 'none';
+        try {
+            const container = JSON.parse(e.data);
+            toast(`Container '${container.name}' pulled successfully!`);
+            $('#pull-image-ref').value = '';
+            $('#pull-image-name').value = '';
+            setTimeout(() => {
+                logContainer.style.display = 'none';
+                pullFormRow.style.display = '';
+                pullBtn.disabled = false;
+            }, 4000);
+            loadContainers();
+        } catch (err) {
+            toast('Pull succeeded but failed to parse response', 'error');
+            resetPullUI();
+        }
+    });
+
+    pullEventSource.addEventListener('error', (e) => {
+        // If we already handled complete/error, EventSource may fire error too
+        if (!pullEventSource) return;
+
+        // Hide spinner
+        const spinner = $('#pull-spinner');
+        if (spinner) spinner.style.display = 'none';
+
+        // Check if the event has data (from our custom error event)
+        if (e.data) {
+            logOutput.textContent += `\n✗ ERROR: ${e.data}\n`;
+        } else {
+            logOutput.textContent += '\n✗ ERROR: Connection to server lost.\n';
+        }
+        logOutput.scrollTop = logOutput.scrollHeight;
+        toast(`Pull failed: ${e.data || 'Connection lost'}`, 'error');
+        pullEventSource.close();
+        pullEventSource = null;
+        // Do NOT call resetPullUI() — keep the log visible so user can see the error
+        // Just re-enable the pull button and stop button
+        const pullBtn = $('#pull-container-btn');
+        const stopBtn = $('#pull-stop-btn');
+        if (pullBtn) pullBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+    });
+}
+
+function resetPullUI() {
+    const logContainer = $('#pull-log-container');
+    const pullFormRow = document.querySelector('#pull-container-btn').closest('.form-row');
+    const pullBtn = $('#pull-container-btn');
+    const stopBtn = $('#pull-stop-btn');
+    const spinner = $('#pull-spinner');
+    if (logContainer) logContainer.style.display = 'none';
+    if (pullFormRow) pullFormRow.style.display = '';
+    if (pullBtn) pullBtn.disabled = false;
+    if (stopBtn) stopBtn.disabled = true;
+    if (spinner) spinner.style.display = 'none';
+}
+
+// Stop pull
+function stopPull() {
+    if (pullEventSource) {
+        pullEventSource.close();
+        pullEventSource = null;
+        $('#pull-log-output').textContent += '\n— Pull cancelled by user —\n';
+        toast('Pull cancelled', 'warning');
+        resetPullUI();
     }
 }
 
-// Upload .sif with progress bar
+// Upload .sif as raw request body with progress bar, ETA, and sub-1% granularity
 function handleSifUpload(file) {
     const name = $('#upload-sif-name').value.trim() || '';
-
-    const formData = new FormData();
-    formData.append('file', file);
-    if (name) formData.append('name', name);
 
     // Show progress bar
     const progressContainer = $('#sif-upload-progress');
@@ -245,60 +320,31 @@ function handleSifUpload(file) {
     dropzone.style.display = 'none';
     progressContainer.style.display = 'block';
     progressFill.style.width = '0%';
-    progressText.textContent = 'Uploading...';
+    progressText.textContent = 'Starting upload...';
 
-    const xhr = new XMLHttpRequest();
+    const onProgress = createProgressTracker(progressFill, progressText);
 
-    xhr.upload.addEventListener('progress', (e) => {
-        if (e.lengthComputable) {
-            const pct = Math.round((e.loaded / e.total) * 100);
-            progressFill.style.width = pct + '%';
-            const uploadedMb = (e.loaded / (1024 * 1024)).toFixed(1);
-            const totalMb = (e.total / (1024 * 1024)).toFixed(1);
-            progressText.textContent = `${uploadedMb} MB / ${totalMb} MB (${pct}%)`;
-        }
+    const { promise } = uploadFileRaw(file, '/api/containers/upload', {
+        name: name,
+        filenameHeader: 'X-Container-Filename',
+        nameHeader: 'X-Container-Name',
+        onProgress,
     });
-
-    xhr.addEventListener('load', async () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-                const data = JSON.parse(xhr.responseText);
-                toast(`Container '${data.name}' uploaded successfully!`);
-                $('#upload-sif-name').value = '';
-                progressFill.style.width = '100%';
-                progressText.textContent = 'Complete!';
-                setTimeout(() => {
-                    progressContainer.style.display = 'none';
-                    dropzone.style.display = '';
-                }, 1500);
-                await loadContainers();
-            } catch (e) {
-                toast('Upload succeeded but failed to parse response', 'error');
-                resetUploadUI();
-            }
-        } else {
-            let msg = 'Upload failed';
-            try {
-                const data = JSON.parse(xhr.responseText);
-                msg = data.error || msg;
-            } catch (e) { /* ignore */ }
-            toast(msg, 'error');
-            resetUploadUI();
-        }
+    promise.then(async (data) => {
+        toast(`Container '${data.name}' uploaded successfully!`);
+        $('#upload-sif-name').value = '';
+        progressFill.style.width = '100%';
+        progressText.textContent = 'Complete!';
+        setTimeout(() => {
+            progressContainer.style.display = 'none';
+            dropzone.style.display = '';
+        }, 4000);
+        await loadContainers();
+    }).catch((err) => {
+        let msg = err.message || 'Upload failed';
+        progressText.textContent = `✗ ${msg}`;
+        toast(msg, 'error');
     });
-
-    xhr.addEventListener('error', () => {
-        toast('Upload failed due to a network error', 'error');
-        resetUploadUI();
-    });
-
-    xhr.addEventListener('abort', () => {
-        toast('Upload cancelled', 'warning');
-        resetUploadUI();
-    });
-
-    xhr.open('POST', '/api/containers/upload');
-    xhr.send(formData);
 }
 
 function resetUploadUI() {
@@ -438,4 +484,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Delete confirm
     $('#delete-confirm-btn').addEventListener('click', handleDelete);
+
+    // Stop pull
+    const stopBtn = $('#pull-stop-btn');
+    if (stopBtn) stopBtn.addEventListener('click', stopPull);
 });

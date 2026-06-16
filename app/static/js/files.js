@@ -3,6 +3,8 @@
 let currentFiles = [];
 let renameTargetId = null;
 let deleteTargetId = null;
+let selectedFileIds = new Set();
+let uploadAbortControllers = []; // Track active uploads for cancel
 
 // Modal helpers
 function openModal(id) {
@@ -14,14 +16,12 @@ function closeModal(id) {
 }
 
 function initModals() {
-    // Close buttons
     document.querySelectorAll('.modal-close-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const modalId = btn.dataset.modal;
             if (modalId) closeModal(modalId);
         });
     });
-    // Close on overlay click
     document.querySelectorAll('.modal-overlay').forEach(overlay => {
         overlay.addEventListener('click', (e) => {
             if (e.target === overlay) {
@@ -63,6 +63,44 @@ async function loadFiles() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Selection UI (modeled after dashboard pattern)
+// ---------------------------------------------------------------------------
+
+function updateSelectionUI() {
+    const count = selectedFileIds.size;
+    $('#file-selection-count').textContent = `${count} selected`;
+
+    const stageBtn = $('#file-stage-btn');
+    const unstageBtn = $('#file-unstage-btn');
+    const deleteBtn = $('#file-delete-btn');
+    const renameBtn = $('#file-rename-btn');
+
+    stageBtn.disabled = count === 0;
+    unstageBtn.disabled = count === 0;
+    deleteBtn.disabled = count === 0;
+    renameBtn.disabled = count !== 1; // Rename only works on a single file
+
+    // Enable unstage only if all selected files are staged
+    if (count > 0) {
+        const allStaged = currentFiles.filter(f => selectedFileIds.has(f.id)).every(f => !!f.osdf_path);
+        unstageBtn.disabled = !allStaged;
+    }
+
+    // Update select-all checkbox
+    const selectAll = $('#file-select-all');
+    if (selectAll) {
+        if (currentFiles.length > 0) {
+            const allSelected = currentFiles.every(f => selectedFileIds.has(f.id));
+            selectAll.checked = allSelected;
+            selectAll.indeterminate = !allSelected && currentFiles.some(f => selectedFileIds.has(f.id));
+        } else {
+            selectAll.checked = false;
+            selectAll.indeterminate = false;
+        }
+    }
+}
+
 // Render file list
 function renderFiles() {
     const tbody = $('#files-tbody');
@@ -86,80 +124,312 @@ function renderFiles() {
         const isOsdf = !!f.osdf_path;
         const locationLabel = isOsdf ? 'OSDF' : 'Local';
         const locationClass = isOsdf ? 'badge-osdf' : 'badge-local';
+        const isChecked = selectedFileIds.has(f.id);
 
         const tr = document.createElement('tr');
         tr.innerHTML = `
+            <td style="text-align: center;">
+                <input type="checkbox" class="file-row-checkbox" data-file-id="${f.id}" ${isChecked ? 'checked' : ''}>
+            </td>
             <td class="monospace">${escHtml(f.filename)}</td>
             <td class="monospace">${escHtml(f.original_name)}</td>
             <td>${formatFileSize(f.size)}</td>
             <td>${formatDate(f.uploaded_at)}</td>
             <td><span class="badge ${locationClass}">${locationLabel}</span></td>
-            <td>
-                <div class="action-btns">
-                    ${!isOsdf ? `<button class="btn btn-ghost btn-sm stage-file-btn" data-id="${f.id}" title="Stage to OSDF">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                            <polyline points="17,8 12,3 7,8" />
-                            <line x1="12" y1="3" x2="12" y2="15" />
-                        </svg>
-                        Stage
-                    </button>` : ''}
-                    <button class="btn btn-ghost btn-sm rename-file-btn" data-id="${f.id}" title="Rename">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                            <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
-                            <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
-                        </svg>
-                        Rename
-                    </button>
-                    <button class="btn btn-ghost btn-sm delete-file-btn" data-id="${f.id}" data-name="${escHtml(f.filename)}" title="Delete" style="color: var(--danger-color, #f87171);">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                            <polyline points="3,6 5,6 21,6" />
-                            <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-                        </svg>
-                        Delete
-                    </button>
-                </div>
-            </td>
         `;
         tbody.appendChild(tr);
-    });
 
-    // Bind action buttons
-    tbody.querySelectorAll('.stage-file-btn').forEach(btn => {
-        btn.addEventListener('click', () => handleStage(parseInt(btn.dataset.id)));
-    });
-    tbody.querySelectorAll('.rename-file-btn').forEach(btn => {
-        btn.addEventListener('click', () => openRenameModal(parseInt(btn.dataset.id)));
-    });
-    tbody.querySelectorAll('.delete-file-btn').forEach(btn => {
-        btn.addEventListener('click', () => openDeleteModal(parseInt(btn.dataset.id), btn.dataset.name));
-    });
-}
-
-// Upload files
-async function handleUpload(files) {
-    const formData = new FormData();
-    for (const file of files) {
-        formData.append('files', file);
-    }
-
-    toast('Uploading files...');
-    try {
-        const res = await fetch('/api/files', {
-            method: 'POST',
-            body: formData
+        // Row click toggles checkbox
+        tr.addEventListener('click', (e) => {
+            if (e.target.closest('input[type="checkbox"]')) return;
+            const cb = tr.querySelector('.file-row-checkbox');
+            if (cb) {
+                cb.checked = !cb.checked;
+                cb.dispatchEvent(new Event('change'));
+            }
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Upload failed');
+    });
 
-        toast(`Uploaded ${data.count} file(s)`);
+    // Bind checkbox events
+    tbody.querySelectorAll('.file-row-checkbox').forEach(cb => {
+        cb.addEventListener('change', () => {
+            const id = parseInt(cb.dataset.fileId);
+            if (cb.checked) {
+                selectedFileIds.add(id);
+            } else {
+                selectedFileIds.delete(id);
+            }
+            updateSelectionUI();
+        });
+    });
+
+    updateSelectionUI();
+}
+
+// ---------------------------------------------------------------------------
+// Upload with per-file progress bars and cancel
+// ---------------------------------------------------------------------------
+
+function createProgressItem(file) {
+    const container = document.createElement('div');
+    container.className = 'upload-progress-item';
+    container.id = `upload-progress-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+    container.innerHTML = `
+        <div class="upload-progress-header">
+            <span class="upload-progress-filename" title="${escHtml(file.name)}">${escHtml(file.name)}</span>
+            <button class="btn btn-ghost btn-sm upload-cancel-btn" title="Cancel upload" style="padding: 2px 6px; flex-shrink: 0;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+            </button>
+        </div>
+        <div class="progress-bar-container">
+            <div class="progress-bar-fill" style="width: 0%;"></div>
+        </div>
+        <span class="progress-text">Starting...</span>
+    `;
+
+    return container;
+}
+
+// Upload files — each file sent as raw request body, each with its own progress bar
+async function handleUpload(files) {
+    const fileList = Array.from(files);
+    if (fileList.length === 0) return;
+
+    const dropzone = $('#file-dropzone');
+    const progressList = $('#file-upload-progress-list');
+
+    // Clear any previous selection when starting a new upload
+    selectedFileIds.clear();
+
+    dropzone.style.display = 'none';
+    progressList.style.display = 'block';
+    progressList.innerHTML = '';
+
+    uploadAbortControllers = [];
+
+    // Create a progress item for each file
+    const progressItems = fileList.map(file => {
+        const item = createProgressItem(file);
+        progressList.appendChild(item);
+        return { file, item, aborted: false };
+    });
+
+    // Add a cancel-all button if multiple files
+    if (fileList.length > 1) {
+        const cancelAllRow = document.createElement('div');
+        cancelAllRow.className = 'upload-progress-cancel-all';
+        cancelAllRow.innerHTML = `<button class="btn btn-ghost btn-sm" id="cancel-all-uploads-btn">Cancel All</button>`;
+        progressList.appendChild(cancelAllRow);
+    }
+
+    let successCount = 0;
+    let failCount = 0;
+
+    // Upload each file in parallel
+    const uploadPromises = progressItems.map(({ file, item }) => {
+        const progressFill = item.querySelector('.progress-bar-fill');
+        const progressText = item.querySelector('.progress-text');
+        const cancelBtn = item.querySelector('.upload-cancel-btn');
+
+        const onProgress = createProgressTracker(progressFill, progressText);
+
+        const { promise, abort } = uploadFileRaw(file, '/api/files', {
+            filenameHeader: 'X-Upload-Filename',
+            onProgress,
+        });
+
+        // Store abort for cancel-all
+        uploadAbortControllers.push(abort);
+
+        // Wire cancel button
+        cancelBtn.addEventListener('click', () => {
+            abort();
+            item.classList.add('upload-cancelled');
+            progressText.textContent = '✗ Cancelled';
+            cancelBtn.disabled = true;
+        });
+
+        return promise.then(() => {
+            successCount++;
+            progressFill.style.width = '100%';
+            progressText.textContent = '✓ Complete';
+            cancelBtn.disabled = true;
+        }).catch((err) => {
+            if (err.name === 'AbortError') {
+                // Already handled by cancel button
+                return;
+            }
+            failCount++;
+            progressText.textContent = `✗ ${err.message}`;
+            cancelBtn.disabled = true;
+            toast(`Failed to upload '${file.name}': ${err.message}`, 'error');
+        });
+    });
+
+    // Cancel-all handler
+    const cancelAllBtn = $('#cancel-all-uploads-btn');
+    if (cancelAllBtn) {
+        cancelAllBtn.addEventListener('click', () => {
+            uploadAbortControllers.forEach(abort => abort());
+            uploadAbortControllers = [];
+            cancelAllBtn.disabled = true;
+            cancelAllBtn.textContent = 'Cancelling...';
+        });
+    }
+
+    // Wait for all uploads to finish
+    await Promise.all(uploadPromises);
+
+    uploadAbortControllers = [];
+
+    const totalFiles = fileList.length;
+    if (successCount > 0) {
+        const msg = `Uploaded ${successCount} file(s)` + (failCount > 0 ? ` (${failCount} failed)` : '');
+        toast(msg);
+        setTimeout(() => {
+            progressList.style.display = 'none';
+            dropzone.style.display = '';
+        }, 4000);
         await loadFiles();
-    } catch (err) {
-        toast(`Upload failed: ${err.message}`, 'error');
+    } else if (failCount > 0) {
+        toast(`All ${failCount} upload(s) failed`, 'error');
+    }
+    // If all were cancelled, just leave the UI showing cancelled state
+}
+
+// ---------------------------------------------------------------------------
+// Bulk actions
+// ---------------------------------------------------------------------------
+
+// Stage selected files to OSDF
+async function handleBulkStage() {
+    if (selectedFileIds.size === 0) return;
+
+    const toStage = currentFiles.filter(f => selectedFileIds.has(f.id) && !f.osdf_path);
+    if (toStage.length === 0) {
+        toast('No selected files are eligible for staging (already in OSDF)', 'warning');
+        return;
+    }
+
+    toast(`Staging ${toStage.length} file(s) to OSDF...`);
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const file of toStage) {
+        try {
+            await api(`/files/${file.id}/stage`, { method: 'POST' });
+            successCount++;
+        } catch (err) {
+            failCount++;
+            toast(`Failed to stage '${file.filename}': ${err.message}`, 'error');
+        }
+    }
+
+    toast(`Staged ${successCount} file(s)` + (failCount > 0 ? ` (${failCount} failed)` : ''));
+    selectedFileIds.clear();
+    try {
+        await loadFiles();
+    } finally {
+        updateSelectionUI();
     }
 }
 
-// Stage to OSDF
+// Delete selected files
+async function handleBulkDelete() {
+    if (selectedFileIds.size === 0) return;
+
+    const count = selectedFileIds.size;
+    const names = currentFiles
+        .filter(f => selectedFileIds.has(f.id))
+        .map(f => f.filename)
+        .slice(0, 5);
+    let detail = names.join(', ');
+    if (count > 5) detail += `, and ${count - 5} more...`;
+
+    showConfirmModal(
+        `Are you sure you want to delete <strong>${count}</strong> file(s)? This will permanently remove them from disk.<br><br><code style="font-size: 0.82rem;">${escHtml(detail)}</code>`,
+        {
+            title: 'Delete Files',
+            confirmText: `Delete ${count} File(s)`,
+            confirmClass: 'btn-danger',
+            onConfirm: async () => {
+                const ids = [...selectedFileIds];
+                let successCount = 0;
+                let failCount = 0;
+
+                for (const id of ids) {
+                    try {
+                        await api(`/files/${id}`, { method: 'DELETE' });
+                        successCount++;
+                    } catch (err) {
+                        failCount++;
+                        toast(`Failed to delete file #${id}: ${err.message}`, 'error');
+                    }
+                }
+
+                toast(`Deleted ${successCount} file(s)` + (failCount > 0 ? ` (${failCount} failed)` : ''));
+                selectedFileIds.clear();
+                await loadFiles();
+            },
+        }
+    );
+}
+
+// Rename single selected file
+async function handleBulkRename() {
+    if (selectedFileIds.size !== 1) {
+        toast('Select exactly one file to rename', 'warning');
+        return;
+    }
+
+    const fileId = [...selectedFileIds][0];
+    const file = currentFiles.find(f => f.id === fileId);
+    if (!file) return;
+
+    renameTargetId = fileId;
+    $('#rename-filename').value = file.filename;
+    openModal('rename-modal');
+    setTimeout(() => $('#rename-filename').focus(), 100);
+}
+
+// Unstage selected files (move back from OSDF to local)
+async function handleBulkUnstage() {
+    if (selectedFileIds.size === 0) return;
+
+    const toUnstage = currentFiles.filter(f => selectedFileIds.has(f.id) && f.osdf_path);
+    if (toUnstage.length === 0) {
+        toast('No selected files are eligible for unstage (not in OSDF)', 'warning');
+        return;
+    }
+
+    toast(`Unstaging ${toUnstage.length} file(s) from OSDF...`);
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const file of toUnstage) {
+        try {
+            await api(`/files/${file.id}/unstage`, { method: 'POST' });
+            successCount++;
+        } catch (err) {
+            failCount++;
+            toast(`Failed to unstage '${file.filename}': ${err.message}`, 'error');
+        }
+    }
+
+    toast(`Unstaged ${successCount} file(s)` + (failCount > 0 ? ` (${failCount} failed)` : ''));
+    selectedFileIds.clear();
+    try {
+        await loadFiles();
+    } finally {
+        updateSelectionUI();
+    }
+}
+
+// Single-file stage (used by bulk action loop)
 async function handleStage(fileId) {
     toast('Staging to OSDF...');
     try {
@@ -172,15 +442,6 @@ async function handleStage(fileId) {
 }
 
 // Rename
-function openRenameModal(fileId) {
-    const file = currentFiles.find(f => f.id === fileId);
-    if (!file) return;
-    renameTargetId = fileId;
-    $('#rename-filename').value = file.filename;
-    openModal('rename-modal');
-    setTimeout(() => $('#rename-filename').focus(), 100);
-}
-
 async function handleRename() {
     const newName = $('#rename-filename').value.trim();
     if (!newName) {
@@ -197,6 +458,7 @@ async function handleRename() {
         toast('File renamed');
         closeModal('rename-modal');
         renameTargetId = null;
+        selectedFileIds.clear();
         await loadFiles();
     } catch (err) {
         toast(`Rename failed: ${err.message}`, 'error');
@@ -204,12 +466,6 @@ async function handleRename() {
 }
 
 // Delete
-function openDeleteModal(fileId, fileName) {
-    deleteTargetId = fileId;
-    $('#delete-filename-display').textContent = fileName;
-    openModal('delete-modal');
-}
-
 async function handleDelete() {
     if (deleteTargetId === null) return;
 
@@ -259,6 +515,28 @@ document.addEventListener('DOMContentLoaded', () => {
     initModals();
     initUploadDropzone();
     loadFiles();
+
+    // Select-all checkbox
+    $('#file-select-all').addEventListener('change', (e) => {
+        const checked = e.target.checked;
+        currentFiles.forEach(f => {
+            if (checked) {
+                selectedFileIds.add(f.id);
+            } else {
+                selectedFileIds.delete(f.id);
+            }
+        });
+        $$('.file-row-checkbox').forEach(cb => {
+            cb.checked = checked;
+        });
+        updateSelectionUI();
+    });
+
+    // Bulk action buttons
+    $('#file-stage-btn').addEventListener('click', handleBulkStage);
+    $('#file-unstage-btn').addEventListener('click', handleBulkUnstage);
+    $('#file-delete-btn').addEventListener('click', handleBulkDelete);
+    $('#file-rename-btn').addEventListener('click', handleBulkRename);
 
     // Rename confirm
     $('#rename-confirm-btn').addEventListener('click', handleRename);

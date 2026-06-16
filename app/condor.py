@@ -10,6 +10,7 @@ import logging
 import os
 import socket
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from pathlib import Path
 from typing import Any
 
 from cachetools import TTLCache
@@ -468,8 +469,7 @@ def act_on_job(action: str, job_spec: str) -> dict[str, Any]:
 
 def get_job_file_content(file_path: str, tail: int = 500) -> str:
     """Safely reads the last N lines of a file path."""
-    import os
-    if not file_path or not os.path.exists(file_path):
+    if not file_path or not Path(file_path).exists():
         return ""
     try:
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
@@ -488,10 +488,10 @@ def get_job_log_file_paths(cluster_id: int, proc_id: int = 0) -> dict[str, str]:
         submission = _JobSubmission.query.filter_by(cluster_id=cluster_id).first()
         if submission and submission.log_dir:
             log_dir = submission.log_dir
-            paths["log"] = os.path.join(log_dir, f"job_{cluster_id}.log")
-            paths["out"] = os.path.join(log_dir, f"job_{cluster_id}_{proc_id}.out")
-            paths["err"] = os.path.join(log_dir, f"job_{cluster_id}_{proc_id}.err")
-            if os.path.exists(paths["log"]):
+            paths["log"] = str(Path(log_dir) / f"job_{cluster_id}.log")
+            paths["out"] = str(Path(log_dir) / f"job_{cluster_id}_{proc_id}.out")
+            paths["err"] = str(Path(log_dir) / f"job_{cluster_id}_{proc_id}.err")
+            if Path(paths["log"]).exists():
                 return paths
     except Exception as e:
         logger.error("Error querying JobSubmission DB: %s", e)

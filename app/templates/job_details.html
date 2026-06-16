@@ -160,7 +160,14 @@
                 </h1>
                 <div class="details-subtitle" id="job-submission-name">Loading...</div>
             </div>
-            <div class="action-btns" id="job-actions-container" style="gap: 8px;">
+            <div class="action-btns" id="job-actions-container" style="gap: 8px; align-items: center;">
+                <button class="btn btn-ghost" id="refresh-details-btn" title="Refresh">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                        <polyline points="23,4 23,10 17,10" />
+                        <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10" />
+                    </svg>
+                </button>
+                <span class="auto-refresh-label" style="white-space: nowrap;">Refresh: <span id="details-refresh-countdown">30</span>s</span>
                 <!-- Filled dynamically -->
             </div>
         </div>

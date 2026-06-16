@@ -54,7 +54,7 @@ async function loadJobs() {
         toast('Failed to load jobs: ' + e.message, 'error');
         const tbody = $('#jobs-tbody');
         if (tbody) {
-            tbody.innerHTML = `<tr class="empty-row"><td colspan="10">Unable to load jobs. ${e.message}</td></tr>`;
+            tbody.innerHTML = `<tr class="empty-row"><td colspan="11">Unable to load jobs. ${e.message}</td></tr>`;
         }
     } finally {
         refreshInProgress = false;
@@ -104,6 +104,7 @@ function getFilteredJobs() {
 function getSortValue(job, field) {
     switch (field) {
         case 'ClusterId': return job.ClusterId || 0;
+        case 'JobBatchName': return (job.JobBatchName || '').toLowerCase();
         case 'Owner': return (job.Owner || '').toLowerCase();
         case 'Cmd': return (job.Cmd || '').toLowerCase();
         case 'JobStatus': return job.JobStatus || 0;
@@ -183,7 +184,7 @@ function renderTable() {
     filtered = sortJobs(filtered);
 
     if (filtered.length === 0) {
-        tbody.innerHTML = `<tr class="empty-row"><td colspan="10">No jobs found</td></tr>`;
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="11">No jobs found</td></tr>`;
         updateSelectionUI();
         return;
     }
@@ -208,6 +209,7 @@ function renderTable() {
         const cpus = job.RequestCpus || '—';
         const mem = formatMemory(job.RequestMemory);
         const disk = formatDisk(job.RequestDisk);
+        const name = job.JobBatchName || '—';
 
         const isChecked = selectedIds.has(jobKey);
 
@@ -216,6 +218,7 @@ function renderTable() {
                 <input type="checkbox" class="row-checkbox" data-job-key="${escHtml(jobKey)}" ${isChecked ? 'checked' : ''}>
             </td>
             <td><a href="/job/${job.ClusterId}/${job.ProcId}" class="job-id-link">${job.ClusterId}.${job.ProcId}</a></td>
+            <td style="max-width: 120px; overflow: hidden; text-overflow: ellipsis;" title="${escHtml(name)}">${escHtml(name)}</td>
             <td>${escHtml(job.Owner || '—')}</td>
             <td class="monospace" title="${escHtml(job.Cmd || job.Args || '')}">${formatCommand(job.Cmd, job.Args)}</td>
             <td><span class="status-badge ${statusClass}">${statusName}</span></td>
@@ -264,21 +267,33 @@ async function deleteSelected() {
     if (selectedIds.size === 0) return;
 
     const count = selectedIds.size;
-    if (!confirm(`Are you sure you want to delete ${count} job(s)? This will remove them from the schedd, database, and logs.`)) return;
-
     const clusterIds = [...selectedIds].map(key => parseInt(key.split('.')[0]));
 
-    try {
-        const result = await api('/history/delete', {
-            method: 'POST',
-            body: JSON.stringify({ cluster_ids: clusterIds }),
-        });
-        toast(`Deleted ${result.count} job(s) successfully`);
-        selectedIds.clear();
-        await loadJobs();
-    } catch (err) {
-        toast(`Failed to delete: ${err.message}`, 'error');
-    }
+    const names = clusterIds.slice(0, 5).map(cid => `#${cid}`);
+    let detail = names.join(', ');
+    if (clusterIds.length > 5) detail += `, and ${clusterIds.length - 5} more...`;
+
+    showConfirmModal(
+        `Are you sure you want to delete <strong>${count}</strong> job(s)? This will remove them from the schedd, database, and logs.<br><br><code style="font-size: 0.82rem;">${escHtml(detail)}</code>`,
+        {
+            title: 'Delete Jobs',
+            confirmText: `Delete ${count} Job(s)`,
+            confirmClass: 'btn-danger',
+            onConfirm: async () => {
+                try {
+                    const result = await api('/history/delete', {
+                        method: 'POST',
+                        body: JSON.stringify({ cluster_ids: clusterIds }),
+                    });
+                    toast(`Deleted ${result.count} job(s) successfully`);
+                    selectedIds.clear();
+                    await loadJobs();
+                } catch (err) {
+                    toast(`Failed to delete: ${err.message}`, 'error');
+                }
+            },
+        }
+    );
 }
 
 async function holdSelected() {
@@ -332,6 +347,62 @@ function editSelected() {
 }
 
 // ---------------------------------------------------------------------------
+// Disk Quota Widgets — one card per quota
+// ---------------------------------------------------------------------------
+
+async function loadQuotas() {
+    const container = $('#quota-cards-container');
+    if (!container) return;
+
+    try {
+        const data = await api('/quotas');
+        if (!data.quotas || data.quotas.length === 0) {
+            container.innerHTML = '';
+            return;
+        }
+
+        // Build one card per quota
+        container.innerHTML = data.quotas.map(quota => {
+            const usedGb = quota.disk_used_gb || 0;
+            const limitGb = quota.disk_limit_gb || 0;
+            const filesUsed = quota.files_used != null ? quota.files_used : null;
+            const fileLimit = quota.file_limit != null ? quota.file_limit : null;
+            const path = quota.path || '';
+
+            // Determine usage percentage for bar styling
+            let pct = 0;
+            let barClass = '';
+            if (limitGb > 0) {
+                pct = Math.min((usedGb / limitGb) * 100, 100);
+                if (pct >= 90) barClass = 'quota-bar-danger';
+                else if (pct >= 75) barClass = 'quota-bar-warning';
+            }
+
+            // Format numbers
+            const usedStr = usedGb.toFixed(2);
+            const limitStr = limitGb.toFixed(2);
+
+            return `<div class="stat-card quota-card">
+                <div class="stat-icon" style="background: rgba(52, 211, 153, 0.1); color: var(--status-running);">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                    </svg>
+                </div>
+                <div class="stat-info quota-info">
+                    <span class="quota-path" title="${escHtml(path)}">${escHtml(path || '/')}</span>
+                    <span class="quota-usage">${usedStr} GB ${limitGb > 0 ? `/ ${limitStr} GB` : ''}</span>
+                    ${limitGb > 0 ? `<div class="quota-bar-container"><div class="quota-bar-fill ${barClass}" style="width: ${pct}%"></div></div>` : ''}
+                    <span class="quota-detail">${filesUsed != null ? `${filesUsed.toLocaleString()} files` : ''}${filesUsed != null && fileLimit != null ? ` / ${fileLimit.toLocaleString()}` : ''}</span>
+                </div>
+            </div>`;
+        }).join('');
+    } catch (err) {
+        // Quota command may not be available; hide the container
+        container.innerHTML = '';
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Auto-refresh
 // ---------------------------------------------------------------------------
 
@@ -356,10 +427,12 @@ function startAutoRefresh() {
 
 document.addEventListener('DOMContentLoaded', () => {
     loadJobs();
+    loadQuotas();
     startAutoRefresh();
 
     $('#refresh-btn').addEventListener('click', () => {
         loadJobs();
+        loadQuotas();
         startAutoRefresh();
     });
 

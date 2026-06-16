@@ -19,11 +19,11 @@ function toast(message, type = 'info') {
     // Fade in
     setTimeout(() => toastEl.classList.add('visible'), 10);
 
-    // Remove after 3 seconds
+    // Remove after 5 seconds
     setTimeout(() => {
         toastEl.classList.remove('visible');
         setTimeout(() => toastEl.remove(), 300);
-    }, 3000);
+    }, 5000);
 }
 
 // API client wrapper with timeout
@@ -461,6 +461,237 @@ function openQeditDialog(jobs, options = {}) {
             applyBtn.click();
         }
     });
+}
+
+/**
+ * Show a stylish confirmation modal instead of the browser's built-in confirm().
+ *
+ * @param {string} message - The confirmation message to display.
+ * @param {Object} [options]
+ * @param {string} [options.title] - Modal title (default: "Confirm").
+ * @param {string} [options.confirmText] - Confirm button text (default: "Confirm").
+ * @param {string} [options.confirmClass] - CSS class for confirm button (default: "btn-danger").
+ * @param {Function} [options.onConfirm] - Called when user confirms.
+ * @param {Function} [options.onCancel] - Called when user cancels.
+ */
+function showConfirmModal(message, options = {}) {
+    const {
+        title = 'Confirm',
+        confirmText = 'Confirm',
+        confirmClass = 'btn-danger',
+        onConfirm = null,
+        onCancel = null,
+    } = options;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay active';
+    overlay.id = 'confirm-modal';
+    overlay.innerHTML = `
+        <div class="modal" style="max-width: 480px;">
+            <div class="modal-header">
+                <h2>${escHtml(title)}</h2>
+                <button class="btn btn-ghost btn-sm modal-close-btn" style="padding: 4px 8px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom: 20px; color: var(--text-secondary); line-height: 1.5;" id="confirm-message-text"></div>
+                <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                    <button class="btn btn-ghost modal-close-btn">Cancel</button>
+                    <button class="btn ${confirmClass}" id="confirm-modal-btn">${escHtml(confirmText)}</button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Set message content as innerHTML (not escaped) to allow HTML formatting
+    const msgContainer = overlay.querySelector('#confirm-message-text');
+    msgContainer.innerHTML = message;
+
+    document.body.appendChild(overlay);
+
+    function closeConfirm() {
+        overlay.remove();
+        if (onCancel) onCancel();
+    }
+
+    // Close buttons
+    overlay.querySelectorAll('.modal-close-btn').forEach(btn => {
+        btn.addEventListener('click', closeConfirm);
+    });
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) closeConfirm();
+    });
+
+    // Confirm button
+    overlay.querySelector('#confirm-modal-btn').addEventListener('click', () => {
+        overlay.remove();
+        if (onConfirm) onConfirm();
+    });
+}
+
+/**
+ * Create a progress tracker callback for uploadFileRaw.
+ *
+ * Returns an onProgress function that updates a progress bar element
+ * and a text element with percentage, speed, and ETA.
+ *
+ * Usage:
+ *   const tracker = createProgressTracker(progressFill, progressText);
+ *   uploadFileRaw(file, url, { onProgress: tracker, ... });
+ *
+ * @param {HTMLElement} progressFill - The progress bar fill element (width is set as %).
+ * @param {HTMLElement} progressText - The text element to show status.
+ * @param {Object} [options]
+ * @param {string} [options.prefix] - Optional text prefix (e.g., "Uploading file 2 of 5").
+ * @returns {Function} onProgress callback for uploadFileRaw.
+ */
+function createProgressTracker(progressFill, progressText, options = {}) {
+    const { prefix = '' } = options;
+    let lastUpdateTime = Date.now();
+    let lastLoadedBytes = 0;
+    const speedSamples = [];
+    const MAX_SPEED_SAMPLES = 10;
+
+    return (e) => {
+        const now = Date.now();
+        const elapsed = (now - lastUpdateTime) / 1000;
+
+        const pct = e.percent.toFixed(1);
+        progressFill.style.width = pct + '%';
+
+        const uploadedMb = (e.loaded / (1024 * 1024)).toFixed(1);
+        const totalMb = (e.total / (1024 * 1024)).toFixed(1);
+
+        // Calculate instantaneous speed
+        if (elapsed > 0) {
+            const instantSpeed = (e.loaded - lastLoadedBytes) / elapsed;
+            if (instantSpeed > 0) {
+                speedSamples.push(instantSpeed);
+                if (speedSamples.length > MAX_SPEED_SAMPLES) {
+                    speedSamples.shift();
+                }
+            }
+        }
+
+        let text = '';
+        if (prefix) text = prefix + ' — ';
+
+        // ETA from average speed
+        if (speedSamples.length > 0) {
+            const avgSpeed = speedSamples.reduce((a, b) => a + b, 0) / speedSamples.length;
+            const remainingBytes = e.total - e.loaded;
+            const etaSeconds = remainingBytes / avgSpeed;
+
+            let etaStr = '';
+            if (etaSeconds < 60) {
+                etaStr = `${Math.round(etaSeconds)}s`;
+            } else if (etaSeconds < 3600) {
+                const mins = Math.floor(etaSeconds / 60);
+                const secs = Math.round(etaSeconds % 60);
+                etaStr = `${mins}m ${secs}s`;
+            } else {
+                const hrs = Math.floor(etaSeconds / 3600);
+                const mins = Math.floor((etaSeconds % 3600) / 60);
+                etaStr = `${hrs}h ${mins}m`;
+            }
+
+            let speedStr = '';
+            if (avgSpeed >= 1024 * 1024) {
+                speedStr = `${(avgSpeed / (1024 * 1024)).toFixed(1)} MB/s`;
+            } else if (avgSpeed >= 1024) {
+                speedStr = `${(avgSpeed / 1024).toFixed(1)} KB/s`;
+            } else {
+                speedStr = `${Math.round(avgSpeed)} B/s`;
+            }
+
+            text += `${uploadedMb} MB / ${totalMb} MB (${pct}%) — ${speedStr}, ETA: ${etaStr}`;
+        } else {
+            text += `${uploadedMb} MB / ${totalMb} MB (${pct}%)`;
+        }
+
+        progressText.textContent = text;
+        lastUpdateTime = now;
+        lastLoadedBytes = e.loaded;
+    };
+}
+
+/**
+ * Upload a file as raw request body (no multipart/form-data).
+ *
+ * This avoids Werkzeug's multipart parser buffering to temp files,
+ * which can hit disk quotas with large files.
+ *
+ * @param {File} file - The file to upload.
+ * @param {string} url - The API endpoint URL.
+ * @param {Object} [options]
+ * @param {string} [options.name] - Optional display name (sent as X-Container-Name or similar).
+ * @param {string} [options.filenameHeader] - Header for the original filename (default: 'X-Upload-Filename').
+ * @param {string} [options.nameHeader] - Header for the display name (default: 'X-Container-Name').
+ * @param {Function} [options.onProgress] - Callback with { loaded, total, percent }.
+ * @param {AbortSignal} [options.signal] - Optional AbortSignal to cancel the upload.
+ * @returns {{ promise: Promise<Object>, abort: Function }} Parsed JSON response promise and abort function.
+ */
+function uploadFileRaw(file, url, options = {}) {
+    const xhr = new XMLHttpRequest();
+    const {
+        name = '',
+        filenameHeader = 'X-Upload-Filename',
+        nameHeader = 'X-Container-Name',
+        onProgress = null,
+        signal = null,
+    } = options;
+
+    xhr.open('POST', url);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.setRequestHeader(filenameHeader, file.name);
+    if (name) {
+        xhr.setRequestHeader(nameHeader, name);
+    }
+
+    if (signal) {
+        signal.addEventListener('abort', () => xhr.abort());
+    }
+
+    xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable && onProgress) {
+            onProgress({
+                loaded: e.loaded,
+                total: e.total,
+                percent: (e.loaded / e.total) * 100,
+            });
+        }
+    });
+
+    const promise = new Promise((resolve, reject) => {
+        xhr.addEventListener('load', () => {
+            try {
+                const data = JSON.parse(xhr.responseText);
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    resolve(data);
+                } else {
+                    reject(new Error(data.error || `Upload failed with status ${xhr.status}`));
+                }
+            } catch (e) {
+                reject(new Error('Failed to parse server response'));
+            }
+        });
+
+        xhr.addEventListener('error', () => {
+            reject(new Error('Upload failed due to a network error'));
+        });
+
+        xhr.addEventListener('abort', () => {
+            reject(new DOMException('Upload aborted', 'AbortError'));
+        });
+    });
+
+    xhr.send(file);
+
+    return { promise, abort: () => xhr.abort() };
 }
 
 // Run basic initializations on DOMContentLoaded

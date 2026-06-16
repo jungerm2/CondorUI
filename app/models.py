@@ -1,6 +1,7 @@
 """Database models for tracking submissions, templates, and uploaded files."""
 
 from datetime import datetime, timezone
+from pathlib import Path
 
 from app import db
 
@@ -83,8 +84,7 @@ class UploadedFile(db.Model):
         # Compute the URI
         if self.osdf_path:
             base_uri = current_app.config.get("OSDF_BASE_URI", "osdf:///")
-            # Files are stored in OSDF_ROOT_PATH/uploads/<filename>
-            uri = base_uri.rstrip("/") + "/uploads/" + self.filename
+            uri = base_uri.rstrip("/") + self.osdf_path
         elif self.local_path:
             uri = self.local_path
         else:
@@ -120,7 +120,9 @@ class ContainerImage(db.Model):
         from flask import current_app
 
         base_uri = current_app.config.get("OSDF_BASE_URI", "osdf:///")
-        uri = base_uri.rstrip("/") + "/containers/" + self.filename
+        osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
+        abs_path = str(Path(osdf_root) / "containers" / self.filename) if osdf_root else "/containers/" + self.filename
+        uri = base_uri.rstrip("/") + abs_path
 
         return {
             "id": self.id,

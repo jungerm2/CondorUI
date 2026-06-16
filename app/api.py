@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import uuid
+from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, request, send_file
 
@@ -30,6 +31,34 @@ from app.models import ContainerImage, JobSubmission, SubmitTemplate, UploadedFi
 
 logger = logging.getLogger(__name__)
 api_bp = Blueprint("api", __name__, url_prefix="/api")
+
+
+def _save_uploaded_stream(stream, dest_dir, original_filename, name=None):
+    """Stream a raw uploaded file to disk with a unique name.
+
+    Args:
+        stream: A file-like object to read from (e.g. request.stream).
+        dest_dir: Directory to save the file into.
+        original_filename: The original filename for extension detection.
+        name: Optional display name (used for the safe filename base).
+              Falls back to original filename without extension.
+
+    Returns:
+        (unique_name, size) tuple.
+    """
+    dest_path_obj = Path(dest_dir)
+    dest_path_obj.mkdir(parents=True, exist_ok=True)
+    display_name = name or Path(original_filename).stem
+    safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in display_name.lower())
+    ext = Path(original_filename).suffix
+    unique_name = f"{uuid.uuid4().hex}_{safe_name}{ext}"
+
+    dest_path = dest_path_obj / unique_name
+    with open(dest_path, "wb") as f:
+        shutil.copyfileobj(stream, f, length=1024 * 1024)
+
+    size = dest_path.stat().st_size
+    return unique_name, size
 
 
 def _resolve_shell_commands(jobs: list[dict]) -> None:
@@ -154,7 +183,7 @@ def list_jobs():
         return jsonify({"error": str(e)}), 500
 
 
-@api_bp.route("/jobs/<cluster_id>")
+@api_bp.route("/jobs/<int:cluster_id>")
 def get_cluster(cluster_id):
     """Get all procs for a specific cluster."""
     if not daemon_available():
@@ -166,7 +195,7 @@ def get_cluster(cluster_id):
             "message": "HTCondor daemon is not available."
         })
     try:
-        cid = cluster_id.split(".")[0] if "." in str(cluster_id) else cluster_id
+        cid = int(cluster_id)
         jobs = query_jobs(constraint=f"ClusterId == {cid}")
         if not jobs:
             jobs = query_history(constraint=f"ClusterId == {cid}", limit=200)
@@ -285,10 +314,20 @@ def list_history():
             else:
                 # Job is no longer in the schedd — mark as Completed
                 cmd = ""
+                request_cpus = "—"
+                request_memory = "—"
+                request_disk = "—"
                 try:
                     if sub.submit_description.strip().startswith("{"):
                         desc = json.loads(sub.submit_description)
                         cmd = desc.get("executable", desc.get("shell", ""))
+                        # Extract resource requests from submit description
+                        if "request_cpus" in desc:
+                            request_cpus = desc["request_cpus"]
+                        if "request_memory" in desc:
+                            request_memory = desc["request_memory"]
+                        if "request_disk" in desc:
+                            request_disk = desc["request_disk"]
                 except (json.JSONDecodeError, AttributeError):
                     cmd = ""
 
@@ -302,12 +341,12 @@ def list_history():
                     "Owner": "—",
                     "Cmd": cmd,
                     "Args": "",
-                    "RequestCpus": "—",
-                    "RequestMemory": "—",
-                    "RequestDisk": "—",
+                    "RequestCpus": request_cpus,
+                    "RequestMemory": request_memory,
+                    "RequestDisk": request_disk,
                     "QDate": qdate,
                     "JobStartDate": None,
-                    "CompletionDate": qdate,
+                    "CompletionDate": None,
                     "HoldReason": "",
                     "RemoteHost": "",
                     "ImageSize": 0,
@@ -363,8 +402,9 @@ def submit():
     try:
         import uuid
         job_uuid = f"job_{uuid.uuid4().hex}"
-        log_dir = os.path.join(current_app.config["JOB_LOGS_DIR"], job_uuid)
-        os.makedirs(log_dir, exist_ok=True)
+        log_dir_path = Path(current_app.config["JOB_LOGS_DIR"]) / job_uuid
+        log_dir_path.mkdir(parents=True, exist_ok=True)
+        log_dir = str(log_dir_path)
 
         if itemdata:
             cluster_id = submit_job(submit_dict, count=len(itemdata), itemdata=itemdata, log_dir=log_dir)
@@ -409,8 +449,9 @@ def submit_file():
 
         import uuid
         job_uuid = f"job_{uuid.uuid4().hex}"
-        log_dir = os.path.join(current_app.config["JOB_LOGS_DIR"], job_uuid)
-        os.makedirs(log_dir, exist_ok=True)
+        log_dir_path = Path(current_app.config["JOB_LOGS_DIR"]) / job_uuid
+        log_dir_path.mkdir(parents=True, exist_ok=True)
+        log_dir = str(log_dir_path)
 
         cluster_id, num_procs = submit_from_file(content, log_dir=log_dir)
 
@@ -447,39 +488,35 @@ def list_files():
 
 @api_bp.route("/files", methods=["POST"])
 def upload_files():
-    """Upload files and create DB records."""
-    if "files" not in request.files:
-        return jsonify({"error": "No files in request"}), 400
+    """Upload a file and create a DB record.
 
-    files = request.files.getlist("files")
+    Expects the raw file as the request body with:
+      - Content-Type: application/octet-stream
+      - X-Upload-Filename: original filename (required)
+    """
+    original_filename = request.headers.get("X-Upload-Filename", "").strip()
+    if not original_filename:
+        return jsonify({"error": "Missing 'X-Upload-Filename' header"}), 400
+
     upload_dir = current_app.config["UPLOAD_DIR"]
 
-    saved: list[dict] = []
-
-    for f in files:
-        if not f.filename:
-            continue
-
-        import uuid
-        unique_name = f"{uuid.uuid4().hex}_{f.filename}"
-        local_path = os.path.join(upload_dir, unique_name)
-        f.save(local_path)
-
-        size = os.path.getsize(local_path)
+    try:
+        unique_name, size = _save_uploaded_stream(request.stream, upload_dir, original_filename)
 
         uploaded_file = UploadedFile(
-            filename=f.filename,
-            original_name=f.filename,
-            local_path=local_path,
+            filename=unique_name,
+            original_name=original_filename,
+            local_path=str(Path(upload_dir) / unique_name),
             osdf_path=None,
             size=size,
         )
         db.session.add(uploaded_file)
-        db.session.flush()
-        saved.append(uploaded_file.to_dict())
+        db.session.commit()
 
-    db.session.commit()
-    return jsonify({"uploaded": saved, "count": len(saved)}), 201
+        return jsonify(uploaded_file.to_dict()), 201
+    except Exception as e:
+        logger.exception("File upload failed")
+        return jsonify({"error": str(e)}), 500
 
 
 @api_bp.route("/files/<int:file_id>", methods=["PUT"])
@@ -501,12 +538,12 @@ def delete_file(file_id: int):
     uploaded_file = UploadedFile.query.get_or_404(file_id)
 
     # Remove from local disk if present
-    if uploaded_file.local_path and os.path.exists(uploaded_file.local_path):
-        os.remove(uploaded_file.local_path)
+    if uploaded_file.local_path and Path(uploaded_file.local_path).exists():
+        Path(uploaded_file.local_path).unlink()
 
     # Remove from OSDF staging if present
-    if uploaded_file.osdf_path and os.path.exists(uploaded_file.osdf_path):
-        os.remove(uploaded_file.osdf_path)
+    if uploaded_file.osdf_path and Path(uploaded_file.osdf_path).exists():
+        Path(uploaded_file.osdf_path).unlink()
 
     db.session.delete(uploaded_file)
     db.session.commit()
@@ -521,7 +558,7 @@ def stage_file(file_id: int):
     if uploaded_file.osdf_path:
         return jsonify({"error": "File is already staged to OSDF"}), 400
 
-    if not uploaded_file.local_path or not os.path.exists(uploaded_file.local_path):
+    if not uploaded_file.local_path or not Path(uploaded_file.local_path).exists():
         return jsonify({"error": "Local file not found on disk"}), 404
 
     osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
@@ -529,10 +566,10 @@ def stage_file(file_id: int):
         return jsonify({"error": "OSDF root path is not configured"}), 400
 
     import uuid
-    ext = os.path.splitext(uploaded_file.original_name)[1]
+    ext = Path(uploaded_file.original_name).suffix
     unique_name = f"{uuid.uuid4().hex}{ext}"
-    osdf_dest = os.path.join(osdf_root, "uploads", unique_name)
-    os.makedirs(os.path.dirname(osdf_dest), exist_ok=True)
+    osdf_dest = str(Path(osdf_root) / "uploads" / unique_name)
+    Path(osdf_dest).parent.mkdir(parents=True, exist_ok=True)
 
     # Move the file (not copy) — only one copy exists
     shutil.move(uploaded_file.local_path, osdf_dest)
@@ -543,6 +580,98 @@ def stage_file(file_id: int):
     db.session.commit()
 
     return jsonify(uploaded_file.to_dict())
+
+
+@api_bp.route("/files/<int:file_id>/unstage", methods=["POST"])
+def unstage_file(file_id: int):
+    """Move a staged (OSDF) file back to the local upload directory."""
+    uploaded_file = UploadedFile.query.get_or_404(file_id)
+
+    if not uploaded_file.osdf_path:
+        return jsonify({"error": "File is not staged to OSDF"}), 400
+
+    if not Path(uploaded_file.osdf_path).exists():
+        return jsonify({"error": "OSDF file not found on disk"}), 404
+
+    upload_dir = current_app.config["UPLOAD_DIR"]
+
+    # Generate a unique name in the local upload directory
+    import uuid
+    ext = Path(uploaded_file.original_name).suffix
+    unique_name = f"{uuid.uuid4().hex}{ext}"
+    local_dest = str(Path(upload_dir) / unique_name)
+
+    # Move the file back
+    shutil.move(uploaded_file.osdf_path, local_dest)
+
+    uploaded_file.osdf_path = None
+    uploaded_file.local_path = local_dest
+    uploaded_file.filename = unique_name
+    db.session.commit()
+
+    return jsonify(uploaded_file.to_dict())
+
+
+# ---------------------------------------------------------------------------
+# Quota information
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route("/quotas")
+def get_quotas():
+    """Get disk quota information from the `get_quotas` command."""
+    try:
+        result = subprocess.run(
+            ["get_quotas"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            return jsonify({"error": f"get_quotas failed: {result.stderr.strip()}"}), 500
+
+        # Parse the tabular output
+        lines = result.stdout.strip().split("\n")
+        if len(lines) < 2:
+            return jsonify({"quotas": []})
+
+        headers_raw = lines[0].split()
+        # Map header names to canonical keys
+        header_map = {
+            "Path": "path",
+            "Disk_Used(GB)": "disk_used_gb",
+            "Disk_Limit(GB)": "disk_limit_gb",
+            "Files_Used": "files_used",
+            "File_Limit": "file_limit",
+        }
+        headers = []
+        for h in headers_raw:
+            headers.append(header_map.get(h, h.lower().replace(" ", "_")))
+
+        quotas = []
+        for line in lines[1:]:
+            parts = line.split()
+            if len(parts) < len(headers):
+                continue
+            entry = {}
+            for i, h in enumerate(headers):
+                val = parts[i]
+                # Try numeric conversion
+                try:
+                    if "." in val:
+                        val = float(val)
+                    else:
+                        val = int(val)
+                except (ValueError, TypeError):
+                    pass
+                entry[h] = val
+            quotas.append(entry)
+
+        return jsonify({"quotas": quotas})
+    except FileNotFoundError:
+        return jsonify({"error": "get_quotas command not found on this system"}), 500
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "get_quotas timed out"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ---------------------------------------------------------------------------
@@ -572,25 +701,32 @@ def pull_container():
         return jsonify({"error": "Missing 'image' in request body"}), 400
 
     image_ref = data["image"].strip()
-    name = data.get("name", "").strip() or os.path.basename(image_ref)
+
+    # Validate the image reference has a proper scheme prefix
+    if "://" not in image_ref:
+        return jsonify({
+            "error": "Invalid image reference. Please include a scheme prefix."
+        }), 400
+
+    name = data.get("name", "").strip() or Path(image_ref).name
 
     osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
     if not osdf_root:
         return jsonify({"error": "OSDF root path is not configured"}), 400
 
-    containers_dir = os.path.join(osdf_root, "containers")
-    os.makedirs(containers_dir, exist_ok=True)
+    containers_dir = Path(osdf_root) / "containers"
+    containers_dir.mkdir(parents=True, exist_ok=True)
 
     # Generate a unique filename
     safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in name.lower())
     unique_name = f"{uuid.uuid4().hex}_{safe_name}.sif"
-    dest_path = os.path.join(containers_dir, unique_name)
+    dest_path = containers_dir / unique_name
 
     try:
         # Run apptainer pull
         logger.info("Pulling container: %s -> %s", image_ref, dest_path)
         result = subprocess.run(
-            ["apptainer", "pull", dest_path, image_ref],
+            ["apptainer", "pull", str(dest_path), image_ref],
             capture_output=True, text=True, timeout=600,
         )
         if result.returncode != 0:
@@ -599,7 +735,7 @@ def pull_container():
                 "error": f"apptainer pull failed: {result.stderr[:500]}"
             }), 500
 
-        size = os.path.getsize(dest_path)
+        size = dest_path.stat().st_size
 
         container = ContainerImage(
             name=name,
@@ -621,40 +757,145 @@ def pull_container():
         return jsonify({"error": str(e)}), 500
 
 
+@api_bp.route("/containers/pull/stream")
+def pull_container_stream():
+    """Stream apptainer pull output via Server-Sent Events.
+
+    Query parameters:
+        image (required): Docker/OCI image reference (e.g., docker://ubuntu:latest)
+        name (optional): Display name for the container
+    """
+    from flask import stream_with_context
+    from flask.wrappers import Response
+
+    image_ref = request.args.get("image", "").strip()
+    if not image_ref:
+        def err_gen():
+            yield "event: error\ndata: Missing 'image' query parameter\n\n"
+        return Response(err_gen(), mimetype="text/event-stream")
+
+    if "://" not in image_ref:
+        def err_gen():
+            yield "event: error\ndata: Invalid image reference. Please include a scheme prefix (e.g., docker://...)\n\n"
+        return Response(err_gen(), mimetype="text/event-stream")
+
+    name = request.args.get("name", "").strip() or Path(image_ref).name
+
+    osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
+    if not osdf_root:
+        def err_gen():
+            yield "event: error\ndata: OSDF root path is not configured\n\n"
+        return Response(err_gen(), mimetype="text/event-stream")
+
+    containers_dir = Path(osdf_root) / "containers"
+    containers_dir.mkdir(parents=True, exist_ok=True)
+
+    safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in name.lower())
+    unique_name = f"{uuid.uuid4().hex}_{safe_name}.sif"
+    dest_path = containers_dir / unique_name
+
+    def generate():
+        command = ["apptainer", "build", "--ignore-proot", "--force", str(dest_path), image_ref]
+        yield f"event: start\ndata: {json.dumps({'filename': unique_name, 'command': ' '.join(command)})}\n\n"
+
+        logger.info("Pulling container: %s -> %s", image_ref, dest_path)
+
+        try:
+            # Pass environment variables to apptainer, including overrides
+            # for common issues (kernel ptrace bugs, SUID-less installs).
+            env = os.environ.copy()
+
+            # Also pick up any APPTAINER_* vars from the process environment
+            for key in ("APPTAINER_TMPDIR", "APPTAINER_CACHEDIR", "APPTAINER_PULLFOLDER",
+                        "APPTAINER_BIND", "APPTAINER_CONTAINALL", "SINGULARITY_TMPDIR",
+                        "SINGULARITY_CACHEDIR", "SINGULARITY_PULLFOLDER"):
+                val = os.environ.get(key)
+                if val:
+                    env[key] = val
+
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                env=env,
+            )
+
+            for line in iter(process.stdout.readline, ""):
+                if not line:
+                    break
+                sse_line = line.rstrip("\n").replace("\n", "\\n")
+                yield f"data: {sse_line}\n\n"
+
+            process.stdout.close()
+            return_code = process.wait()
+
+            if return_code != 0:
+                logger.error("apptainer pull failed with code %d", return_code)
+                yield f"event: error\ndata: apptainer pull failed with exit code {return_code}\n\n"
+                return
+
+            size = dest_path.stat().st_size
+
+            container = ContainerImage(
+                name=name,
+                filename=unique_name,
+                source=image_ref,
+                size=size,
+            )
+            db.session.add(container)
+            db.session.commit()
+
+            yield f"event: complete\ndata: {json.dumps(container.to_dict())}\n\n"
+
+        except FileNotFoundError:
+            yield "event: error\ndata: apptainer command not found. Is Apptainer/Singularity installed?\n\n"
+        except Exception as e:
+            logger.exception("Container pull failed")
+            yield f"event: error\ndata: {str(e)}\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @api_bp.route("/containers/upload", methods=["POST"])
 def upload_container():
-    """Upload an existing .sif file to the containers directory."""
-    if "file" not in request.files:
-        return jsonify({"error": "No file in request"}), 400
+    """Upload an existing .sif file to the containers directory.
 
-    file = request.files["file"]
-    if not file.filename:
-        return jsonify({"error": "Empty filename"}), 400
+    Expects the raw .sif file as the request body with:
+      - Content-Type: application/octet-stream
+      - X-Container-Filename: original filename (for .sif validation)
+      - X-Container-Name: optional display name
+    """
+    original_filename = request.headers.get("X-Container-Filename", "").strip()
+    if not original_filename:
+        return jsonify({"error": "Missing 'X-Container-Filename' header"}), 400
 
-    if not file.filename.lower().endswith(".sif"):
+    if not original_filename.lower().endswith(".sif"):
         return jsonify({"error": "Only .sif files are accepted"}), 400
 
-    name = request.form.get("name", "").strip() or os.path.splitext(file.filename)[0]
+    name = request.headers.get("X-Container-Name", "").strip() or Path(original_filename).stem
 
     osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
     if not osdf_root:
         return jsonify({"error": "OSDF root path is not configured"}), 400
 
-    containers_dir = os.path.join(osdf_root, "containers")
-    os.makedirs(containers_dir, exist_ok=True)
-
-    safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in name.lower())
-    unique_name = f"{uuid.uuid4().hex}_{safe_name}.sif"
-    dest_path = os.path.join(containers_dir, unique_name)
+    containers_dir = str(Path(osdf_root) / "containers")
 
     try:
-        file.save(dest_path)
-        size = os.path.getsize(dest_path)
+        unique_name, size = _save_uploaded_stream(request.stream, containers_dir, original_filename, name=name)
 
         container = ContainerImage(
             name=name,
             filename=unique_name,
-            source=f"uploaded:{file.filename}",
+            source=f"uploaded:{original_filename}",
             size=size,
         )
         db.session.add(container)
@@ -686,9 +927,9 @@ def delete_container(container_id: int):
 
     osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
     if osdf_root:
-        file_path = os.path.join(osdf_root, "containers", container.filename)
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        file_path = Path(osdf_root) / "containers" / container.filename
+        if file_path.exists():
+            file_path.unlink()
 
     db.session.delete(container)
     db.session.commit()
@@ -759,7 +1000,7 @@ def job_files(cluster_id: int, proc_id: int):
         if is_download:
             file_type = request.args.get("file", "log")
             file_path = paths.get(file_type)
-            if not file_path or not os.path.exists(file_path):
+            if not file_path or not Path(file_path).exists():
                 return jsonify({"error": f"File not found: {file_type}"}), 404
 
             filename_map = {"log": f"job_{cluster_id}.log", "out": f"job_{cluster_id}_{proc_id}.out", "err": f"job_{cluster_id}_{proc_id}.err"}
@@ -963,7 +1204,7 @@ def delete_history():
             submission = JobSubmission.query.filter_by(cluster_id=cid).first()
             if submission:
                 # 3. Remove log directory from disk
-                if submission.log_dir and os.path.exists(submission.log_dir):
+                if submission.log_dir and Path(submission.log_dir).exists():
                     shutil.rmtree(submission.log_dir, ignore_errors=True)
                 db.session.delete(submission)
 

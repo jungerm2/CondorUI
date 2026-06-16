@@ -388,23 +388,43 @@ function renderActions(statusVal, logContent) {
 /**
  * Start auto-refresh if the job is not in a completed/removed state.
  */
+const DETAILS_REFRESH_RATE = 30; // seconds
+let detailsCountdown = DETAILS_REFRESH_RATE;
+let detailsCountdownInterval = null;
+
 function startDetailsAutoRefresh(statusVal) {
     const status = parseInt(statusVal);
     // Completed (4), Removed (3) — no refresh needed
     const needsRefresh = ![3, 4].includes(status);
 
+    if (detailsCountdownInterval) {
+        clearInterval(detailsCountdownInterval);
+        detailsCountdownInterval = null;
+    }
+    if (detailsRefreshTimer) {
+        clearInterval(detailsRefreshTimer);
+        detailsRefreshTimer = null;
+    }
+
+    const countdownEl = $('#details-refresh-countdown');
+    if (!countdownEl) return;
+
     if (needsRefresh) {
-        // Refresh every 15 seconds
-        if (detailsRefreshTimer) clearInterval(detailsRefreshTimer);
-        detailsRefreshTimer = setInterval(() => {
-            loadJobDetails();
-        }, 15000);
+        detailsCountdown = DETAILS_REFRESH_RATE;
+        countdownEl.textContent = detailsCountdown;
+
+        // Countdown display update
+        detailsCountdownInterval = setInterval(() => {
+            detailsCountdown--;
+            if (detailsCountdown <= 0) {
+                detailsCountdown = DETAILS_REFRESH_RATE;
+                loadJobDetails();
+            }
+            const el = $('#details-refresh-countdown');
+            if (el) el.textContent = detailsCountdown;
+        }, 1000);
     } else {
-        // Stop refreshing
-        if (detailsRefreshTimer) {
-            clearInterval(detailsRefreshTimer);
-            detailsRefreshTimer = null;
-        }
+        countdownEl.textContent = '—';
     }
 }
 
@@ -451,6 +471,14 @@ async function loadSubmitFileContent(data) {
 
 document.addEventListener('DOMContentLoaded', () => {
     loadJobDetails();
+
+    // Refresh button
+    $('#refresh-details-btn').addEventListener('click', () => {
+        loadJobDetails();
+        // Reset countdown
+        detailsCountdown = DETAILS_REFRESH_RATE;
+        $('#details-refresh-countdown').textContent = detailsCountdown;
+    });
 
     // Main tabs toggling
     $$('.details-tab-btn').forEach(btn => {

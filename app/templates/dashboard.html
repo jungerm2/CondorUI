@@ -84,6 +84,8 @@
                 <span class="stat-label">Held</span>
             </div>
         </div>
+        <!-- Disk Quota Widgets (populated dynamically) -->
+        <div id="quota-cards-container"></div>
     </div>
 
     <!-- Unified Jobs Table -->
@@ -126,6 +128,7 @@
                             <input type="checkbox" id="select-all" title="Select all">
                         </th>
                         <th class="sortable" data-sort="ClusterId">ID <span class="sort-arrow"></span></th>
+                        <th class="sortable" data-sort="JobBatchName">Name <span class="sort-arrow"></span></th>
                         <th class="sortable" data-sort="Owner">Owner <span class="sort-arrow"></span></th>
                         <th class="sortable" data-sort="Cmd">Command <span class="sort-arrow"></span></th>
                         <th class="sortable" data-sort="JobStatus">Status <span class="sort-arrow"></span></th>
@@ -138,7 +141,7 @@
                 </thead>
                 <tbody id="jobs-tbody">
                     <tr class="empty-row">
-                        <td colspan="10">Loading...</td>
+                        <td colspan="11">Loading...</td>
                     </tr>
                 </tbody>
             </table>

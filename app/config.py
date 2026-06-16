@@ -1,8 +1,9 @@
 """Application configuration."""
 
 import os
+from pathlib import Path
 
-BASE_DIR = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 class Config:
@@ -13,18 +14,18 @@ class Config:
     # SQLite database in the instance folder
     SQLALCHEMY_DATABASE_URI = os.environ.get(
         "DATABASE_URL",
-        f"sqlite:///{os.path.join(BASE_DIR, 'instance', 'condor_webui.db')}",
+        f"sqlite:///{BASE_DIR / 'instance' / 'condor_webui.db'}",
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     # Directory for uploaded submit files and input files
     UPLOAD_DIR = os.environ.get(
-        "UPLOAD_DIR", os.path.join(BASE_DIR, "uploads")
+        "UPLOAD_DIR", str(BASE_DIR / "uploads")
     )
 
     # Directory for job stdout, stderr, and user logs (outside project root)
     JOB_LOGS_DIR = os.environ.get(
-        "JOB_LOGS_DIR", os.path.join(os.path.dirname(BASE_DIR), "condor_job_logs")
+        "JOB_LOGS_DIR", str(BASE_DIR.parent / "condor_job_logs")
     )
 
     # OSDF root path for file transfers — uploaded files and containers are

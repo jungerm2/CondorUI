@@ -8,3 +8,16 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Environment variables — may contain secrets
+.env
+
+# Don't commit LLM stuffs
+.aider*
+.clineignore
+.clinerules/
+memory-bank/
+.cursorignore
+.cursor/
+cursor_mcp.json
+CLAUDE*

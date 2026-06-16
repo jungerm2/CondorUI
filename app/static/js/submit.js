@@ -144,7 +144,7 @@ async function loadServerFiles() {
                 </svg>
             </div>
             <div class="submit-file-info">
-                <span class="submit-file-name monospace">${escHtml(f.filename)}</span>
+                <span class="submit-file-name monospace">${escHtml(f.original_name)}</span>
                 <span class="submit-file-meta">${formatFileSize(f.size)} · ${locationLabel}</span>
             </div>
         `;
@@ -160,6 +160,8 @@ async function loadServerFiles() {
             }
             // Update the transfer_input_files text field
             updateTransferInputField();
+            // Update the Requirements based on staged file selection
+            updateStagedRequirements();
         });
 
         listEl.appendChild(item);
@@ -522,8 +524,9 @@ function syncRawToForm() {
         }
     });
 
-    // Refresh the file selection UI
+    // Refresh the file selection UI and staged requirements
     refreshFileSelectionUI();
+    updateStagedRequirements();
 }
 
 // Refresh the visual state of file items based on selectedFileUris
@@ -537,6 +540,51 @@ function refreshFileSelectionUI() {
             item.classList.remove('selected');
         }
     });
+}
+
+// Check if any selected files are staged (OSDF) and auto-add Requirements = (Target.HasCHTCStaging == true)
+function updateStagedRequirements() {
+    const container = $('#extra-attrs');
+    const attrRows = container.querySelectorAll('.attr-row');
+
+    // Check if any of the currently selected file URIs correspond to staged files
+    const hasStagedFile = Array.from(selectedFileUris).some(uri => {
+        const file = serverFiles.find(f => f.uri === uri);
+        return file && file.osdf_path;
+    });
+
+    // Look for existing Requirements row
+    let existingReqRow = null;
+    attrRows.forEach(row => {
+        const key = row.querySelector('.attr-key').value.trim();
+        if (key.toLowerCase() === 'requirements') {
+            existingReqRow = row;
+        }
+    });
+
+    if (hasStagedFile) {
+        if (!existingReqRow) {
+            // Add a new Requirements row
+            const row = document.createElement('div');
+            row.className = 'attr-row';
+            row.innerHTML = `
+                <input type="text" value="Requirements" class="form-input attr-key" readonly style="color: var(--text-muted);">
+                <input type="text" value="(Target.HasCHTCStaging == true)" class="form-input attr-value" readonly style="color: var(--text-muted);">
+                <button class="btn btn-ghost remove-attr-btn" title="Remove" style="visibility: hidden;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                </button>
+            `;
+            container.appendChild(row);
+        }
+    } else {
+        // No staged files selected — remove the Requirements row if it was auto-added
+        if (existingReqRow) {
+            existingReqRow.remove();
+        }
+    }
 }
 
 function checkSelectedTemplate() {
@@ -612,8 +660,9 @@ function checkSelectedTemplate() {
                     }
                 }
 
-                // Refresh file selection UI
+                // Refresh file selection UI and staged requirements
                 refreshFileSelectionUI();
+                updateStagedRequirements();
             } else {
                 // Switch to Raw mode
                 const rawBtn = $('#mode-raw-btn');

@@ -53,6 +53,7 @@
     --status-removed: #475569;
 }
 .light-theme .log-output { background: #f1f5f9; }
+.light-theme .pull-log-output { background: #f1f5f9; }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -139,6 +140,59 @@ body {
 
 /* ===== Stats Grid ===== */
 .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+
+/* ===== Quota Cards ===== */
+.quota-card .stat-icon {
+    background: rgba(52, 211, 153, 0.1);
+    color: var(--status-running);
+}
+.quota-info {
+    flex: 1;
+    min-width: 0;
+    gap: 4px;
+}
+.quota-path {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.quota-usage {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    line-height: 1.2;
+}
+.quota-detail {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+.quota-bar-container {
+    width: 100%;
+    height: 6px;
+    background: var(--bg-input);
+    border-radius: 3px;
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+}
+.quota-bar-fill {
+    height: 100%;
+    background: var(--status-running);
+    border-radius: 3px;
+    transition: width 0.5s ease;
+}
+.quota-bar-fill.quota-bar-warning {
+    background: var(--status-idle);
+}
+.quota-bar-fill.quota-bar-danger {
+    background: var(--status-held);
+}
 
 .stat-card {
     background: var(--bg-card);
@@ -739,6 +793,41 @@ select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg widt
     color: var(--status-idle);
 }
 
+/* ===== Pull Log Output (SSE streaming) ===== */
+.pull-log-container {
+    margin-top: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+.pull-log-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+.pull-log-output {
+    width: 100%;
+    min-height: 120px;
+    max-height: 400px;
+    padding: 12px;
+    margin: 0;
+    background: #050810;
+    border: none;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
 /* ===== Upload Progress Bar ===== */
 .upload-progress {
     margin-top: 12px;
@@ -764,6 +853,49 @@ select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg widt
     font-size: 0.8rem;
     color: var(--text-secondary);
     font-family: var(--font-mono);
+}
+
+/* ===== Per-File Upload Progress List ===== */
+.upload-progress-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+}
+.upload-progress-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.upload-progress-filename {
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.upload-progress-item .progress-bar-container {
+    height: 6px;
+}
+.upload-progress-item .progress-text {
+    font-size: 0.75rem;
+}
+.upload-progress-item.upload-cancelled {
+    opacity: 0.6;
+}
+.upload-progress-item.upload-cancelled .progress-bar-fill {
+    background: var(--status-removed, #f87171);
+}
+.upload-progress-cancel-all {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 4px;
 }
 
 /* ===== Spinner animation ===== */
