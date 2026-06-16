@@ -386,7 +386,8 @@ function renderActions(statusVal, logContent) {
 }
 
 /**
- * Start auto-refresh if the job is not in a completed/removed state.
+ * Start auto-refresh with a 30-second countdown.
+ * Always runs regardless of job status.
  */
 const DETAILS_REFRESH_RATE = 30; // seconds
 let detailsCountdown = DETAILS_REFRESH_RATE;
@@ -394,7 +395,7 @@ let detailsCountdownInterval = null;
 
 function startDetailsAutoRefresh(statusVal) {
     const status = parseInt(statusVal);
-    // Completed (4), Removed (3) — no refresh needed
+    // Completed (4), Removed (3) — stop refreshing but keep countdown display
     const needsRefresh = ![3, 4].includes(status);
 
     if (detailsCountdownInterval) {
@@ -409,23 +410,22 @@ function startDetailsAutoRefresh(statusVal) {
     const countdownEl = $('#details-refresh-countdown');
     if (!countdownEl) return;
 
-    if (needsRefresh) {
-        detailsCountdown = DETAILS_REFRESH_RATE;
-        countdownEl.textContent = detailsCountdown;
+    // Always reset countdown and keep it running
+    detailsCountdown = DETAILS_REFRESH_RATE;
+    countdownEl.textContent = detailsCountdown;
 
-        // Countdown display update
-        detailsCountdownInterval = setInterval(() => {
-            detailsCountdown--;
-            if (detailsCountdown <= 0) {
-                detailsCountdown = DETAILS_REFRESH_RATE;
+    // Countdown display update — always tick, but only refresh if needed
+    detailsCountdownInterval = setInterval(() => {
+        detailsCountdown--;
+        if (detailsCountdown <= 0) {
+            detailsCountdown = DETAILS_REFRESH_RATE;
+            if (needsRefresh) {
                 loadJobDetails();
             }
-            const el = $('#details-refresh-countdown');
-            if (el) el.textContent = detailsCountdown;
-        }, 1000);
-    } else {
-        countdownEl.textContent = '—';
-    }
+        }
+        const el = $('#details-refresh-countdown');
+        if (el) el.textContent = detailsCountdown;
+    }, 1000);
 }
 
 /**

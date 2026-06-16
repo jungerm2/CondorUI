@@ -183,7 +183,9 @@ function renderContainers() {
     });
 }
 
-// SSE pull — streams apptainer output live
+// ---------------------------------------------------------------------------
+// SSE pull — streams apptainer output live with progress bar support
+// ---------------------------------------------------------------------------
 let pullEventSource = null;
 
 function handlePull() {
@@ -229,7 +231,20 @@ function handlePull() {
     });
 
     pullEventSource.addEventListener('message', (e) => {
-        logOutput.textContent += e.data + '\n';
+        // Handle \r carriage returns (used by progress bars to overwrite lines)
+        const raw = e.data;
+        if (raw.includes('\r')) {
+            // Split on \r, take the last "segment" (most recent progress update)
+            const parts = raw.split('\r');
+            for (const part of parts) {
+                if (part) {
+                    // Replace the last line with the progress update
+                    appendOrReplaceLastLine(logOutput, '  ' + part);
+                }
+            }
+        } else {
+            logOutput.textContent += raw + '\n';
+        }
         logOutput.scrollTop = logOutput.scrollHeight;
     });
 
@@ -281,6 +296,26 @@ function handlePull() {
         if (pullBtn) pullBtn.disabled = false;
         if (stopBtn) stopBtn.disabled = true;
     });
+}
+
+/**
+ * Append text to the log, or replace the last line if the text starts
+ * with a \r (carriage return) indicator.
+ *
+ * This is needed because apptainer uses \r to update progress bars
+ * in-place rather than printing new lines.
+ */
+function appendOrReplaceLastLine(logElement, text) {
+    const content = logElement.textContent;
+    const lastNewline = content.lastIndexOf('\n');
+
+    if (lastNewline >= 0) {
+        // Replace the content after the last newline
+        logElement.textContent = content.substring(0, lastNewline + 1) + text;
+    } else {
+        // No newlines yet — replace the entire content
+        logElement.textContent = text;
+    }
 }
 
 function resetPullUI() {

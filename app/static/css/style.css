@@ -141,6 +141,10 @@ body {
 /* ===== Stats Grid ===== */
 .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
 
+/* ===== Quotas Section ===== */
+.quotas-section { margin-bottom: 24px; }
+.quotas-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+
 /* ===== Quota Cards ===== */
 .quota-card .stat-icon {
     background: rgba(52, 211, 153, 0.1);
@@ -824,8 +828,9 @@ select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg widt
     line-height: 1.6;
     color: var(--text-secondary);
     overflow: auto;
-    white-space: pre-wrap;
-    word-break: break-all;
+    white-space: pre;           /* preserve spacing for progress bars */
+    word-break: keep-all;       /* don't break progress bars mid-character */
+    overflow-wrap: normal;      /* don't wrap lines */
 }
 
 /* ===== Upload Progress Bar ===== */

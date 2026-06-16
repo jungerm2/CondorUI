@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import uuid
@@ -765,6 +767,10 @@ def pull_container_stream():
         image (required): Docker/OCI image reference (e.g., docker://ubuntu:latest)
         name (optional): Display name for the container
     """
+    import os
+    import pty
+    import select
+
     from flask import stream_with_context
     from flask.wrappers import Response
 
@@ -794,6 +800,14 @@ def pull_container_stream():
     unique_name = f"{uuid.uuid4().hex}_{safe_name}.sif"
     dest_path = containers_dir / unique_name
 
+    # Compile ANSI escape code regex once for performance
+    # Matches: \x1b[<digits>;<digits>...<letter> (CSI sequences)
+    #          \x1b[<digits>;<digits>... (SGR, cursor movement, etc.)
+    #          \x1b[<letter> (single-char sequences like \x1b[K, \x1b[G)
+    #          \x1b]<digits>;<digits>...\x1b\\ (OSC sequences)
+    #          \x1b[<digits>;<digits>...<letter> (all CSI)
+    ANSI_ESCAPE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\][0-9;]*[a-zA-Z]|\x1b[^[]')
+
     def generate():
         command = ["apptainer", "build", "--ignore-proot", "--force", str(dest_path), image_ref]
         yield f"event: start\ndata: {json.dumps({'filename': unique_name, 'command': ' '.join(command)})}\n\n"
@@ -813,22 +827,57 @@ def pull_container_stream():
                 if val:
                     env[key] = val
 
+            # Allocate a PTY so apptainer thinks it's writing to a terminal.
+            # This is necessary because apptainer (via the containers/image
+            # library) suppresses progress bars when stdout is not a TTY.
+            # Using shell=True helps ensure the PTY is properly set up.
+            master_fd, slave_fd = pty.openpty()
+
+            # Build the command string for shell=True
+            cmd_str = " ".join(shlex.quote(c) for c in command)
+
             process = subprocess.Popen(
-                command,
-                stdout=subprocess.PIPE,
+                cmd_str,
+                stdout=slave_fd,
                 stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
+                shell=True,
+                close_fds=True,
                 env=env,
             )
 
-            for line in iter(process.stdout.readline, ""):
-                if not line:
-                    break
-                sse_line = line.rstrip("\n").replace("\n", "\\n")
-                yield f"data: {sse_line}\n\n"
+            os.close(slave_fd)
 
-            process.stdout.close()
+            # Read from the PTY master fd in 4096-byte chunks, then split on
+            # newlines to emit individual lines.  apptainer's progress bars
+            # use \r to overwrite lines in-place, which will appear as
+            # separate \n-delimited chunks after the split — the frontend's
+            # appendOrReplaceLastLine() handles replacing the last line.
+            while True:
+                r, _w, _e = select.select([master_fd], [], [], 0.5)
+                if not r:
+                    ret = process.poll()
+                    if ret is not None:
+                        break
+                    continue
+
+                try:
+                    data = os.read(master_fd, 4096)
+                except OSError:
+                    break
+                if not data:
+                    break
+
+                # Decode and split on \n (which also catches \r\n pairs)
+                text = data.decode("utf-8", errors="replace")
+                for raw_line in text.split("\n"):
+                    if not raw_line:
+                        continue
+                    # Strip ANSI escape codes
+                    clean = ANSI_ESCAPE.sub("", raw_line)
+                    if clean:
+                        yield f"data: {clean}\n\n"
+
+            os.close(master_fd)
             return_code = process.wait()
 
             if return_code != 0:
