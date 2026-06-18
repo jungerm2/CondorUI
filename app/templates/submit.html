@@ -38,15 +38,21 @@
                             </select>
                         </div>
                         <div class="form-group" id="container-image-group" style="display:none;">
-                            <label for="job-container-image">Container Image</label>
+                            <label for="job-container-image">
+                                Container Image
+                                <span class="info-icon" data-tip="Path to a container image on OSDF (e.g., osdf:///path/to/image.sif)">?</span>
+                            </label>
                             <input type="text" id="job-container-image" placeholder="osdf:///path/to/image.sif"
                                 class="form-input">
                         </div>
                         <div class="form-group" id="container-select-group" style="display:none;">
-                            <label>Available Containers</label>
-                            <div id="submit-containers-list">
-                                <p class="hint" style="color: var(--text-muted); font-size: 0.85rem;">Loading containers...</p>
-                            </div>
+                            <label for="job-container-select">
+                                Available Containers
+                                <span class="info-icon" data-tip="Select from containers already pulled/stored on this system">?</span>
+                            </label>
+                            <select id="job-container-select" class="form-input">
+                                <option value="">— Select a container —</option>
+                            </select>
                         </div>
                         <div class="form-group">
                             <div class="exec-shell-toggle">
@@ -111,6 +117,27 @@
                                 class="form-input">
                         </div>
                         <div class="form-group">
+                            <label for="job-transfer-output">
+                                Transfer Output Files
+                                <span class="info-icon" data-tip="Files to transfer back from the job working directory (comma-separated)">?</span>
+                            </label>
+                            <input type="text" id="job-transfer-output" placeholder="output.dat, results.tar.gz" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label for="job-output-destination">
+                                Output Destination
+                                <span class="info-icon" data-tip="Where output files are transferred. Use $(OutputsDir) (per-job dir), osdf:///, or file:///staging/ for large outputs. Leave empty to use the default working directory.">?</span>
+                            </label>
+                            <input type="text" id="job-output-destination" value="$(OutputsDir)" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label for="job-output-remaps">
+                                Output Remaps
+                                <span class="info-icon" data-tip="Remap output files to specific paths. One remap per line: filename = destination">?</span>
+                            </label>
+                            <textarea id="job-output-remaps" rows="3" class="form-input" placeholder="output.dat = osdf:///chtc/staging/u/username/output.dat"></textarea>
+                        </div>
+                        <div class="form-group">
                             <label for="job-count">Number of Jobs</label>
                             <input type="number" id="job-count" value="1" min="1" class="form-input">
                         </div>
@@ -156,6 +183,39 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Available Variables -->
+            <details class="card full-width" style="margin-top: 16px;">
+                <summary class="card-header" style="cursor: pointer;">
+                    <h2>Available Variables</h2>
+                    <span class="summary-hint">Click to expand</span>
+                </summary>
+                <div class="card-body">
+                    <p style="color: var(--text-secondary); margin-bottom: 12px;">
+                        The following variables are automatically set by the Web UI and can be used in submit descriptions:
+                    </p>
+                    <table class="data-table" style="font-size: 0.85rem;">
+                        <thead>
+                            <tr>
+                                <th>Variable</th>
+                                <th>Description</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td><code>$(ClusterId)</code></td><td>The cluster ID assigned to this job by HTCondor</td></tr>
+                            <tr><td><code>$(ProcId)</code></td><td>The proc ID for each process (0, 1, 2, ...)</td></tr>
+                            <tr><td><code>$(LogsDir)</code></td><td>Per-job directory for log, stdout, and stderr files</td></tr>
+                            <tr><td><code>$(OutputsDir)</code></td><td>Per-job directory for output files transferred back from the job</td></tr>
+                            <tr><td><code>$(Owner)</code></td><td>The user who submitted the job</td></tr>
+                            <tr><td><code>$(QDate)</code></td><td>The date and time the job entered the queue (Unix timestamp)</td></tr>
+                        </tbody>
+                    </table>
+                    <p style="color: var(--text-muted); font-size: 0.82rem; margin-top: 12px;">
+                        Example: <code>output = $(OutputsDir)/$(ClusterId).out</code> writes output to a per-job directory.
+                        See the <a href="https://htcondor.org/manual/" target="_blank" style="color: var(--accent-cyan);">HTCondor Manual</a> for more submit file options.
+                    </p>
+                </div>
+            </details>
 
             <div class="submit-actions">
                 <button class="btn btn-ghost btn-lg" id="save-as-tmpl-btn" type="button">

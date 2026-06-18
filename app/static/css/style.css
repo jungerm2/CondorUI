@@ -445,6 +445,118 @@ select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg widt
 .attr-row .remove-attr { flex-shrink: 0; background: transparent; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; }
 .attr-row .remove-attr:hover { color: var(--status-held); }
 
+/* ===== Info Icon with Tooltip ===== */
+.info-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: rgba(100, 120, 180, 0.15);
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    font-weight: 600;
+    cursor: help;
+    position: relative;
+    margin-left: 4px;
+    flex-shrink: 0;
+    transition: all var(--transition);
+}
+.info-icon:hover {
+    background: rgba(100, 120, 180, 0.25);
+    color: var(--text-secondary);
+}
+.info-icon::after {
+    content: attr(data-tip);
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    padding: 6px 10px;
+    font-size: 0.78rem;
+    font-weight: 400;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    max-width: 280px;
+    white-space: normal;
+    word-wrap: break-word;
+    box-shadow: var(--shadow-md);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    z-index: 10;
+}
+.info-icon:hover::after {
+    opacity: 1;
+}
+/* Arrow on the tooltip */
+.info-icon::before {
+    content: '';
+    position: absolute;
+    bottom: calc(100% + 4px);
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: var(--border-color);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    z-index: 10;
+}
+.info-icon:hover::before {
+    opacity: 1;
+}
+
+/* ===== Collapsible Card (details/summary) ===== */
+details.card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+details.card summary.card-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+}
+details.card summary.card-header::-webkit-details-marker {
+    display: none;
+}
+details.card summary.card-header .summary-hint {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-left: auto;
+    margin-right: 8px;
+}
+details.card summary.card-header::after {
+    content: '▾';
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    transition: transform 0.2s ease;
+    flex-shrink: 0;
+}
+details.card[open] summary.card-header::after {
+    content: '▾';
+    transform: rotate(180deg);
+}
+details.card summary.card-header:hover {
+    background: rgba(100, 120, 180, 0.03);
+}
+details.card[open] .card-body {
+    display: block;
+    animation: fadeIn 0.2s ease;
+}
+
 /* ===== Submit Layout ===== */
 .submit-layout { max-width: 900px; }
 .mode-toggle { display: flex; gap: 4px; margin-bottom: 20px; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 4px; width: fit-content; }

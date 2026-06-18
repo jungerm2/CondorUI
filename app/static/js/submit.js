@@ -43,65 +43,32 @@ function initExtraAttrs() {
     });
 }
 
-// Load server-side containers and render clickable list
+// Load server-side containers and populate the select dropdown
 async function loadContainers() {
-    const listEl = $('#submit-containers-list');
-    if (!listEl) return;
+    const selectEl = $('#job-container-select');
+    if (!selectEl) return;
 
     try {
         const data = await api('/containers');
         serverContainers = data.containers || [];
-    } catch (err) {
-        listEl.innerHTML = `<p class="hint" style="color: var(--text-muted); font-size: 0.85rem;">Could not load containers: ${err.message}</p>`;
-        return;
-    }
 
-    if (serverContainers.length === 0) {
-        listEl.innerHTML = `
-            <p class="hint" style="color: var(--text-muted); font-size: 0.85rem;">
-                No containers available.
-                <a href="/containers" style="color: var(--accent-cyan);">Manage containers</a>
-            </p>`;
-        return;
-    }
+        // Clear existing options (keep the default)
+        selectEl.innerHTML = '<option value="">— Select a container —</option>';
 
-    listEl.innerHTML = '';
-    serverContainers.forEach(c => {
-        const isSelected = selectedContainerUri === c.uri;
-        const item = document.createElement('div');
-        item.className = `submit-file-item ${isSelected ? 'selected' : ''}`;
-        item.dataset.uri = c.uri;
-        item.dataset.id = c.id;
-
-        item.innerHTML = `
-            <div class="submit-file-check">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" class="check-icon">
-                    <polyline points="20,6 9,17 4,12" />
-                </svg>
-            </div>
-            <div class="submit-file-info">
-                <span class="submit-file-name">${escHtml(c.name)}</span>
-                <span class="submit-file-meta">${formatFileSize(c.size)}</span>
-            </div>
-        `;
-
-        item.addEventListener('click', () => {
-            const uri = item.dataset.uri;
-            if (selectedContainerUri === uri) {
-                selectedContainerUri = null;
-                item.classList.remove('selected');
-                $('#job-container-image').value = '';
-            } else {
-                // Deselect all others
-                listEl.querySelectorAll('.submit-file-item').forEach(el => el.classList.remove('selected'));
-                selectedContainerUri = uri;
-                item.classList.add('selected');
-                $('#job-container-image').value = uri;
-            }
+        serverContainers.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c.uri;
+            opt.textContent = `${c.name} (${c.filename})`;
+            selectEl.appendChild(opt);
         });
 
-        listEl.appendChild(item);
-    });
+        // If there's a pre-selected container, set it
+        if (selectedContainerUri) {
+            selectEl.value = selectedContainerUri;
+        }
+    } catch (err) {
+        selectEl.innerHTML = `<option value="">— Failed to load containers: ${err.message} —</option>`;
+    }
 }
 
 // Load server-side files and render clickable list
@@ -282,6 +249,40 @@ function buildSubmitDict() {
     if (error) d.error = error;
     const log = $('#job-log').value.trim();
     if (log) d.log = log;
+
+    // Output file transfer fields
+    const transferOutput = $('#job-transfer-output').value.trim();
+    if (transferOutput) {
+        d.transfer_output_files = transferOutput;
+    }
+
+    const outputDestination = $('#job-output-destination').value.trim();
+    if (outputDestination) {
+        d.output_destination = outputDestination;
+    }
+
+    const outputRemaps = $('#job-output-remaps').value.trim();
+    if (outputRemaps) {
+        // Parse remaps: each line is "filename = destination"
+        const remapLines = outputRemaps.split('\n').map(l => l.trim()).filter(l => l);
+        if (remapLines.length > 0) {
+            // Build a semicolon-separated remap string
+            const remapEntries = [];
+            for (const line of remapLines) {
+                const eqIdx = line.indexOf('=');
+                if (eqIdx > 0) {
+                    const key = line.substring(0, eqIdx).trim();
+                    const val = line.substring(eqIdx + 1).trim();
+                    if (key && val) {
+                        remapEntries.push(`${key} = ${val}`);
+                    }
+                }
+            }
+            if (remapEntries.length > 0) {
+                d.transfer_output_remaps = remapEntries.join('; ');
+            }
+        }
+    }
 
     $$('.attr-row').forEach(row => {
         const key = row.querySelector('.attr-key').value.trim();

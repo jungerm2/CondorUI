@@ -330,6 +330,7 @@ def submit_job(
     count: int = 1,
     itemdata: list[dict[str, str]] | None = None,
     log_dir: str | None = None,
+    output_dir: str | None = None,
 ) -> int:
     """Submit a job to the local schedd.
 
@@ -339,6 +340,7 @@ def submit_job(
         itemdata: Optional list of dicts for queue-from-list (each dict
                   is a set of variable assignments for one proc).
         log_dir: Optional path to a directory where logs, stdout, and stderr will be stored.
+        output_dir: Optional path to a directory where output files will be stored.
 
     Returns:
         The ClusterId of the submitted job.
@@ -346,6 +348,8 @@ def submit_job(
     sub_dict = dict(submit_dict)
     if log_dir:
         sub_dict["LogsDir"] = log_dir
+    if output_dir:
+        sub_dict["OutputsDir"] = output_dir
 
     sub = htcondor.Submit(sub_dict)
     schedd = get_schedd()
@@ -362,12 +366,13 @@ def submit_job(
     return cluster_id
 
 
-def submit_from_file(file_content: str, log_dir: str | None = None) -> tuple[int, int]:
+def submit_from_file(file_content: str, log_dir: str | None = None, output_dir: str | None = None) -> tuple[int, int]:
     """Submit a job from raw submit file content.
 
     Args:
         file_content: The text content of a .sub file.
         log_dir: Optional path to a directory where logs, stdout, and stderr will be stored.
+        output_dir: Optional path to a directory where output files will be stored.
 
     Returns:
         Tuple of (cluster_id, num_procs).
@@ -375,6 +380,8 @@ def submit_from_file(file_content: str, log_dir: str | None = None) -> tuple[int
     sub = htcondor.Submit(file_content)
     if log_dir:
         sub["LogsDir"] = log_dir
+    if output_dir:
+        sub["OutputsDir"] = output_dir
 
     schedd = get_schedd()
     result = schedd.submit(sub)

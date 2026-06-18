@@ -47,3 +47,9 @@ def history_page():
 def job_details_page(cluster_id: int, proc_id: int = 0):
     """Serve the job details page."""
     return render_template("job_details.html", cluster_id=cluster_id, proc_id=proc_id, active_page="")
+
+
+@views_bp.route("/output-files")
+def output_files_page():
+    """Serve the output files management page."""
+    return render_template("output_files.html", active_page="output-files")

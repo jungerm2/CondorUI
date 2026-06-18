@@ -39,6 +39,12 @@ class Config:
         "OSDF_BASE_URI", "osdf:///"
     )
 
+    # Directory for output files transferred back from completed jobs.
+    # Each job gets a per-job subfolder: OUTPUT_DIR/job_<uuid>/
+    OUTPUT_DIR = os.environ.get(
+        "OUTPUT_DIR", str(BASE_DIR / "outputs")
+    )
+
     # Maximum number of history results to return by default
     MAX_HISTORY_RESULTS = int(os.environ.get("MAX_HISTORY_RESULTS", "200"))
 

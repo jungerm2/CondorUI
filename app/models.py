@@ -20,6 +20,7 @@ class JobSubmission(db.Model):
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
     log_dir = db.Column(db.String(512), nullable=True)
+    output_dir = db.Column(db.String(512), nullable=True)
 
     def to_dict(self) -> dict:
         return {
@@ -30,6 +31,7 @@ class JobSubmission(db.Model):
             "num_procs": self.num_procs,
             "submitted_at": self.submitted_at.isoformat() + "Z",
             "log_dir": self.log_dir,
+            "output_dir": self.output_dir,
         }
 
 

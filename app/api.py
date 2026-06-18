@@ -408,11 +408,16 @@ def submit():
         log_dir_path.mkdir(parents=True, exist_ok=True)
         log_dir = str(log_dir_path)
 
+        # Create output directory for this job (used for OutputsDir)
+        output_dir_path = Path(current_app.config["OUTPUT_DIR"]) / job_uuid
+        output_dir_path.mkdir(parents=True, exist_ok=True)
+        output_dir = str(output_dir_path)
+
         if itemdata:
-            cluster_id = submit_job(submit_dict, count=len(itemdata), itemdata=itemdata, log_dir=log_dir)
+            cluster_id = submit_job(submit_dict, count=len(itemdata), itemdata=itemdata, log_dir=log_dir, output_dir=output_dir)
             num_procs = len(itemdata)
         else:
-            cluster_id = submit_job(submit_dict, count=count, log_dir=log_dir)
+            cluster_id = submit_job(submit_dict, count=count, log_dir=log_dir, output_dir=output_dir)
             num_procs = count
 
         submission = JobSubmission(
@@ -421,6 +426,7 @@ def submit():
             submit_description=json.dumps(submit_dict),
             num_procs=num_procs,
             log_dir=log_dir,
+            output_dir=output_dir,
         )
         db.session.add(submission)
         db.session.commit()
@@ -455,7 +461,12 @@ def submit_file():
         log_dir_path.mkdir(parents=True, exist_ok=True)
         log_dir = str(log_dir_path)
 
-        cluster_id, num_procs = submit_from_file(content, log_dir=log_dir)
+        # Create output directory for this job (used for OutputsDir)
+        output_dir_path = Path(current_app.config["OUTPUT_DIR"]) / job_uuid
+        output_dir_path.mkdir(parents=True, exist_ok=True)
+        output_dir = str(output_dir_path)
+
+        cluster_id, num_procs = submit_from_file(content, log_dir=log_dir, output_dir=output_dir)
 
         submission = JobSubmission(
             cluster_id=cluster_id,
@@ -463,6 +474,7 @@ def submit_file():
             submit_description=content,
             num_procs=num_procs,
             log_dir=log_dir,
+            output_dir=output_dir,
         )
         db.session.add(submission)
         db.session.commit()
@@ -1305,3 +1317,96 @@ def list_submissions():
         .all()
     )
     return jsonify({"submissions": [s.to_dict() for s in submissions]})
+
+
+# ---------------------------------------------------------------------------
+# Output files — list and download output files transferred back from jobs
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route("/output-files")
+def list_output_files():
+    """List all output files from completed jobs.
+
+    Scans the OUTPUT_DIR directory for files and cross-references
+    with JobSubmission records to show which job produced each file.
+    """
+    output_dir = current_app.config["OUTPUT_DIR"]
+    output_path = Path(output_dir)
+
+    if not output_path.exists():
+        return jsonify({"output_files": [], "count": 0})
+
+    # Get all job submissions that have output_dir set
+    submissions = JobSubmission.query.filter(
+        JobSubmission.output_dir.isnot(None)
+    ).all()
+    sub_map = {s.cluster_id: s for s in submissions}
+
+    output_files = []
+    try:
+        # Scan each job's output directory
+        for sub in submissions:
+            if not sub.output_dir:
+                continue
+            job_output_path = Path(sub.output_dir)
+            if not job_output_path.exists():
+                continue
+
+            for f in job_output_path.iterdir():
+                if f.is_file():
+                    stat = f.stat()
+                    output_files.append({
+                        "filename": f.name,
+                        "path": str(f),
+                        "size": stat.st_size,
+                        "modified_at": stat.st_mtime,
+                        "cluster_id": sub.cluster_id,
+                        "job_name": sub.name,
+                    })
+
+        # Sort by modified_at descending
+        output_files.sort(key=lambda x: x.get("modified_at", 0), reverse=True)
+
+        return jsonify({"output_files": output_files, "count": len(output_files)})
+    except Exception as e:
+        logger.exception("Failed to list output files")
+        return jsonify({"error": str(e)}), 500
+
+
+@api_bp.route("/output-files/<path:filename>/download")
+def download_output_file(filename: str):
+    """Download a specific output file.
+
+    The filename is the full path relative to OUTPUT_DIR.
+    """
+    output_dir = current_app.config["OUTPUT_DIR"]
+    file_path = Path(output_dir) / filename
+
+    if not file_path.exists():
+        return jsonify({"error": f"Output file not found: {filename}"}), 404
+
+    try:
+        return send_file(
+            str(file_path),
+            as_attachment=True,
+            download_name=file_path.name,
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@api_bp.route("/output-files/<path:filename>", methods=["DELETE"])
+def delete_output_file(filename: str):
+    """Delete an output file from disk."""
+    output_dir = current_app.config["OUTPUT_DIR"]
+    file_path = Path(output_dir) / filename
+
+    if not file_path.exists():
+        return jsonify({"error": f"Output file not found: {filename}"}), 404
+
+    try:
+        file_path.unlink()
+        return jsonify({"message": f"Deleted output file: {filename}"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500

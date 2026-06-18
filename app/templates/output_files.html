@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% block title %}Output Files — Condor Web UI{% endblock %}
+
+{% block content %}
+<section class="tab-panel active" id="panel-output-files">
+    <div class="page-header">
+        <h1>Output Files</h1>
+        <p class="page-description">Output files transferred back from completed jobs. Files are stored in <code>OUTPUT_DIR</code>.</p>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 16px;">
+        <!-- Output File List -->
+        <div class="card full-width">
+            <div class="card-header">
+                <h2>Output Files</h2>
+            </div>
+            <div class="card-body">
+                <div class="table-controls" style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                    <span style="font-size: 0.8rem; color: var(--text-muted);" id="output-selection-count">0 selected</span>
+                    <button class="btn btn-remove btn-sm" id="output-delete-btn" disabled>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                            <polyline points="3,6 5,6 21,6" />
+                            <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                        </svg>
+                        Delete
+                    </button>
+                </div>
+                <div class="table-container" id="output-files-table-container">
+                    <table class="data-table" id="output-files-table">
+                        <thead>
+                            <tr>
+                                <th style="width: 36px; text-align: center;">
+                                    <input type="checkbox" id="output-select-all" title="Select all">
+                                </th>
+                                <th>Filename</th>
+                                <th>Size</th>
+                                <th>Job</th>
+                                <th>Modified</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="output-files-tbody">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+                <div class="empty-state" id="output-files-empty" style="display:none;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48">
+                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                        <polyline points="17,8 12,3 7,8" />
+                        <line x1="12" y1="3" x2="12" y2="15" />
+                    </svg>
+                    <p>No output files found</p>
+                    <p class="hint">Output files appear here after jobs complete with <code>output_destination</code> set.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/output_files.js"></script>
+{% endblock %}
