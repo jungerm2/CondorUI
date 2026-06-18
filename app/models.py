@@ -74,7 +74,7 @@ class UploadedFile(db.Model):
     filename = db.Column(db.String(255), nullable=False)
     original_name = db.Column(db.String(255), nullable=False)
     local_path = db.Column(db.String(512), nullable=True)  # null if moved to OSDF
-    osdf_path = db.Column(db.String(512), nullable=True)   # null if local only
+    osdf_path = db.Column(db.String(512), nullable=True)  # null if local only
     size = db.Column(db.Integer, nullable=False, default=0)
     uploaded_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
@@ -123,7 +123,11 @@ class ContainerImage(db.Model):
 
         base_uri = current_app.config.get("OSDF_BASE_URI", "osdf:///")
         osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
-        abs_path = str(Path(osdf_root) / "containers" / self.filename) if osdf_root else "/containers/" + self.filename
+        abs_path = (
+            str(Path(osdf_root) / "containers" / self.filename)
+            if osdf_root
+            else "/containers/" + self.filename
+        )
         uri = base_uri.rstrip("/") + abs_path
 
         return {

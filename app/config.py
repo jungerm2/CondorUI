@@ -19,9 +19,7 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     # Directory for uploaded submit files and input files
-    UPLOAD_DIR = os.environ.get(
-        "UPLOAD_DIR", str(BASE_DIR / "uploads")
-    )
+    UPLOAD_DIR = os.environ.get("UPLOAD_DIR", str(BASE_DIR / "uploads"))
 
     # Directory for job stdout, stderr, and user logs (outside project root)
     JOB_LOGS_DIR = os.environ.get(
@@ -30,20 +28,14 @@ class Config:
 
     # OSDF root path for file transfers — uploaded files and containers are
     # stored in subdirectories under this path so HTCondor can cache them via OSDF.
-    OSDF_ROOT_PATH = os.environ.get(
-        "OSDF_ROOT_PATH", ""
-    )
+    OSDF_ROOT_PATH = os.environ.get("OSDF_ROOT_PATH", "")
 
     # Base URI prefix for OSDF-staged files (e.g., "osdf:///" or "gsiftp://...")
-    OSDF_BASE_URI = os.environ.get(
-        "OSDF_BASE_URI", "osdf:///"
-    )
+    OSDF_BASE_URI = os.environ.get("OSDF_BASE_URI", "osdf:///")
 
     # Directory for output files transferred back from completed jobs.
     # Each job gets a per-job subfolder: OUTPUT_DIR/job_<uuid>/
-    OUTPUT_DIR = os.environ.get(
-        "OUTPUT_DIR", str(BASE_DIR / "outputs")
-    )
+    OUTPUT_DIR = os.environ.get("OUTPUT_DIR", str(BASE_DIR / "outputs"))
 
     # Maximum number of history results to return by default
     MAX_HISTORY_RESULTS = int(os.environ.get("MAX_HISTORY_RESULTS", "200"))

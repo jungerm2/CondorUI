@@ -39,6 +39,7 @@ def containers_page():
 def history_page():
     """Redirect to dashboard (history is now merged into the dashboard page)."""
     from flask import redirect, url_for
+
     return redirect(url_for("views.index"))
 
 
@@ -46,7 +47,9 @@ def history_page():
 @views_bp.route("/job/<int:cluster_id>/<int:proc_id>")
 def job_details_page(cluster_id: int, proc_id: int = 0):
     """Serve the job details page."""
-    return render_template("job_details.html", cluster_id=cluster_id, proc_id=proc_id, active_page="")
+    return render_template(
+        "job_details.html", cluster_id=cluster_id, proc_id=proc_id, active_page=""
+    )
 
 
 @views_bp.route("/output-files")

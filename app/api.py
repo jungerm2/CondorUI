@@ -51,7 +51,9 @@ def _save_uploaded_stream(stream, dest_dir, original_filename, name=None):
     dest_path_obj = Path(dest_dir)
     dest_path_obj.mkdir(parents=True, exist_ok=True)
     display_name = name or Path(original_filename).stem
-    safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in display_name.lower())
+    safe_name = "".join(
+        c if c.isalnum() or c in "._-" else "_" for c in display_name.lower()
+    )
     ext = Path(original_filename).suffix
     unique_name = f"{uuid.uuid4().hex}_{safe_name}{ext}"
 
@@ -72,9 +74,7 @@ def _resolve_shell_commands(jobs: list[dict]) -> None:
 
     Modifies the list in-place.
     """
-    shell_job_ids = [
-        j.get("ClusterId") for j in jobs if j.get("Cmd") == "/bin/sh"
-    ]
+    shell_job_ids = [j.get("ClusterId") for j in jobs if j.get("Cmd") == "/bin/sh"]
     if not shell_job_ids:
         return
 
@@ -97,7 +97,7 @@ def _resolve_shell_commands(jobs: list[dict]) -> None:
                 if shell_cmd:
                     job["Cmd"] = shell_cmd
                     job["Args"] = ""
-        except (json.JSONDecodeError, AttributeError):
+        except json.JSONDecodeError, AttributeError:
             pass
 
 
@@ -132,16 +132,18 @@ def health_check():
 def list_jobs():
     """List active jobs, with optional filters and pagination."""
     if not daemon_available():
-        return jsonify({
-            "jobs": [],
-            "count": 0,
-            "total": 0,
-            "has_more": False,
-            "limit": 0,
-            "offset": 0,
-            "daemon_unavailable": True,
-            "message": "HTCondor daemon is not available."
-        })
+        return jsonify(
+            {
+                "jobs": [],
+                "count": 0,
+                "total": 0,
+                "has_more": False,
+                "limit": 0,
+                "offset": 0,
+                "daemon_unavailable": True,
+                "message": "HTCondor daemon is not available.",
+            }
+        )
 
     constraint_parts: list[str] = []
 
@@ -157,7 +159,9 @@ def list_jobs():
     if cluster_id and cluster_id.isdigit():
         constraint_parts.append(f"ClusterId == {cluster_id}")
 
-    constraint = " && ".join(constraint_parts) if constraint_parts else DEFAULT_CONSTRAINT
+    constraint = (
+        " && ".join(constraint_parts) if constraint_parts else DEFAULT_CONSTRAINT
+    )
 
     try:
         limit = request.args.get("limit", 200, type=int)
@@ -166,21 +170,23 @@ def list_jobs():
 
         jobs = query_jobs(constraint=constraint)
         total = len(jobs)
-        paginated = jobs[offset:offset + limit]
+        paginated = jobs[offset : offset + limit]
         has_more = (offset + limit) < total
 
         # Resolve shell commands (/bin/sh) to the original shell command
         # from the submission record in the local database.
         _resolve_shell_commands(paginated)
 
-        return jsonify({
-            "jobs": paginated,
-            "count": len(paginated),
-            "total": total,
-            "has_more": has_more,
-            "limit": limit,
-            "offset": offset,
-        })
+        return jsonify(
+            {
+                "jobs": paginated,
+                "count": len(paginated),
+                "total": total,
+                "has_more": has_more,
+                "limit": limit,
+                "offset": offset,
+            }
+        )
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -189,13 +195,15 @@ def list_jobs():
 def get_cluster(cluster_id):
     """Get all procs for a specific cluster."""
     if not daemon_available():
-        return jsonify({
-            "cluster_id": cluster_id,
-            "jobs": [],
-            "count": 0,
-            "daemon_unavailable": True,
-            "message": "HTCondor daemon is not available."
-        })
+        return jsonify(
+            {
+                "cluster_id": cluster_id,
+                "jobs": [],
+                "count": 0,
+                "daemon_unavailable": True,
+                "message": "HTCondor daemon is not available.",
+            }
+        )
     try:
         cid = int(cluster_id)
         jobs = query_jobs(constraint=f"ClusterId == {cid}")
@@ -220,7 +228,9 @@ def list_history():
     still in the schedd (idle / running / held) show their real status;
     clusters no longer in the schedd are marked Completed.
     """
-    limit = request.args.get("limit", current_app.config["MAX_HISTORY_RESULTS"], type=int)
+    limit = request.args.get(
+        "limit", current_app.config["MAX_HISTORY_RESULTS"], type=int
+    )
     try:
         submissions = (
             JobSubmission.query.order_by(JobSubmission.submitted_at.desc())
@@ -240,12 +250,24 @@ def list_history():
                     active_jobs = query_jobs(
                         constraint=constraint,
                         projection=[
-                            "ClusterId", "ProcId", "JobStatus", "Owner",
-                            "Cmd", "Args", "QDate", "JobStartDate",
-                            "CompletionDate", "HoldReason", "RemoteHost",
-                            "RemoteWallClockTime", "ExitCode", "ExitBySignal",
+                            "ClusterId",
+                            "ProcId",
+                            "JobStatus",
+                            "Owner",
+                            "Cmd",
+                            "Args",
+                            "QDate",
+                            "JobStartDate",
+                            "CompletionDate",
+                            "HoldReason",
+                            "RemoteHost",
+                            "RemoteWallClockTime",
+                            "ExitCode",
+                            "ExitBySignal",
                             "JobBatchName",
-                            "RequestCpus", "RequestMemory", "RequestDisk",
+                            "RequestCpus",
+                            "RequestMemory",
+                            "RequestDisk",
                         ],
                     )
                     # Only keep the first proc per cluster (ProcId == 0 prefered)
@@ -256,7 +278,9 @@ def list_history():
                             if cid not in schedd_statuses or job.get("ProcId") == 0:
                                 schedd_statuses[cid] = job
             except Exception:
-                logger.warning("Could not query schedd for history statuses", exc_info=True)
+                logger.warning(
+                    "Could not query schedd for history statuses", exc_info=True
+                )
 
         from app.condor import JOB_STATUS_MAP
 
@@ -282,37 +306,43 @@ def list_history():
                             if shell_cmd:
                                 cmd = shell_cmd
                                 args = ""
-                    except (json.JSONDecodeError, AttributeError):
+                    except json.JSONDecodeError, AttributeError:
                         pass
 
-                jobs.append({
-                    "ClusterId": sub.cluster_id,
-                    "ProcId": schedd_job.get("ProcId", 0),
-                    "JobStatus": real_status,
-                    "JobStatusName": JOB_STATUS_MAP.get(real_status, "Unknown"),
-                    "Owner": schedd_job.get("Owner", "—"),
-                    "Cmd": cmd,
-                    "Args": args,
-                    "RequestCpus": schedd_job.get("RequestCpus", "—"),
-                    "RequestMemory": schedd_job.get("RequestMemory", "—"),
-                    "RequestDisk": schedd_job.get("RequestDisk", "—"),
-                    "QDate": schedd_job.get("QDate", 0),
-                    "JobStartDate": schedd_job.get("JobStartDate"),
-                    "CompletionDate": schedd_job.get("CompletionDate"),
-                    "HoldReason": schedd_job.get("HoldReason", ""),
-                    "RemoteHost": schedd_job.get("RemoteHost", ""),
-                    "ImageSize": schedd_job.get("ImageSize", 0),
-                    "DiskUsage": schedd_job.get("DiskUsage", 0),
-                    "ExitCode": schedd_job.get("ExitCode", 0),
-                    "ExitBySignal": schedd_job.get("ExitBySignal", False),
-                    "JobCurrentStartDate": schedd_job.get("JobCurrentStartDate"),
-                    "NumJobStarts": schedd_job.get("NumJobStarts", 1),
-                    "NumShadowStarts": schedd_job.get("NumShadowStarts", 1),
-                    "JobBatchName": schedd_job.get("JobBatchName", sub.name),
-                    "RemoteWallClockTime": schedd_job.get("RemoteWallClockTime", 0),
-                    "CumulativeRemoteSysCpu": schedd_job.get("CumulativeRemoteSysCpu", 0),
-                    "CumulativeRemoteUserCpu": schedd_job.get("CumulativeRemoteUserCpu", 0),
-                })
+                jobs.append(
+                    {
+                        "ClusterId": sub.cluster_id,
+                        "ProcId": schedd_job.get("ProcId", 0),
+                        "JobStatus": real_status,
+                        "JobStatusName": JOB_STATUS_MAP.get(real_status, "Unknown"),
+                        "Owner": schedd_job.get("Owner", "—"),
+                        "Cmd": cmd,
+                        "Args": args,
+                        "RequestCpus": schedd_job.get("RequestCpus", "—"),
+                        "RequestMemory": schedd_job.get("RequestMemory", "—"),
+                        "RequestDisk": schedd_job.get("RequestDisk", "—"),
+                        "QDate": schedd_job.get("QDate", 0),
+                        "JobStartDate": schedd_job.get("JobStartDate"),
+                        "CompletionDate": schedd_job.get("CompletionDate"),
+                        "HoldReason": schedd_job.get("HoldReason", ""),
+                        "RemoteHost": schedd_job.get("RemoteHost", ""),
+                        "ImageSize": schedd_job.get("ImageSize", 0),
+                        "DiskUsage": schedd_job.get("DiskUsage", 0),
+                        "ExitCode": schedd_job.get("ExitCode", 0),
+                        "ExitBySignal": schedd_job.get("ExitBySignal", False),
+                        "JobCurrentStartDate": schedd_job.get("JobCurrentStartDate"),
+                        "NumJobStarts": schedd_job.get("NumJobStarts", 1),
+                        "NumShadowStarts": schedd_job.get("NumShadowStarts", 1),
+                        "JobBatchName": schedd_job.get("JobBatchName", sub.name),
+                        "RemoteWallClockTime": schedd_job.get("RemoteWallClockTime", 0),
+                        "CumulativeRemoteSysCpu": schedd_job.get(
+                            "CumulativeRemoteSysCpu", 0
+                        ),
+                        "CumulativeRemoteUserCpu": schedd_job.get(
+                            "CumulativeRemoteUserCpu", 0
+                        ),
+                    }
+                )
             else:
                 # Job is no longer in the schedd — mark as Completed
                 cmd = ""
@@ -330,39 +360,41 @@ def list_history():
                             request_memory = desc["request_memory"]
                         if "request_disk" in desc:
                             request_disk = desc["request_disk"]
-                except (json.JSONDecodeError, AttributeError):
+                except json.JSONDecodeError, AttributeError:
                     cmd = ""
 
                 qdate = int(sub.submitted_at.timestamp()) if sub.submitted_at else 0
 
-                jobs.append({
-                    "ClusterId": sub.cluster_id,
-                    "ProcId": 0,
-                    "JobStatus": 4,
-                    "JobStatusName": "Completed",
-                    "Owner": "—",
-                    "Cmd": cmd,
-                    "Args": "",
-                    "RequestCpus": request_cpus,
-                    "RequestMemory": request_memory,
-                    "RequestDisk": request_disk,
-                    "QDate": qdate,
-                    "JobStartDate": None,
-                    "CompletionDate": None,
-                    "HoldReason": "",
-                    "RemoteHost": "",
-                    "ImageSize": 0,
-                    "DiskUsage": 0,
-                    "ExitCode": 0,
-                    "ExitBySignal": False,
-                    "JobCurrentStartDate": None,
-                    "NumJobStarts": 1,
-                    "NumShadowStarts": 1,
-                    "JobBatchName": sub.name,
-                    "RemoteWallClockTime": 0,
-                    "CumulativeRemoteSysCpu": 0,
-                    "CumulativeRemoteUserCpu": 0,
-                })
+                jobs.append(
+                    {
+                        "ClusterId": sub.cluster_id,
+                        "ProcId": 0,
+                        "JobStatus": 4,
+                        "JobStatusName": "Completed",
+                        "Owner": "—",
+                        "Cmd": cmd,
+                        "Args": "",
+                        "RequestCpus": request_cpus,
+                        "RequestMemory": request_memory,
+                        "RequestDisk": request_disk,
+                        "QDate": qdate,
+                        "JobStartDate": None,
+                        "CompletionDate": None,
+                        "HoldReason": "",
+                        "RemoteHost": "",
+                        "ImageSize": 0,
+                        "DiskUsage": 0,
+                        "ExitCode": 0,
+                        "ExitBySignal": False,
+                        "JobCurrentStartDate": None,
+                        "NumJobStarts": 1,
+                        "NumShadowStarts": 1,
+                        "JobBatchName": sub.name,
+                        "RemoteWallClockTime": 0,
+                        "CumulativeRemoteSysCpu": 0,
+                        "CumulativeRemoteUserCpu": 0,
+                    }
+                )
 
         return jsonify({"jobs": jobs, "count": len(jobs)})
     except Exception as e:
@@ -373,10 +405,9 @@ def list_history():
 def get_stats():
     """Get aggregate job status counts."""
     if not daemon_available():
-        return jsonify({
-            "daemon_unavailable": True,
-            "message": "HTCondor daemon is not available."
-        })
+        return jsonify(
+            {"daemon_unavailable": True, "message": "HTCondor daemon is not available."}
+        )
     try:
         counts = get_job_status_counts()
         return jsonify(counts)
@@ -403,6 +434,7 @@ def submit():
 
     try:
         import uuid
+
         job_uuid = f"job_{uuid.uuid4().hex}"
         log_dir_path = Path(current_app.config["JOB_LOGS_DIR"]) / job_uuid
         log_dir_path.mkdir(parents=True, exist_ok=True)
@@ -414,10 +446,18 @@ def submit():
         output_dir = str(output_dir_path)
 
         if itemdata:
-            cluster_id = submit_job(submit_dict, count=len(itemdata), itemdata=itemdata, log_dir=log_dir, output_dir=output_dir)
+            cluster_id = submit_job(
+                submit_dict,
+                count=len(itemdata),
+                itemdata=itemdata,
+                log_dir=log_dir,
+                output_dir=output_dir,
+            )
             num_procs = len(itemdata)
         else:
-            cluster_id = submit_job(submit_dict, count=count, log_dir=log_dir, output_dir=output_dir)
+            cluster_id = submit_job(
+                submit_dict, count=count, log_dir=log_dir, output_dir=output_dir
+            )
             num_procs = count
 
         submission = JobSubmission(
@@ -431,11 +471,13 @@ def submit():
         db.session.add(submission)
         db.session.commit()
 
-        return jsonify({
-            "cluster_id": cluster_id,
-            "num_procs": num_procs,
-            "message": f"Submitted cluster {cluster_id} with {num_procs} proc(s)",
-        }), 201
+        return jsonify(
+            {
+                "cluster_id": cluster_id,
+                "num_procs": num_procs,
+                "message": f"Submitted cluster {cluster_id} with {num_procs} proc(s)",
+            }
+        ), 201
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -456,6 +498,7 @@ def submit_file():
         content = file.read().decode("utf-8")
 
         import uuid
+
         job_uuid = f"job_{uuid.uuid4().hex}"
         log_dir_path = Path(current_app.config["JOB_LOGS_DIR"]) / job_uuid
         log_dir_path.mkdir(parents=True, exist_ok=True)
@@ -466,7 +509,9 @@ def submit_file():
         output_dir_path.mkdir(parents=True, exist_ok=True)
         output_dir = str(output_dir_path)
 
-        cluster_id, num_procs = submit_from_file(content, log_dir=log_dir, output_dir=output_dir)
+        cluster_id, num_procs = submit_from_file(
+            content, log_dir=log_dir, output_dir=output_dir
+        )
 
         submission = JobSubmission(
             cluster_id=cluster_id,
@@ -479,11 +524,13 @@ def submit_file():
         db.session.add(submission)
         db.session.commit()
 
-        return jsonify({
-            "cluster_id": cluster_id,
-            "num_procs": num_procs,
-            "message": f"Submitted cluster {cluster_id} with {num_procs} proc(s)",
-        }), 201
+        return jsonify(
+            {
+                "cluster_id": cluster_id,
+                "num_procs": num_procs,
+                "message": f"Submitted cluster {cluster_id} with {num_procs} proc(s)",
+            }
+        ), 201
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -515,7 +562,9 @@ def upload_files():
     upload_dir = current_app.config["UPLOAD_DIR"]
 
     try:
-        unique_name, size = _save_uploaded_stream(request.stream, upload_dir, original_filename)
+        unique_name, size = _save_uploaded_stream(
+            request.stream, upload_dir, original_filename
+        )
 
         uploaded_file = UploadedFile(
             filename=unique_name,
@@ -580,6 +629,7 @@ def stage_file(file_id: int):
         return jsonify({"error": "OSDF root path is not configured"}), 400
 
     import uuid
+
     ext = Path(uploaded_file.original_name).suffix
     unique_name = f"{uuid.uuid4().hex}{ext}"
     osdf_dest = str(Path(osdf_root) / "uploads" / unique_name)
@@ -611,6 +661,7 @@ def unstage_file(file_id: int):
 
     # Generate a unique name in the local upload directory
     import uuid
+
     ext = Path(uploaded_file.original_name).suffix
     unique_name = f"{uuid.uuid4().hex}{ext}"
     local_dest = str(Path(upload_dir) / unique_name)
@@ -637,10 +688,14 @@ def get_quotas():
     try:
         result = subprocess.run(
             ["get_quotas"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if result.returncode != 0:
-            return jsonify({"error": f"get_quotas failed: {result.stderr.strip()}"}), 500
+            return jsonify(
+                {"error": f"get_quotas failed: {result.stderr.strip()}"}
+            ), 500
 
         # Parse the tabular output
         lines = result.stdout.strip().split("\n")
@@ -674,7 +729,7 @@ def get_quotas():
                         val = float(val)
                     else:
                         val = int(val)
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     pass
                 entry[h] = val
             quotas.append(entry)
@@ -697,7 +752,9 @@ def get_quotas():
 def list_containers():
     """List all container images."""
     containers = ContainerImage.query.order_by(ContainerImage.created_at.desc()).all()
-    return jsonify({"containers": [c.to_dict() for c in containers], "count": len(containers)})
+    return jsonify(
+        {"containers": [c.to_dict() for c in containers], "count": len(containers)}
+    )
 
 
 @api_bp.route("/containers/pull", methods=["POST"])
@@ -718,9 +775,9 @@ def pull_container():
 
     # Validate the image reference has a proper scheme prefix
     if "://" not in image_ref:
-        return jsonify({
-            "error": "Invalid image reference. Please include a scheme prefix."
-        }), 400
+        return jsonify(
+            {"error": "Invalid image reference. Please include a scheme prefix."}
+        ), 400
 
     name = data.get("name", "").strip() or Path(image_ref).name
 
@@ -741,13 +798,15 @@ def pull_container():
         logger.info("Pulling container: %s -> %s", image_ref, dest_path)
         result = subprocess.run(
             ["apptainer", "pull", str(dest_path), image_ref],
-            capture_output=True, text=True, timeout=600,
+            capture_output=True,
+            text=True,
+            timeout=600,
         )
         if result.returncode != 0:
             logger.error("apptainer pull failed: %s", result.stderr)
-            return jsonify({
-                "error": f"apptainer pull failed: {result.stderr[:500]}"
-            }), 500
+            return jsonify(
+                {"error": f"apptainer pull failed: {result.stderr[:500]}"}
+            ), 500
 
         size = dest_path.stat().st_size
 
@@ -765,7 +824,11 @@ def pull_container():
     except subprocess.TimeoutExpired:
         return jsonify({"error": "apptainer pull timed out after 600 seconds"}), 500
     except FileNotFoundError:
-        return jsonify({"error": "apptainer command not found. Is Apptainer/Singularity installed?"}), 500
+        return jsonify(
+            {
+                "error": "apptainer command not found. Is Apptainer/Singularity installed?"
+            }
+        ), 500
     except Exception as e:
         logger.exception("Container pull failed")
         return jsonify({"error": str(e)}), 500
@@ -779,7 +842,6 @@ def pull_container_stream():
         image (required): Docker/OCI image reference (e.g., docker://ubuntu:latest)
         name (optional): Display name for the container
     """
-    import os
     import pty
     import select
 
@@ -788,21 +850,27 @@ def pull_container_stream():
 
     image_ref = request.args.get("image", "").strip()
     if not image_ref:
+
         def err_gen():
             yield "event: error\ndata: Missing 'image' query parameter\n\n"
+
         return Response(err_gen(), mimetype="text/event-stream")
 
     if "://" not in image_ref:
+
         def err_gen():
             yield "event: error\ndata: Invalid image reference. Please include a scheme prefix (e.g., docker://...)\n\n"
+
         return Response(err_gen(), mimetype="text/event-stream")
 
     name = request.args.get("name", "").strip() or Path(image_ref).name
 
     osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
     if not osdf_root:
+
         def err_gen():
             yield "event: error\ndata: OSDF root path is not configured\n\n"
+
         return Response(err_gen(), mimetype="text/event-stream")
 
     containers_dir = Path(osdf_root) / "containers"
@@ -818,10 +886,17 @@ def pull_container_stream():
     #          \x1b[<letter> (single-char sequences like \x1b[K, \x1b[G)
     #          \x1b]<digits>;<digits>...\x1b\\ (OSC sequences)
     #          \x1b[<digits>;<digits>...<letter> (all CSI)
-    ANSI_ESCAPE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\][0-9;]*[a-zA-Z]|\x1b[^[]')
+    ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\][0-9;]*[a-zA-Z]|\x1b[^[]")
 
     def generate():
-        command = ["apptainer", "build", "--ignore-proot", "--force", str(dest_path), image_ref]
+        command = [
+            "apptainer",
+            "build",
+            "--ignore-proot",
+            "--force",
+            str(dest_path),
+            image_ref,
+        ]
         yield f"event: start\ndata: {json.dumps({'filename': unique_name, 'command': ' '.join(command)})}\n\n"
 
         logger.info("Pulling container: %s -> %s", image_ref, dest_path)
@@ -832,9 +907,16 @@ def pull_container_stream():
             env = os.environ.copy()
 
             # Also pick up any APPTAINER_* vars from the process environment
-            for key in ("APPTAINER_TMPDIR", "APPTAINER_CACHEDIR", "APPTAINER_PULLFOLDER",
-                        "APPTAINER_BIND", "APPTAINER_CONTAINALL", "SINGULARITY_TMPDIR",
-                        "SINGULARITY_CACHEDIR", "SINGULARITY_PULLFOLDER"):
+            for key in (
+                "APPTAINER_TMPDIR",
+                "APPTAINER_CACHEDIR",
+                "APPTAINER_PULLFOLDER",
+                "APPTAINER_BIND",
+                "APPTAINER_CONTAINALL",
+                "SINGULARITY_TMPDIR",
+                "SINGULARITY_CACHEDIR",
+                "SINGULARITY_PULLFOLDER",
+            ):
                 val = os.environ.get(key)
                 if val:
                     env[key] = val
@@ -942,7 +1024,10 @@ def upload_container():
     if not original_filename.lower().endswith(".sif"):
         return jsonify({"error": "Only .sif files are accepted"}), 400
 
-    name = request.headers.get("X-Container-Name", "").strip() or Path(original_filename).stem
+    name = (
+        request.headers.get("X-Container-Name", "").strip()
+        or Path(original_filename).stem
+    )
 
     osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
     if not osdf_root:
@@ -951,7 +1036,9 @@ def upload_container():
     containers_dir = str(Path(osdf_root) / "containers")
 
     try:
-        unique_name, size = _save_uploaded_stream(request.stream, containers_dir, original_filename, name=name)
+        unique_name, size = _save_uploaded_stream(
+            request.stream, containers_dir, original_filename, name=name
+        )
 
         container = ContainerImage(
             name=name,
@@ -1044,7 +1131,9 @@ def job_log(cluster_id: int):
     tail = request.args.get("tail", 200, type=int)
     try:
         log_content = get_job_log(cluster_id, proc_id=proc_id, tail=tail)
-        return jsonify({"cluster_id": cluster_id, "proc_id": proc_id, "log": log_content})
+        return jsonify(
+            {"cluster_id": cluster_id, "proc_id": proc_id, "log": log_content}
+        )
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1064,21 +1153,33 @@ def job_files(cluster_id: int, proc_id: int):
             if not file_path or not Path(file_path).exists():
                 return jsonify({"error": f"File not found: {file_type}"}), 404
 
-            filename_map = {"log": f"job_{cluster_id}.log", "out": f"job_{cluster_id}_{proc_id}.out", "err": f"job_{cluster_id}_{proc_id}.err"}
-            return send_file(file_path, as_attachment=True, download_name=filename_map.get(file_type, f"job_{cluster_id}_{proc_id}.txt"))
+            filename_map = {
+                "log": f"job_{cluster_id}.log",
+                "out": f"job_{cluster_id}_{proc_id}.out",
+                "err": f"job_{cluster_id}_{proc_id}.err",
+            }
+            return send_file(
+                file_path,
+                as_attachment=True,
+                download_name=filename_map.get(
+                    file_type, f"job_{cluster_id}_{proc_id}.txt"
+                ),
+            )
 
         log_content = get_job_file_content(paths.get("log", ""), tail=tail)
         stdout_content = get_job_file_content(paths.get("out", ""), tail=tail)
         stderr_content = get_job_file_content(paths.get("err", ""), tail=tail)
 
-        return jsonify({
-            "cluster_id": cluster_id,
-            "proc_id": proc_id,
-            "paths": paths,
-            "log": log_content or "No log content yet or file not found.",
-            "stdout": stdout_content or "No stdout content yet or file not found.",
-            "stderr": stderr_content or "No stderr content yet or file not found.",
-        })
+        return jsonify(
+            {
+                "cluster_id": cluster_id,
+                "proc_id": proc_id,
+                "paths": paths,
+                "log": log_content or "No log content yet or file not found.",
+                "stdout": stdout_content or "No stdout content yet or file not found.",
+                "stderr": stderr_content or "No stderr content yet or file not found.",
+            }
+        )
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1089,7 +1190,9 @@ def job_details(cluster_id: int):
     proc_id = request.args.get("proc", 0, type=int)
     tail = request.args.get("tail", 500, type=int)
     try:
-        jobs = query_jobs(constraint=f"ClusterId == {cluster_id} && ProcId == {proc_id}")
+        jobs = query_jobs(
+            constraint=f"ClusterId == {cluster_id} && ProcId == {proc_id}"
+        )
         if not jobs:
             jobs = query_history(
                 constraint=f"ClusterId == {cluster_id} && ProcId == {proc_id}",
@@ -1113,7 +1216,7 @@ def job_details(cluster_id: int):
                         job["Cmd"] = shell_cmd
                         # Clear Args since the shell command is now the full Cmd
                         job["Args"] = ""
-            except (json.JSONDecodeError, AttributeError):
+            except json.JSONDecodeError, AttributeError:
                 pass
 
         paths = get_job_log_file_paths(cluster_id, proc_id=proc_id)
@@ -1122,16 +1225,18 @@ def job_details(cluster_id: int):
         stdout_content = get_job_file_content(paths.get("out", ""), tail=tail)
         stderr_content = get_job_file_content(paths.get("err", ""), tail=tail)
 
-        return jsonify({
-            "cluster_id": cluster_id,
-            "proc_id": proc_id,
-            "job": job,
-            "submission_name": submission_name,
-            "paths": paths,
-            "log": log_content or "No log content yet or file not found.",
-            "stdout": stdout_content or "No stdout content yet or file not found.",
-            "stderr": stderr_content or "No stderr content yet or file not found."
-        })
+        return jsonify(
+            {
+                "cluster_id": cluster_id,
+                "proc_id": proc_id,
+                "job": job,
+                "submission_name": submission_name,
+                "paths": paths,
+                "log": log_content or "No log content yet or file not found.",
+                "stdout": stdout_content or "No stdout content yet or file not found.",
+                "stderr": stderr_content or "No stderr content yet or file not found.",
+            }
+        )
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1225,7 +1330,9 @@ def qedit_job_route():
     value = data.get("value")
 
     if not cluster_id or not attr or not value:
-        return jsonify({"error": "Missing required fields: cluster_id, attr, value"}), 400
+        return jsonify(
+            {"error": "Missing required fields: cluster_id, attr, value"}
+        ), 400
 
     try:
         result = qedit_job(cluster_id, proc_id, attr, value)
@@ -1338,9 +1445,7 @@ def list_output_files():
         return jsonify({"output_files": [], "count": 0})
 
     # Get all job submissions that have output_dir set
-    submissions = JobSubmission.query.filter(
-        JobSubmission.output_dir.isnot(None)
-    ).all()
+    submissions = JobSubmission.query.filter(JobSubmission.output_dir.isnot(None)).all()
     sub_map = {s.cluster_id: s for s in submissions}
 
     output_files = []
@@ -1356,14 +1461,16 @@ def list_output_files():
             for f in job_output_path.iterdir():
                 if f.is_file():
                     stat = f.stat()
-                    output_files.append({
-                        "filename": f.name,
-                        "path": str(f),
-                        "size": stat.st_size,
-                        "modified_at": stat.st_mtime,
-                        "cluster_id": sub.cluster_id,
-                        "job_name": sub.name,
-                    })
+                    output_files.append(
+                        {
+                            "filename": f.name,
+                            "path": str(f),
+                            "size": stat.st_size,
+                            "modified_at": stat.st_mtime,
+                            "cluster_id": sub.cluster_id,
+                            "job_name": sub.name,
+                        }
+                    )
 
         # Sort by modified_at descending
         output_files.sort(key=lambda x: x.get("modified_at", 0), reverse=True)

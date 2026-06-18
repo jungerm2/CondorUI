@@ -402,6 +402,15 @@ function syncFormToRaw() {
     if (submit.output) rawText += `output = ${submit.output}\n`;
     if (submit.error) rawText += `error = ${submit.error}\n`;
     if (submit.log) rawText += `log = ${submit.log}\n`;
+    if (submit.transfer_output_files) {
+        rawText += `transfer_output_files = ${submit.transfer_output_files}\n`;
+    }
+    if (submit.output_destination) {
+        rawText += `output_destination = ${submit.output_destination}\n`;
+    }
+    if (submit.transfer_output_remaps) {
+        rawText += `transfer_output_remaps = ${submit.transfer_output_remaps}\n`;
+    }
 
     let hasExtras = false;
     $$('.attr-row').forEach(row => {
@@ -432,12 +441,21 @@ function syncRawToForm() {
     selectedFileUris.clear();
 
     lines.forEach(line => {
-        line = line.split('#')[0].trim();
-        if (!line || !line.includes('=')) return;
+        const trimmedLine = line.split('#')[0].trim();
+        if (!trimmedLine) return;
 
-        const eqIdx = line.indexOf('=');
-        const key = line.substring(0, eqIdx).trim().toLowerCase();
-        const val = line.substring(eqIdx + 1).trim();
+        // Handle queue directive separately (e.g., "queue 5")
+        const queueMatch = trimmedLine.match(/^queue\s+(\d+)$/i);
+        if (queueMatch) {
+            $('#job-count').value = queueMatch[1];
+            return;
+        }
+
+        if (!trimmedLine.includes('=')) return;
+
+        const eqIdx = trimmedLine.indexOf('=');
+        const key = trimmedLine.substring(0, eqIdx).trim().toLowerCase();
+        const val = trimmedLine.substring(eqIdx + 1).trim();
 
         switch (key) {
             case 'universe':
@@ -498,13 +516,25 @@ function syncRawToForm() {
             case 'log':
                 $('#job-log').value = val;
                 break;
+            case 'transfer_output_files':
+                $('#job-transfer-output').value = val;
+                break;
+            case 'output_destination':
+                $('#job-output-destination').value = val;
+                break;
+            case 'transfer_output_remaps':
+                // Remaps are stored as semicolon-separated "key = val; key2 = val2"
+                // Convert to newline-separated for the textarea
+                const remapLines = val.split(';').map(s => s.trim()).filter(s => s);
+                $('#job-output-remaps').value = remapLines.join('\n');
+                break;
             default:
                 // Handle as custom ClassAd
                 if (key !== 'queue') {
                     const row = document.createElement('div');
                     row.className = 'attr-row';
                     row.innerHTML = `
-                        <input type="text" value="${escHtml(line.substring(0, eqIdx).trim())}" class="form-input attr-key">
+                        <input type="text" value="${escHtml(trimmedLine.substring(0, eqIdx).trim())}" class="form-input attr-key">
                         <input type="text" value="${escHtml(val)}" class="form-input attr-value">
                         <button class="btn btn-ghost remove-attr-btn" title="Remove">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
@@ -517,11 +547,6 @@ function syncRawToForm() {
                     container.appendChild(row);
                 }
                 break;
-        }
-
-        const queueMatch = line.match(/^queue\s+(\d+)/i);
-        if (queueMatch) {
-            $('#job-count').value = queueMatch[1];
         }
     });
 

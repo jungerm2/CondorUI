@@ -7,8 +7,6 @@ from __future__ import annotations
 
 import getpass
 import logging
-import os
-import socket
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from pathlib import Path
 from typing import Any
@@ -29,13 +27,13 @@ _schedd_executor = ThreadPoolExecutor(max_workers=4)
 
 # --- Attempt to import the HTCondor bindings ---
 try:
-    import htcondor2 as htcondor
     import classad2 as classad  # noqa: F401
+    import htcondor2 as htcondor
 
     logger.info("Using htcondor2 (v2 API)")
 except ImportError:
-    import htcondor  # type: ignore[no-redef]
     import classad  # type: ignore[no-redef]  # noqa: F401
+    import htcondor  # type: ignore[no-redef]
 
     logger.info("Using htcondor (v1 API)")
 
@@ -255,6 +253,7 @@ def query_history(
 
     schedd = get_schedd()
     try:
+
         def _do_history():
             return schedd.history(
                 constraint=constraint,
@@ -366,7 +365,9 @@ def submit_job(
     return cluster_id
 
 
-def submit_from_file(file_content: str, log_dir: str | None = None, output_dir: str | None = None) -> tuple[int, int]:
+def submit_from_file(
+    file_content: str, log_dir: str | None = None, output_dir: str | None = None
+) -> tuple[int, int]:
     """Submit a job from raw submit file content.
 
     Args:
@@ -387,9 +388,7 @@ def submit_from_file(file_content: str, log_dir: str | None = None, output_dir: 
     result = schedd.submit(sub)
     cluster_id = result.cluster()
     num_procs = result.num_procs()
-    logger.info(
-        "Submitted cluster %d (%d procs) from file", cluster_id, num_procs
-    )
+    logger.info("Submitted cluster %d (%d procs) from file", cluster_id, num_procs)
 
     # Invalidate cache so subsequent queries see the new job immediately
     clear_cache()
@@ -492,6 +491,7 @@ def get_job_log_file_paths(cluster_id: int, proc_id: int = 0) -> dict[str, str]:
     # Try database first — lazy import to avoid circular dependency at module level
     try:
         from app.models import JobSubmission as _JobSubmission
+
         submission = _JobSubmission.query.filter_by(cluster_id=cluster_id).first()
         if submission and submission.log_dir:
             log_dir = submission.log_dir
