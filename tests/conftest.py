@@ -1,5 +1,3 @@
-"""Pytest fixtures for Condor Web UI tests."""
-
 import socket
 import tempfile
 import threading

@@ -18,7 +18,7 @@
 
         <!-- Form Builder Mode -->
         <div class="submit-mode active" id="mode-form">
-            <div class="form-grid">
+            <div class="form-grid" style="grid-template-columns: 1fr;">
                 <div class="card">
                     <div class="card-header">
                         <h2>Job Description</h2>
@@ -84,23 +84,64 @@
 
                 <div class="card">
                     <div class="card-header">
-                        <h2>Resources & Output</h2>
+                        <h2>Resources</h2>
                     </div>
                     <div class="card-body">
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="job-cpus">CPUs</label>
-                                <input type="number" id="job-cpus" value="1" min="1" class="form-input">
-                            </div>
-                            <div class="form-group">
-                                <label for="job-memory">Memory</label>
-                                <input type="text" id="job-memory" value="1 GB" class="form-input">
-                            </div>
-                            <div class="form-group">
-                                <label for="job-disk">Disk</label>
-                                <input type="text" id="job-disk" value="1 GB" class="form-input">
-                            </div>
+                        <div class="form-group">
+                            <label for="job-cpus">CPUs</label>
+                            <input type="number" id="job-cpus" value="1" min="1" class="form-input">
                         </div>
+                        <div class="form-group">
+                            <label for="job-memory">Memory</label>
+                            <input type="text" id="job-memory" value="1 GB" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label for="job-disk">Disk</label>
+                            <input type="text" id="job-disk" value="1 GB" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label for="job-gpus">
+                                Request GPUs
+                                <span class="info-icon" data-tip="Number of GPUs requested for this job. See: request_gpus in condor_submit">?</span>
+                            </label>
+                            <input type="number" id="job-gpus" value="0" min="0" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label for="job-gpu-min-capability">
+                                GPU Min Capability
+                                <span class="info-icon" data-tip="Minimum GPU capability version (e.g., 8.5). See: gpus_minimum_capability in condor_submit">?</span>
+                            </label>
+                            <input type="text" id="job-gpu-min-capability" placeholder="e.g. 8.5" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label for="job-gpu-min-memory">
+                                GPU Min Memory
+                                <span class="info-icon" data-tip="Minimum GPU memory (e.g., 4 GB). See: gpus_minimum_memory in condor_submit">?</span>
+                            </label>
+                            <input type="text" id="job-gpu-min-memory" placeholder="e.g. 4 GB" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label for="job-gpu-min-runtime">
+                                GPU Min Runtime
+                                <span class="info-icon" data-tip="Minimum GPU runtime version (e.g., 9.1). See: gpus_minimum_runtime in condor_submit">?</span>
+                            </label>
+                            <input type="text" id="job-gpu-min-runtime" placeholder="e.g. 9.1" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label for="job-cuda-version">
+                                CUDA Version
+                                <span class="info-icon" data-tip="CUDA runtime version required (e.g., 9.1). See: cuda_version in condor_submit">?</span>
+                            </label>
+                            <input type="text" id="job-cuda-version" placeholder="e.g. 9.1" class="form-input">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 16px;">
+                    <div class="card-header">
+                        <h2>Output</h2>
+                    </div>
+                    <div class="card-body">
                         <div class="form-group">
                             <label for="job-output">Output File</label>
                             <input type="text" id="job-output" value="$(LogsDir)/job_$(ClusterId)_$(ProcId).out"
@@ -124,11 +165,11 @@
                             <input type="text" id="job-transfer-output" placeholder="output.dat, results.tar.gz" class="form-input">
                         </div>
                         <div class="form-group">
-                            <label for="job-output-destination">
-                                Output Destination
-                                <span class="info-icon" data-tip="Where output files are transferred. Use $(OutputsDir) (per-job dir), osdf:///, or file:///staging/ for large outputs. Leave empty to use the default working directory.">?</span>
+                            <label for="job-output-directory">
+                                Output Directory
+                                <span class="info-icon" data-tip="All output files from 'Transfer Output Files' go to this directory (not logs/stdout/stderr). Use $(OutputsDir) (per-job dir), osdf:///, or file:///staging/ for large outputs.">?</span>
                             </label>
-                            <input type="text" id="job-output-destination" value="$(OutputsDir)" class="form-input">
+                            <input type="text" id="job-output-directory" value="$(OutputsDir)" class="form-input">
                         </div>
                         <div class="form-group">
                             <label for="job-output-remaps">
@@ -212,7 +253,7 @@
                     </table>
                     <p style="color: var(--text-muted); font-size: 0.82rem; margin-top: 12px;">
                         Example: <code>output = $(OutputsDir)/$(ClusterId).out</code> writes output to a per-job directory.
-                        See the <a href="https://htcondor.org/manual/" target="_blank" style="color: var(--accent-cyan);">HTCondor Manual</a> for more submit file options.
+                        See the <a href="https://htcondor.readthedocs.io/en/latest/man-pages/condor_submit.html#submit-variables" target="_blank" style="color: var(--accent-cyan);">HTCondor Manual</a> for more submit file options.
                     </p>
                 </div>
             </details>

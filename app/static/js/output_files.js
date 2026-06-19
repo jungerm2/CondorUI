@@ -3,26 +3,8 @@
 let currentOutputFiles = [];
 let selectedFileIds = new Set();
 
-// Format file size
-function formatFileSize(bytes) {
-    if (!bytes && bytes !== 0) return '—';
-    if (bytes === 0) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB'];
-    let i = 0;
-    let size = bytes;
-    while (size >= 1024 && i < units.length - 1) {
-        size /= 1024;
-        i++;
-    }
-    return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
-}
-
-// Format date
-function formatDate(ts) {
-    if (!ts) return '—';
-    const d = new Date(ts * 1000);
-    return d.toLocaleString();
-}
+// formatFileSize and formatDate are now defined in common.js
+// These duplicates have been removed; use the shared versions instead.
 
 // Load output files from API
 async function loadOutputFiles() {

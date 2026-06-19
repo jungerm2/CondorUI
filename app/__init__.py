@@ -4,8 +4,22 @@ import os
 
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
 
 db = SQLAlchemy()
+
+
+@event.listens_for(Engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.execute("PRAGMA journal_size_limit=67108864")  # 64mb
+    cursor.execute("PRAGMA mmap_size=134217728")  # 128mb
+    cursor.execute("PRAGMA cache_size=2000")
+    cursor.execute("PRAGMA busy_timeout=5000")
+    cursor.close()
 
 
 def create_app(config_override: dict | None = None) -> Flask:

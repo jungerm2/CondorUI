@@ -135,18 +135,8 @@ async function loadServerFiles() {
     });
 }
 
-function formatFileSize(bytes) {
-    if (!bytes && bytes !== 0) return '—';
-    if (bytes === 0) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB'];
-    let i = 0;
-    let size = bytes;
-    while (size >= 1024 && i < units.length - 1) {
-        size /= 1024;
-        i++;
-    }
-    return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
-}
+// formatFileSize is now defined in common.js
+// This duplicate has been removed; use the shared version instead.
 
 // Update the transfer_input_files text field with selected file URIs
 function updateTransferInputField() {
@@ -243,6 +233,20 @@ function buildSubmitDict() {
     d.request_memory = $('#job-memory').value;
     d.request_disk = $('#job-disk').value;
 
+    // GPU / CUDA fields
+    const gpus = parseInt($('#job-gpus').value) || 0;
+    if (gpus > 0) {
+        d.request_gpus = gpus;
+    }
+    const gpuMinCap = $('#job-gpu-min-capability').value.trim();
+    if (gpuMinCap) d.gpus_minimum_capability = gpuMinCap;
+    const gpuMinMem = $('#job-gpu-min-memory').value.trim();
+    if (gpuMinMem) d.gpus_minimum_memory = gpuMinMem;
+    const gpuMinRuntime = $('#job-gpu-min-runtime').value.trim();
+    if (gpuMinRuntime) d.gpus_minimum_runtime = gpuMinRuntime;
+    const cudaVer = $('#job-cuda-version').value.trim();
+    if (cudaVer) d.cuda_version = cudaVer;
+
     const output = $('#job-output').value.trim();
     if (output) d.output = output;
     const error = $('#job-error').value.trim();
@@ -256,9 +260,9 @@ function buildSubmitDict() {
         d.transfer_output_files = transferOutput;
     }
 
-    const outputDestination = $('#job-output-destination').value.trim();
-    if (outputDestination) {
-        d.output_destination = outputDestination;
+    const outputDirectory = $('#job-output-directory').value.trim();
+    if (outputDirectory) {
+        d.output_directory = outputDirectory;
     }
 
     const outputRemaps = $('#job-output-remaps').value.trim();
@@ -320,7 +324,7 @@ async function submitFormJob() {
 
 async function submitRawJob() {
     const name = $('#raw-job-name').value.trim() || 'Raw Submit';
-    const content = $('#raw-submit-editor').value.trim();
+    const content = $('#raw-submit-editor').value;
 
     if (!content) {
         toast('Submit description cannot be empty', 'warning');
@@ -397,6 +401,21 @@ function syncFormToRaw() {
     rawText += `request_cpus = ${submit.request_cpus || '1'}\n`;
     rawText += `request_memory = ${submit.request_memory || '1 GB'}\n`;
     rawText += `request_disk = ${submit.request_disk || '1 GB'}\n`;
+    if (submit.request_gpus) {
+        rawText += `request_gpus = ${submit.request_gpus}\n`;
+    }
+    if (submit.gpus_minimum_capability) {
+        rawText += `gpus_minimum_capability = ${submit.gpus_minimum_capability}\n`;
+    }
+    if (submit.gpus_minimum_memory) {
+        rawText += `gpus_minimum_memory = ${submit.gpus_minimum_memory}\n`;
+    }
+    if (submit.gpus_minimum_runtime) {
+        rawText += `gpus_minimum_runtime = ${submit.gpus_minimum_runtime}\n`;
+    }
+    if (submit.cuda_version) {
+        rawText += `cuda_version = ${submit.cuda_version}\n`;
+    }
 
     rawText += `\n# Output & Logs\n`;
     if (submit.output) rawText += `output = ${submit.output}\n`;
@@ -405,8 +424,8 @@ function syncFormToRaw() {
     if (submit.transfer_output_files) {
         rawText += `transfer_output_files = ${submit.transfer_output_files}\n`;
     }
-    if (submit.output_destination) {
-        rawText += `output_destination = ${submit.output_destination}\n`;
+    if (submit.output_directory) {
+        rawText += `output_directory = ${submit.output_directory}\n`;
     }
     if (submit.transfer_output_remaps) {
         rawText += `transfer_output_remaps = ${submit.transfer_output_remaps}\n`;
@@ -507,6 +526,21 @@ function syncRawToForm() {
             case 'request_disk':
                 $('#job-disk').value = val;
                 break;
+            case 'request_gpus':
+                $('#job-gpus').value = val;
+                break;
+            case 'gpus_minimum_capability':
+                $('#job-gpu-min-capability').value = val;
+                break;
+            case 'gpus_minimum_memory':
+                $('#job-gpu-min-memory').value = val;
+                break;
+            case 'gpus_minimum_runtime':
+                $('#job-gpu-min-runtime').value = val;
+                break;
+            case 'cuda_version':
+                $('#job-cuda-version').value = val;
+                break;
             case 'output':
                 $('#job-output').value = val;
                 break;
@@ -519,8 +553,8 @@ function syncRawToForm() {
             case 'transfer_output_files':
                 $('#job-transfer-output').value = val;
                 break;
-            case 'output_destination':
-                $('#job-output-destination').value = val;
+            case 'output_directory':
+                $('#job-output-directory').value = val;
                 break;
             case 'transfer_output_remaps':
                 // Remaps are stored as semicolon-separated "key = val; key2 = val2"

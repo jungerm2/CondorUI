@@ -31,26 +31,8 @@ function initModals() {
     });
 }
 
-// Format file size
-function formatFileSize(bytes) {
-    if (!bytes && bytes !== 0) return '—';
-    if (bytes === 0) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB'];
-    let i = 0;
-    let size = bytes;
-    while (size >= 1024 && i < units.length - 1) {
-        size /= 1024;
-        i++;
-    }
-    return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
-}
-
-// Format date
-function formatDate(isoStr) {
-    if (!isoStr) return '—';
-    const d = new Date(isoStr);
-    return d.toLocaleString();
-}
+// formatFileSize and formatDateIso are now defined in common.js
+// These duplicates have been removed; use the shared versions instead.
 
 // Load files from API
 async function loadFiles() {
@@ -134,7 +116,7 @@ function renderFiles() {
             <td class="monospace">${escHtml(f.filename)}</td>
             <td class="monospace">${escHtml(f.original_name)}</td>
             <td>${formatFileSize(f.size)}</td>
-            <td>${formatDate(f.uploaded_at)}</td>
+            <td>${formatDateIso(f.uploaded_at)}</td>
             <td><span class="badge ${locationClass}">${locationLabel}</span></td>
         `;
         tbody.appendChild(tr);

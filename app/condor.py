@@ -6,6 +6,7 @@ Tries to import htcondor2 (v25.x+) first, then falls back to htcondor (v1 API).
 from __future__ import annotations
 
 import getpass
+import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from pathlib import Path
@@ -184,6 +185,17 @@ def _run_with_timeout(func, timeout: int = SCHEDD_QUERY_TIMEOUT):
         raise
 
 
+def _process_classad_list(ads: list) -> list[dict[str, Any]]:
+    """Convert a list of ClassAd objects to plain dicts with human-readable status."""
+    jobs = []
+    for ad in ads:
+        d = _classad_to_dict(ad)
+        status_code = d.get("JobStatus")
+        d["JobStatusName"] = JOB_STATUS_MAP.get(status_code, f"Unknown({status_code})")
+        jobs.append(d)
+    return jobs
+
+
 def query_jobs(
     constraint: str = DEFAULT_CONSTRAINT,
     projection: list[str] | None = None,
@@ -214,13 +226,7 @@ def query_jobs(
         return schedd.query(constraint=constraint, projection=proj)
 
     ads = _run_with_timeout(_do_query)
-    jobs = []
-    for ad in ads:
-        d = _classad_to_dict(ad)
-        # Add human-readable status
-        status_code = d.get("JobStatus")
-        d["JobStatusName"] = JOB_STATUS_MAP.get(status_code, f"Unknown({status_code})")
-        jobs.append(d)
+    jobs = _process_classad_list(ads)
 
     _query_cache[key] = jobs
     return jobs
@@ -262,14 +268,7 @@ def query_history(
             )
 
         ads = _run_with_timeout(_do_history)
-        jobs = []
-        for ad in ads:
-            d = _classad_to_dict(ad)
-            status_code = d.get("JobStatus")
-            d["JobStatusName"] = JOB_STATUS_MAP.get(
-                status_code, f"Unknown({status_code})"
-            )
-            jobs.append(d)
+        jobs = _process_classad_list(ads)
 
         _history_cache[key] = jobs
         return jobs
@@ -328,67 +327,111 @@ def submit_job(
     submit_dict: dict[str, str],
     count: int = 1,
     itemdata: list[dict[str, str]] | None = None,
-    log_dir: str | None = None,
-    output_dir: str | None = None,
-) -> int:
+    name: str = "Untitled Job",
+) -> tuple[int, int]:
     """Submit a job to the local schedd.
+
+    Creates per-job log/output directories (via :func:`create_job_directories`)
+    and sets ``LogsDir`` / ``OutputsDir`` on the submit description.  Also
+    creates a :class:`JobSubmission` record in the local database.
 
     Args:
         submit_dict: Dictionary of submit description key-value pairs.
         count: Number of procs to queue.
         itemdata: Optional list of dicts for queue-from-list (each dict
                   is a set of variable assignments for one proc).
-        log_dir: Optional path to a directory where logs, stdout, and stderr will be stored.
-        output_dir: Optional path to a directory where output files will be stored.
+        name: Display name for the submission record.
 
     Returns:
-        The ClusterId of the submitted job.
+        Tuple of (cluster_id, num_procs).
     """
+    from app.utils import create_job_directories
+
+    log_dir, output_dir = create_job_directories()
+
     sub_dict = dict(submit_dict)
-    if log_dir:
-        sub_dict["LogsDir"] = log_dir
-    if output_dir:
-        sub_dict["OutputsDir"] = output_dir
+    sub_dict["LogsDir"] = str(log_dir)
+    sub_dict["OutputsDir"] = str(output_dir)
 
     sub = htcondor.Submit(sub_dict)
     schedd = get_schedd()
     if itemdata:
         result = schedd.submit(sub, itemdata=iter(itemdata))
+        num_procs = len(itemdata)
     else:
         result = schedd.submit(sub, count=count)
+        num_procs = count
     cluster_id = result.cluster()
-    logger.info("Submitted cluster %d (%d procs)", cluster_id, count)
+    logger.info("Submitted cluster %d (%d procs)", cluster_id, num_procs)
+
+    # Create the database record with the actual paths
+    from app import db
+    from app.models import JobSubmission
+
+    submission = JobSubmission(
+        cluster_id=cluster_id,
+        name=name,
+        submit_description=json.dumps(submit_dict)
+        if isinstance(submit_dict, dict)
+        else submit_dict,
+        num_procs=num_procs,
+        log_dir=str(log_dir),
+        output_dir=str(output_dir),
+    )
+    db.session.add(submission)
+    db.session.commit()
 
     # Invalidate cache so subsequent queries see the new job immediately
     clear_cache()
 
-    return cluster_id
+    return cluster_id, num_procs
 
 
 def submit_from_file(
-    file_content: str, log_dir: str | None = None, output_dir: str | None = None
+    file_content: str,
+    name: str = "Untitled Job",
 ) -> tuple[int, int]:
     """Submit a job from raw submit file content.
 
+    Creates per-job log/output directories (via :func:`create_job_directories`)
+    and sets ``LogsDir`` / ``OutputsDir`` on the submit description.  Also
+    creates a :class:`JobSubmission` record in the local database.
+
     Args:
         file_content: The text content of a .sub file.
-        log_dir: Optional path to a directory where logs, stdout, and stderr will be stored.
-        output_dir: Optional path to a directory where output files will be stored.
+        name: Display name for the submission record.
 
     Returns:
         Tuple of (cluster_id, num_procs).
     """
+    from app.utils import create_job_directories
+
+    log_dir, output_dir = create_job_directories()
+
     sub = htcondor.Submit(file_content)
-    if log_dir:
-        sub["LogsDir"] = log_dir
-    if output_dir:
-        sub["OutputsDir"] = output_dir
+    sub["LogsDir"] = str(log_dir)
+    sub["OutputsDir"] = str(output_dir)
 
     schedd = get_schedd()
     result = schedd.submit(sub)
     cluster_id = result.cluster()
     num_procs = result.num_procs()
     logger.info("Submitted cluster %d (%d procs) from file", cluster_id, num_procs)
+
+    # Create the database record with the actual paths
+    from app import db
+    from app.models import JobSubmission
+
+    submission = JobSubmission(
+        cluster_id=cluster_id,
+        name=name,
+        submit_description=file_content,
+        num_procs=num_procs,
+        log_dir=str(log_dir),
+        output_dir=str(output_dir),
+    )
+    db.session.add(submission)
+    db.session.commit()
 
     # Invalidate cache so subsequent queries see the new job immediately
     clear_cache()

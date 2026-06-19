@@ -30,26 +30,8 @@ function initModals() {
     });
 }
 
-// Format file size
-function formatFileSize(bytes) {
-    if (!bytes && bytes !== 0) return '—';
-    if (bytes === 0) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB'];
-    let i = 0;
-    let size = bytes;
-    while (size >= 1024 && i < units.length - 1) {
-        size /= 1024;
-        i++;
-    }
-    return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
-}
-
-// Format date
-function formatDate(isoStr) {
-    if (!isoStr) return '—';
-    const d = new Date(isoStr);
-    return d.toLocaleString();
-}
+// formatFileSize and formatDateIso are now defined in common.js
+// These duplicates have been removed; use the shared versions instead.
 
 // Check if OSDF is configured
 async function checkOsdfConfig() {
@@ -150,7 +132,7 @@ function renderContainers() {
             <td class="monospace" style="font-weight: 500;">${escHtml(c.name)}</td>
             <td class="monospace" style="font-size: 0.82rem; max-width: 200px; overflow: hidden; text-overflow: ellipsis;" title="${escHtml(c.source || '')}">${escHtml(sourceLabel)}</td>
             <td>${formatFileSize(c.size)}</td>
-            <td>${formatDate(c.created_at)}</td>
+            <td>${formatDateIso(c.created_at)}</td>
             <td class="monospace" style="font-size: 0.8rem; max-width: 250px; overflow: hidden; text-overflow: ellipsis;" title="${escHtml(c.uri)}">${escHtml(c.uri)}</td>
             <td>
                 <div class="action-btns">

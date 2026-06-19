@@ -77,6 +77,34 @@ function formatDate(timestamp) {
     return date.toLocaleString();
 }
 
+/**
+ * Format a date from an ISO string (e.g., from the API).
+ * Falls back to formatDate(timestamp) if not an ISO string.
+ */
+function formatDateIso(isoStr) {
+    if (!isoStr) return '—';
+    const d = new Date(isoStr);
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleString();
+}
+
+/**
+ * Format a file size in bytes to a human-readable string.
+ * Alias for formatBytes() that takes the value directly.
+ */
+function formatFileSize(bytes) {
+    if (!bytes && bytes !== 0) return '—';
+    if (bytes === 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let i = 0;
+    let size = bytes;
+    while (size >= 1024 && i < units.length - 1) {
+        size /= 1024;
+        i++;
+    }
+    return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
 function formatDuration(seconds) {
     if (!seconds && seconds !== 0) return '—';
     if (seconds === 0) return '—';

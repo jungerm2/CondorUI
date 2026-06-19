@@ -442,20 +442,14 @@ async function loadSubmitFileContent(data) {
         const submission = (submissions.submissions || []).find(s => s.cluster_id === clusterId);
         if (submission && submission.submit_description) {
             let content = submission.submit_description;
-            // If it's a JSON object (from form builder), format it nicely
+            // If it's a JSON object (from form builder), show the raw JSON
+            // (preserves comments and whitespace from the original submission)
             if (content.trim().startsWith('{')) {
                 try {
                     const parsed = JSON.parse(content);
-                    // Convert the submit dict to a .sub file format for display
-                    let lines = [];
-                    for (const [key, val] of Object.entries(parsed)) {
-                        if (key === 'arguments' && parsed.shell) {
-                            // Arguments are embedded in the shell command for shell submissions
-                            continue;
-                        }
-                        lines.push(`${key} = ${val}`);
-                    }
-                    content = lines.join('\n');
+                    // Show the raw JSON string (formatted) rather than reconstructing
+                    // the .sub file, which would lose comments and whitespace
+                    content = JSON.stringify(parsed, null, 2);
                 } catch {
                     // Not JSON, show as-is (raw submit file content)
                 }

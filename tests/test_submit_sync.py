@@ -70,8 +70,8 @@ class TestFormToRawSync:
 
         assert "transfer_output_files = output.dat, results.tar.gz" in raw
 
-    def test_output_destination(self, page, live_server):
-        """Set output_destination and verify it appears in raw editor."""
+    def test_output_directory(self, page, live_server):
+        """Set output_directory and verify it appears in raw editor."""
         page.goto(f"{live_server}/submit")
         page.wait_for_selector("#mode-form.submit-mode.active")
 
@@ -79,14 +79,14 @@ class TestFormToRawSync:
             page,
             {
                 "job-executable": "/bin/sleep",
-                "job-output-destination": "osdf:///chtc/staging/u/user/output",
+                "job-output-directory": "osdf:///chtc/staging/u/user/output",
             },
         )
 
         switch_to_raw_mode(page)
         raw = get_raw_editor_text(page)
 
-        assert "output_destination = osdf:///chtc/staging/u/user/output" in raw
+        assert "output_directory = osdf:///chtc/staging/u/user/output" in raw
 
     def test_output_remaps(self, page, live_server):
         """Set output remaps and verify they appear in raw editor."""
@@ -261,6 +261,49 @@ class TestFormToRawSync:
 
         assert raw.strip().endswith("queue 5")
 
+    def test_gpu_request(self, page, live_server):
+        """Set request_gpus and verify it appears in raw editor."""
+        page.goto(f"{live_server}/submit")
+        page.wait_for_selector("#mode-form.submit-mode.active")
+
+        fill_form(
+            page,
+            {
+                "job-executable": "/bin/sleep",
+                "job-gpus": "2",
+                "job-gpu-min-capability": "8.5",
+                "job-gpu-min-memory": "4 GB",
+                "job-gpu-min-runtime": "9.1",
+                "job-cuda-version": "11.0",
+            },
+        )
+
+        switch_to_raw_mode(page)
+        raw = get_raw_editor_text(page)
+
+        assert "request_gpus = 2" in raw
+        assert "gpus_minimum_capability = 8.5" in raw
+        assert "gpus_minimum_memory = 4 GB" in raw
+        assert "gpus_minimum_runtime = 9.1" in raw
+        assert "cuda_version = 11.0" in raw
+
+    def test_gpu_default_zero_not_in_raw(self, page, live_server):
+        """GPU default is 0 — verify it does NOT appear in raw editor."""
+        page.goto(f"{live_server}/submit")
+        page.wait_for_selector("#mode-form.submit-mode.active")
+
+        fill_form(
+            page,
+            {
+                "job-executable": "/bin/sleep",
+            },
+        )
+
+        switch_to_raw_mode(page)
+        raw = get_raw_editor_text(page)
+
+        assert "request_gpus" not in raw
+
 
 # =============================================================================
 # Tests: Raw Editor → Form (syncRawToForm)
@@ -289,8 +332,8 @@ class TestRawToFormSync:
 
         assert page.input_value("#job-transfer-output") == "output.dat, results.tar.gz"
 
-    def test_output_destination_parsing(self, page, live_server):
-        """Write a submit file with output_destination and verify form field."""
+    def test_output_directory_parsing(self, page, live_server):
+        """Write a submit file with output_directory and verify form field."""
         page.goto(f"{live_server}/submit")
         page.wait_for_selector("#mode-form.submit-mode.active")
 
@@ -299,7 +342,7 @@ class TestRawToFormSync:
         submit_content = textwrap.dedent("""\
             universe = vanilla
             executable = /bin/sleep
-            output_destination = osdf:///chtc/staging/u/user/output
+            output_directory = osdf:///chtc/staging/u/user/output
             request_cpus = 1
             queue 1
         """)
@@ -307,7 +350,7 @@ class TestRawToFormSync:
         switch_to_form_mode(page)
 
         assert (
-            page.input_value("#job-output-destination")
+            page.input_value("#job-output-directory")
             == "osdf:///chtc/staging/u/user/output"
         )
 
@@ -499,6 +542,33 @@ class TestRawToFormSync:
 
         assert page.input_value("#job-transfer-input") == "file1.txt, file2.txt"
 
+    def test_gpu_fields_parsing(self, page, live_server):
+        """Write a submit file with GPU/CUDA fields and verify form values."""
+        page.goto(f"{live_server}/submit")
+        page.wait_for_selector("#mode-form.submit-mode.active")
+
+        switch_to_raw_mode(page)
+
+        submit_content = textwrap.dedent("""\
+            universe = vanilla
+            executable = /bin/sleep
+            request_cpus = 1
+            request_gpus = 2
+            gpus_minimum_capability = 8.5
+            gpus_minimum_memory = 4 GB
+            gpus_minimum_runtime = 9.1
+            cuda_version = 11.0
+            queue 1
+        """)
+        set_raw_editor_text(page, submit_content)
+        switch_to_form_mode(page)
+
+        assert page.input_value("#job-gpus") == "2"
+        assert page.input_value("#job-gpu-min-capability") == "8.5"
+        assert page.input_value("#job-gpu-min-memory") == "4 GB"
+        assert page.input_value("#job-gpu-min-runtime") == "9.1"
+        assert page.input_value("#job-cuda-version") == "11.0"
+
 
 # =============================================================================
 # Tests: Round-trip consistency
@@ -562,7 +632,7 @@ class TestRoundTripSync:
             {
                 "job-executable": "/bin/sleep",
                 "job-transfer-output": "output.dat, results.tar.gz",
-                "job-output-destination": "osdf:///chtc/staging/u/user/output",
+                "job-output-directory": "osdf:///chtc/staging/u/user/output",
             },
         )
 
@@ -576,7 +646,7 @@ class TestRoundTripSync:
         raw = get_raw_editor_text(page)
 
         assert "transfer_output_files = output.dat, results.tar.gz" in raw
-        assert "output_destination = osdf:///chtc/staging/u/user/output" in raw
+        assert "output_directory = osdf:///chtc/staging/u/user/output" in raw
         assert (
             "transfer_output_remaps = output.dat = osdf:///chtc/staging/u/user/output.dat"
             in raw
@@ -587,7 +657,7 @@ class TestRoundTripSync:
 
         assert page.input_value("#job-transfer-output") == "output.dat, results.tar.gz"
         assert (
-            page.input_value("#job-output-destination")
+            page.input_value("#job-output-directory")
             == "osdf:///chtc/staging/u/user/output"
         )
         remaps = page.input_value("#job-output-remaps")
@@ -636,3 +706,39 @@ class TestRoundTripSync:
         assert "request_disk = 4 GB" in final_raw
         # Queue is now parsed from raw -> form, so it preserves the value
         assert "queue 3" in final_raw
+
+    def test_gpu_round_trip_consistency(self, page, live_server):
+        """Fill form with GPU fields -> sync to raw -> sync back to form; verify values preserved."""
+        page.goto(f"{live_server}/submit")
+        page.wait_for_selector("#mode-form.submit-mode.active")
+
+        fill_form(
+            page,
+            {
+                "job-executable": "/bin/sleep",
+                "job-gpus": "2",
+                "job-gpu-min-capability": "8.5",
+                "job-gpu-min-memory": "4 GB",
+                "job-gpu-min-runtime": "9.1",
+                "job-cuda-version": "11.0",
+            },
+        )
+
+        # Sync to raw
+        switch_to_raw_mode(page)
+        raw = get_raw_editor_text(page)
+
+        assert "request_gpus = 2" in raw
+        assert "gpus_minimum_capability = 8.5" in raw
+        assert "gpus_minimum_memory = 4 GB" in raw
+        assert "gpus_minimum_runtime = 9.1" in raw
+        assert "cuda_version = 11.0" in raw
+
+        # Sync back to form
+        switch_to_form_mode(page)
+
+        assert page.input_value("#job-gpus") == "2"
+        assert page.input_value("#job-gpu-min-capability") == "8.5"
+        assert page.input_value("#job-gpu-min-memory") == "4 GB"
+        assert page.input_value("#job-gpu-min-runtime") == "9.1"
+        assert page.input_value("#job-cuda-version") == "11.0"

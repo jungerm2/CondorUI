@@ -22,7 +22,6 @@ from app.condor import (
     get_job_file_content,
     get_job_log,
     get_job_log_file_paths,
-    get_job_status_counts,
     qedit_job,
     query_history,
     query_jobs,
@@ -30,75 +29,35 @@ from app.condor import (
     submit_job,
 )
 from app.models import ContainerImage, JobSubmission, SubmitTemplate, UploadedFile
+from app.utils import (
+    resolve_shell_commands,
+    save_uploaded_stream,
+)
 
 logger = logging.getLogger(__name__)
 api_bp = Blueprint("api", __name__, url_prefix="/api")
 
 
-def _save_uploaded_stream(stream, dest_dir, original_filename, name=None):
-    """Stream a raw uploaded file to disk with a unique name.
-
-    Args:
-        stream: A file-like object to read from (e.g. request.stream).
-        dest_dir: Directory to save the file into.
-        original_filename: The original filename for extension detection.
-        name: Optional display name (used for the safe filename base).
-              Falls back to original filename without extension.
-
-    Returns:
-        (unique_name, size) tuple.
-    """
-    dest_path_obj = Path(dest_dir)
-    dest_path_obj.mkdir(parents=True, exist_ok=True)
-    display_name = name or Path(original_filename).stem
-    safe_name = "".join(
-        c if c.isalnum() or c in "._-" else "_" for c in display_name.lower()
-    )
-    ext = Path(original_filename).suffix
-    unique_name = f"{uuid.uuid4().hex}_{safe_name}{ext}"
-
-    dest_path = dest_path_obj / unique_name
-    with open(dest_path, "wb") as f:
-        shutil.copyfileobj(stream, f, length=1024 * 1024)
-
-    size = dest_path.stat().st_size
-    return unique_name, size
+# These functions are now imported from app.utils
+# _save_uploaded_stream → save_uploaded_stream
+# _resolve_shell_commands → resolve_shell_commands
 
 
-def _resolve_shell_commands(jobs: list[dict]) -> None:
-    """Resolve /bin/sh commands to the original shell command from the DB.
+def _resolve_path(path: str) -> str:
+    """Resolve a path to an absolute, normalized string."""
+    return str(Path(path).resolve())
 
-    For any job in the list with Cmd == "/bin/sh", look up the submission
-    record in the local database and replace Cmd with the original shell
-    command (e.g., "ls -al") stored in the submit_description.
 
-    Modifies the list in-place.
-    """
-    shell_job_ids = [j.get("ClusterId") for j in jobs if j.get("Cmd") == "/bin/sh"]
-    if not shell_job_ids:
-        return
-
-    submissions = JobSubmission.query.filter(
-        JobSubmission.cluster_id.in_(shell_job_ids)
-    ).all()
-    sub_map = {s.cluster_id: s for s in submissions}
-
-    for job in jobs:
-        if job.get("Cmd") != "/bin/sh":
-            continue
-        sub = sub_map.get(job.get("ClusterId"))
-        if not sub:
-            continue
+def _remove_empty_parents(path: Path) -> None:
+    """Remove empty ancestor directories, stopping at the first non-empty one."""
+    for parent in [path, *path.parents]:
         try:
-            desc = sub.submit_description
-            if desc and desc.strip().startswith("{"):
-                parsed = json.loads(desc)
-                shell_cmd = parsed.get("shell", "")
-                if shell_cmd:
-                    job["Cmd"] = shell_cmd
-                    job["Args"] = ""
-        except json.JSONDecodeError, AttributeError:
-            pass
+            if parent.exists() and not any(parent.iterdir()):
+                parent.rmdir()
+            else:
+                break
+        except OSError, PermissionError:
+            break
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +134,7 @@ def list_jobs():
 
         # Resolve shell commands (/bin/sh) to the original shell command
         # from the submission record in the local database.
-        _resolve_shell_commands(paginated)
+        resolve_shell_commands(paginated)
 
         return jsonify(
             {
@@ -401,20 +360,6 @@ def list_history():
         return jsonify({"error": str(e)}), 500
 
 
-@api_bp.route("/stats")
-def get_stats():
-    """Get aggregate job status counts."""
-    if not daemon_available():
-        return jsonify(
-            {"daemon_unavailable": True, "message": "HTCondor daemon is not available."}
-        )
-    try:
-        counts = get_job_status_counts()
-        return jsonify(counts)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
 # ---------------------------------------------------------------------------
 # Job submission
 # ---------------------------------------------------------------------------
@@ -433,43 +378,15 @@ def submit():
     name = data.get("name", "Untitled Job")
 
     try:
-        import uuid
-
-        job_uuid = f"job_{uuid.uuid4().hex}"
-        log_dir_path = Path(current_app.config["JOB_LOGS_DIR"]) / job_uuid
-        log_dir_path.mkdir(parents=True, exist_ok=True)
-        log_dir = str(log_dir_path)
-
-        # Create output directory for this job (used for OutputsDir)
-        output_dir_path = Path(current_app.config["OUTPUT_DIR"]) / job_uuid
-        output_dir_path.mkdir(parents=True, exist_ok=True)
-        output_dir = str(output_dir_path)
-
         if itemdata:
-            cluster_id = submit_job(
+            cluster_id, num_procs = submit_job(
                 submit_dict,
                 count=len(itemdata),
                 itemdata=itemdata,
-                log_dir=log_dir,
-                output_dir=output_dir,
+                name=name,
             )
-            num_procs = len(itemdata)
         else:
-            cluster_id = submit_job(
-                submit_dict, count=count, log_dir=log_dir, output_dir=output_dir
-            )
-            num_procs = count
-
-        submission = JobSubmission(
-            cluster_id=cluster_id,
-            name=name,
-            submit_description=json.dumps(submit_dict),
-            num_procs=num_procs,
-            log_dir=log_dir,
-            output_dir=output_dir,
-        )
-        db.session.add(submission)
-        db.session.commit()
+            cluster_id, num_procs = submit_job(submit_dict, count=count, name=name)
 
         return jsonify(
             {
@@ -497,32 +414,7 @@ def submit_file():
     try:
         content = file.read().decode("utf-8")
 
-        import uuid
-
-        job_uuid = f"job_{uuid.uuid4().hex}"
-        log_dir_path = Path(current_app.config["JOB_LOGS_DIR"]) / job_uuid
-        log_dir_path.mkdir(parents=True, exist_ok=True)
-        log_dir = str(log_dir_path)
-
-        # Create output directory for this job (used for OutputsDir)
-        output_dir_path = Path(current_app.config["OUTPUT_DIR"]) / job_uuid
-        output_dir_path.mkdir(parents=True, exist_ok=True)
-        output_dir = str(output_dir_path)
-
-        cluster_id, num_procs = submit_from_file(
-            content, log_dir=log_dir, output_dir=output_dir
-        )
-
-        submission = JobSubmission(
-            cluster_id=cluster_id,
-            name=name,
-            submit_description=content,
-            num_procs=num_procs,
-            log_dir=log_dir,
-            output_dir=output_dir,
-        )
-        db.session.add(submission)
-        db.session.commit()
+        cluster_id, num_procs = submit_from_file(content, name=name)
 
         return jsonify(
             {
@@ -562,7 +454,7 @@ def upload_files():
     upload_dir = current_app.config["UPLOAD_DIR"]
 
     try:
-        unique_name, size = _save_uploaded_stream(
+        unique_name, size = save_uploaded_stream(
             request.stream, upload_dir, original_filename
         )
 
@@ -602,11 +494,15 @@ def delete_file(file_id: int):
 
     # Remove from local disk if present
     if uploaded_file.local_path and Path(uploaded_file.local_path).exists():
-        Path(uploaded_file.local_path).unlink()
+        p = Path(uploaded_file.local_path)
+        p.unlink()
+        _remove_empty_parents(p.parent)
 
     # Remove from OSDF staging if present
     if uploaded_file.osdf_path and Path(uploaded_file.osdf_path).exists():
-        Path(uploaded_file.osdf_path).unlink()
+        p = Path(uploaded_file.osdf_path)
+        p.unlink()
+        _remove_empty_parents(p.parent)
 
     db.session.delete(uploaded_file)
     db.session.commit()
@@ -630,17 +526,21 @@ def stage_file(file_id: int):
 
     import uuid
 
-    ext = Path(uploaded_file.original_name).suffix
-    unique_name = f"{uuid.uuid4().hex}{ext}"
-    osdf_dest = str(Path(osdf_root) / "uploads" / unique_name)
+    file_uuid = uuid.uuid4().hex
+    rel_name = f"{file_uuid}/{uploaded_file.original_name}"
+    osdf_dest = _resolve_path(str(Path(osdf_root) / "uploads" / rel_name))
     Path(osdf_dest).parent.mkdir(parents=True, exist_ok=True)
 
     # Move the file (not copy) — only one copy exists
     shutil.move(uploaded_file.local_path, osdf_dest)
 
+    # Clean up empty parent directories from the source location
+    src_parent = Path(uploaded_file.local_path).parent
+    _remove_empty_parents(src_parent)
+
     uploaded_file.local_path = None
     uploaded_file.osdf_path = osdf_dest
-    uploaded_file.filename = unique_name
+    uploaded_file.filename = rel_name
     db.session.commit()
 
     return jsonify(uploaded_file.to_dict())
@@ -662,16 +562,21 @@ def unstage_file(file_id: int):
     # Generate a unique name in the local upload directory
     import uuid
 
-    ext = Path(uploaded_file.original_name).suffix
-    unique_name = f"{uuid.uuid4().hex}{ext}"
-    local_dest = str(Path(upload_dir) / unique_name)
+    file_uuid = uuid.uuid4().hex
+    rel_name = f"{file_uuid}/{uploaded_file.original_name}"
+    local_dest = str(Path(upload_dir) / rel_name)
+    Path(local_dest).parent.mkdir(parents=True, exist_ok=True)
 
     # Move the file back
     shutil.move(uploaded_file.osdf_path, local_dest)
 
+    # Clean up empty parent directories from the OSDF source location
+    src_parent = Path(uploaded_file.osdf_path).parent
+    _remove_empty_parents(src_parent)
+
     uploaded_file.osdf_path = None
     uploaded_file.local_path = local_dest
-    uploaded_file.filename = unique_name
+    uploaded_file.filename = rel_name
     db.session.commit()
 
     return jsonify(uploaded_file.to_dict())
@@ -788,10 +693,12 @@ def pull_container():
     containers_dir = Path(osdf_root) / "containers"
     containers_dir.mkdir(parents=True, exist_ok=True)
 
-    # Generate a unique filename
+    # Generate a unique filename: uuid/safe_name.sif
     safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in name.lower())
-    unique_name = f"{uuid.uuid4().hex}_{safe_name}.sif"
+    pull_uuid = uuid.uuid4().hex
+    unique_name = f"{pull_uuid}/{safe_name}.sif"
     dest_path = containers_dir / unique_name
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
         # Run apptainer pull
@@ -877,8 +784,10 @@ def pull_container_stream():
     containers_dir.mkdir(parents=True, exist_ok=True)
 
     safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in name.lower())
-    unique_name = f"{uuid.uuid4().hex}_{safe_name}.sif"
+    pull_uuid = uuid.uuid4().hex
+    unique_name = f"{pull_uuid}/{safe_name}.sif"
     dest_path = containers_dir / unique_name
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Compile ANSI escape code regex once for performance
     # Matches: \x1b[<digits>;<digits>...<letter> (CSI sequences)
@@ -1036,7 +945,7 @@ def upload_container():
     containers_dir = str(Path(osdf_root) / "containers")
 
     try:
-        unique_name, size = _save_uploaded_stream(
+        unique_name, size = save_uploaded_stream(
             request.stream, containers_dir, original_filename, name=name
         )
 
@@ -1078,6 +987,7 @@ def delete_container(container_id: int):
         file_path = Path(osdf_root) / "containers" / container.filename
         if file_path.exists():
             file_path.unlink()
+            _remove_empty_parents(file_path.parent)
 
     db.session.delete(container)
     db.session.commit()
@@ -1446,7 +1356,6 @@ def list_output_files():
 
     # Get all job submissions that have output_dir set
     submissions = JobSubmission.query.filter(JobSubmission.output_dir.isnot(None)).all()
-    sub_map = {s.cluster_id: s for s in submissions}
 
     output_files = []
     try:
