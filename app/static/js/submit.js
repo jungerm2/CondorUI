@@ -794,6 +794,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // When a container is selected from the dropdown, set the container image path
+    $('#job-container-select').addEventListener('change', (e) => {
+        const selectedUri = e.target.value;
+        $('#job-container-image').value = selectedUri;
+    });
+
     function initExecShellToggle() {
         const execBtn = $('#execmode-exec-btn');
         const shellBtn = $('#execmode-shell-btn');

@@ -1,9 +1,9 @@
 // Input Files Management
 
 let currentFiles = [];
-let renameTargetId = null;
-let deleteTargetId = null;
-let selectedFileIds = new Set();
+let renameTargetFilename = null;
+let deleteTargetFilename = null;
+let selectedFileFilenames = new Set();
 let uploadAbortControllers = []; // Track active uploads for cancel
 
 // Modal helpers
@@ -50,7 +50,7 @@ async function loadFiles() {
 // ---------------------------------------------------------------------------
 
 function updateSelectionUI() {
-    const count = selectedFileIds.size;
+    const count = selectedFileFilenames.size;
     $('#file-selection-count').textContent = `${count} selected`;
 
     const stageBtn = $('#file-stage-btn');
@@ -65,7 +65,7 @@ function updateSelectionUI() {
 
     // Enable unstage only if all selected files are staged
     if (count > 0) {
-        const allStaged = currentFiles.filter(f => selectedFileIds.has(f.id)).every(f => !!f.osdf_path);
+        const allStaged = currentFiles.filter(f => selectedFileFilenames.has(f.filename)).every(f => !!f.osdf_path);
         unstageBtn.disabled = !allStaged;
     }
 
@@ -73,9 +73,9 @@ function updateSelectionUI() {
     const selectAll = $('#file-select-all');
     if (selectAll) {
         if (currentFiles.length > 0) {
-            const allSelected = currentFiles.every(f => selectedFileIds.has(f.id));
+            const allSelected = currentFiles.every(f => selectedFileFilenames.has(f.filename));
             selectAll.checked = allSelected;
-            selectAll.indeterminate = !allSelected && currentFiles.some(f => selectedFileIds.has(f.id));
+            selectAll.indeterminate = !allSelected && currentFiles.some(f => selectedFileFilenames.has(f.filename));
         } else {
             selectAll.checked = false;
             selectAll.indeterminate = false;
@@ -106,14 +106,13 @@ function renderFiles() {
         const isOsdf = !!f.osdf_path;
         const locationLabel = isOsdf ? 'OSDF' : 'Local';
         const locationClass = isOsdf ? 'badge-osdf' : 'badge-local';
-        const isChecked = selectedFileIds.has(f.id);
+        const isChecked = selectedFileFilenames.has(f.filename);
 
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td style="text-align: center;">
-                <input type="checkbox" class="file-row-checkbox" data-file-id="${f.id}" ${isChecked ? 'checked' : ''}>
+                <input type="checkbox" class="file-row-checkbox" data-file-filename="${f.filename}" ${isChecked ? 'checked' : ''}>
             </td>
-            <td class="monospace">${escHtml(f.filename)}</td>
             <td class="monospace">${escHtml(f.original_name)}</td>
             <td>${formatFileSize(f.size)}</td>
             <td>${formatDateIso(f.uploaded_at)}</td>
@@ -135,11 +134,11 @@ function renderFiles() {
     // Bind checkbox events
     tbody.querySelectorAll('.file-row-checkbox').forEach(cb => {
         cb.addEventListener('change', () => {
-            const id = parseInt(cb.dataset.fileId);
+            const filename = cb.dataset.fileFilename;
             if (cb.checked) {
-                selectedFileIds.add(id);
+                selectedFileFilenames.add(filename);
             } else {
-                selectedFileIds.delete(id);
+                selectedFileFilenames.delete(filename);
             }
             updateSelectionUI();
         });
@@ -185,7 +184,7 @@ async function handleUpload(files) {
     const progressList = $('#file-upload-progress-list');
 
     // Clear any previous selection when starting a new upload
-    selectedFileIds.clear();
+    selectedFileFilenames.clear();
 
     dropzone.style.display = 'none';
     progressList.style.display = 'block';
@@ -289,9 +288,9 @@ async function handleUpload(files) {
 
 // Stage selected files to OSDF
 async function handleBulkStage() {
-    if (selectedFileIds.size === 0) return;
+    if (selectedFileFilenames.size === 0) return;
 
-    const toStage = currentFiles.filter(f => selectedFileIds.has(f.id) && !f.osdf_path);
+    const toStage = currentFiles.filter(f => selectedFileFilenames.has(f.filename) && !f.osdf_path);
     if (toStage.length === 0) {
         toast('No selected files are eligible for staging (already in OSDF)', 'warning');
         return;
@@ -303,7 +302,7 @@ async function handleBulkStage() {
 
     for (const file of toStage) {
         try {
-            await api(`/files/${file.id}/stage`, { method: 'POST' });
+            await api(`/files/${encodeURIComponent(file.filename)}/stage`, { method: 'POST' });
             successCount++;
         } catch (err) {
             failCount++;
@@ -312,7 +311,7 @@ async function handleBulkStage() {
     }
 
     toast(`Staged ${successCount} file(s)` + (failCount > 0 ? ` (${failCount} failed)` : ''));
-    selectedFileIds.clear();
+    selectedFileFilenames.clear();
     try {
         await loadFiles();
     } finally {
@@ -322,11 +321,11 @@ async function handleBulkStage() {
 
 // Delete selected files
 async function handleBulkDelete() {
-    if (selectedFileIds.size === 0) return;
+    if (selectedFileFilenames.size === 0) return;
 
-    const count = selectedFileIds.size;
+    const count = selectedFileFilenames.size;
     const names = currentFiles
-        .filter(f => selectedFileIds.has(f.id))
+        .filter(f => selectedFileFilenames.has(f.filename))
         .map(f => f.filename)
         .slice(0, 5);
     let detail = names.join(', ');
@@ -339,22 +338,22 @@ async function handleBulkDelete() {
             confirmText: `Delete ${count} File(s)`,
             confirmClass: 'btn-danger',
             onConfirm: async () => {
-                const ids = [...selectedFileIds];
+                const filenames = [...selectedFileFilenames];
                 let successCount = 0;
                 let failCount = 0;
 
-                for (const id of ids) {
+                for (const filename of filenames) {
                     try {
-                        await api(`/files/${id}`, { method: 'DELETE' });
+                        await api(`/files/${encodeURIComponent(filename)}`, { method: 'DELETE' });
                         successCount++;
                     } catch (err) {
                         failCount++;
-                        toast(`Failed to delete file #${id}: ${err.message}`, 'error');
+                        toast(`Failed to delete file '${filename}': ${err.message}`, 'error');
                     }
                 }
 
                 toast(`Deleted ${successCount} file(s)` + (failCount > 0 ? ` (${failCount} failed)` : ''));
-                selectedFileIds.clear();
+                selectedFileFilenames.clear();
                 await loadFiles();
             },
         }
@@ -363,26 +362,26 @@ async function handleBulkDelete() {
 
 // Rename single selected file
 async function handleBulkRename() {
-    if (selectedFileIds.size !== 1) {
+    if (selectedFileFilenames.size !== 1) {
         toast('Select exactly one file to rename', 'warning');
         return;
     }
 
-    const fileId = [...selectedFileIds][0];
-    const file = currentFiles.find(f => f.id === fileId);
+    const fileFilename = [...selectedFileFilenames][0];
+    const file = currentFiles.find(f => f.filename === fileFilename);
     if (!file) return;
 
-    renameTargetId = fileId;
-    $('#rename-filename').value = file.filename;
+    renameTargetFilename = fileFilename;
+    $('#rename-filename').value = file.original_name;
     openModal('rename-modal');
     setTimeout(() => $('#rename-filename').focus(), 100);
 }
 
 // Unstage selected files (move back from OSDF to local)
 async function handleBulkUnstage() {
-    if (selectedFileIds.size === 0) return;
+    if (selectedFileFilenames.size === 0) return;
 
-    const toUnstage = currentFiles.filter(f => selectedFileIds.has(f.id) && f.osdf_path);
+    const toUnstage = currentFiles.filter(f => selectedFileFilenames.has(f.filename) && f.osdf_path);
     if (toUnstage.length === 0) {
         toast('No selected files are eligible for unstage (not in OSDF)', 'warning');
         return;
@@ -394,7 +393,7 @@ async function handleBulkUnstage() {
 
     for (const file of toUnstage) {
         try {
-            await api(`/files/${file.id}/unstage`, { method: 'POST' });
+            await api(`/files/${encodeURIComponent(file.filename)}/unstage`, { method: 'POST' });
             successCount++;
         } catch (err) {
             failCount++;
@@ -403,7 +402,7 @@ async function handleBulkUnstage() {
     }
 
     toast(`Unstaged ${successCount} file(s)` + (failCount > 0 ? ` (${failCount} failed)` : ''));
-    selectedFileIds.clear();
+    selectedFileFilenames.clear();
     try {
         await loadFiles();
     } finally {
@@ -430,17 +429,17 @@ async function handleRename() {
         toast('Filename cannot be empty', 'warning');
         return;
     }
-    if (renameTargetId === null) return;
+    if (renameTargetFilename === null) return;
 
     try {
-        await api(`/files/${renameTargetId}`, {
+        await api(`/files/${encodeURIComponent(renameTargetFilename)}`, {
             method: 'PUT',
             body: JSON.stringify({ filename: newName })
         });
         toast('File renamed');
         closeModal('rename-modal');
-        renameTargetId = null;
-        selectedFileIds.clear();
+        renameTargetFilename = null;
+        selectedFileFilenames.clear();
         await loadFiles();
     } catch (err) {
         toast(`Rename failed: ${err.message}`, 'error');
@@ -449,13 +448,13 @@ async function handleRename() {
 
 // Delete
 async function handleDelete() {
-    if (deleteTargetId === null) return;
+    if (deleteTargetFilename === null) return;
 
     try {
-        await api(`/files/${deleteTargetId}`, { method: 'DELETE' });
+        await api(`/files/${encodeURIComponent(deleteTargetFilename)}`, { method: 'DELETE' });
         toast('File deleted');
         closeModal('delete-modal');
-        deleteTargetId = null;
+        deleteTargetFilename = null;
         await loadFiles();
     } catch (err) {
         toast(`Delete failed: ${err.message}`, 'error');
@@ -503,9 +502,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const checked = e.target.checked;
         currentFiles.forEach(f => {
             if (checked) {
-                selectedFileIds.add(f.id);
+                selectedFileFilenames.add(f.filename);
             } else {
-                selectedFileIds.delete(f.id);
+                selectedFileFilenames.delete(f.filename);
             }
         });
         $$('.file-row-checkbox').forEach(cb => {

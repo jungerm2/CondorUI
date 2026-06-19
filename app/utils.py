@@ -98,6 +98,66 @@ def resolve_shell_commands(jobs: list[dict]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Filesystem scanning — shared between uploads and containers
+# ---------------------------------------------------------------------------
+# Both uploads and containers are stored in UUID-named subdirectories
+# (e.g., <base_dir>/<uuid>/<filename>).  The same scanning logic applies
+# to both, parameterized by the base directory and an optional filter.
+
+
+def scan_uuid_directories(
+    base_dir: str,
+    *,
+    file_filter: str | None = None,
+    extra_fields: dict | None = None,
+) -> list[dict]:
+    """Scan a directory of UUID-named subdirectories for files.
+
+    Each subdirectory under *base_dir* is expected to be a UUID directory
+    containing a single file.  Returns a list of file dicts sorted by
+    modification time (newest first).
+
+    Args:
+        base_dir: The base directory to scan (e.g., UPLOAD_DIR).
+        file_filter: Optional glob/suffix filter (e.g., ``.sif``).
+                     If None, all files are included.
+        extra_fields: Optional dict of extra fields to include in each
+                      file dict (e.g., ``{"osdf_path": None}``).
+
+    Returns:
+        List of file dicts with keys: filename, original_name, size,
+        modified_at, and any extra_fields provided.
+    """
+    base_path = Path(base_dir)
+    if not base_path.exists():
+        return []
+
+    files = []
+    for subdir in sorted(
+        base_path.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True
+    ):
+        if not subdir.is_dir():
+            continue
+        for f in subdir.iterdir():
+            if not f.is_file():
+                continue
+            if file_filter and not f.name.endswith(file_filter):
+                continue
+            stat = f.stat()
+            rel_name = f"{subdir.name}/{f.name}"
+            entry = {
+                "filename": rel_name,
+                "original_name": f.name,
+                "size": stat.st_size,
+                "modified_at": stat.st_mtime,
+            }
+            if extra_fields:
+                entry.update(extra_fields)
+            files.append(entry)
+    return files
+
+
+# ---------------------------------------------------------------------------
 # File upload helpers
 # ---------------------------------------------------------------------------
 

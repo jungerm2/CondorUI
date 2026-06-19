@@ -1,8 +1,8 @@
 // Container Management
 
 let currentContainers = [];
-let renameTargetId = null;
-let deleteTargetId = null;
+let renameTargetFilename = null;
+let deleteTargetFilename = null;
 let osdfConfigured = false;
 
 // Modal helpers
@@ -136,14 +136,14 @@ function renderContainers() {
             <td class="monospace" style="font-size: 0.8rem; max-width: 250px; overflow: hidden; text-overflow: ellipsis;" title="${escHtml(c.uri)}">${escHtml(c.uri)}</td>
             <td>
                 <div class="action-btns">
-                    <button class="btn btn-ghost btn-sm rename-container-btn" data-id="${c.id}" title="Rename">
+                    <button class="btn btn-ghost btn-sm rename-container-btn" data-filename="${c.filename}" title="Rename">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
                             <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
                         </svg>
                         Rename
                     </button>
-                    <button class="btn btn-ghost btn-sm delete-container-btn" data-id="${c.id}" data-name="${escHtml(c.name)}" title="Delete" style="color: var(--danger-color, #f87171);">
+                    <button class="btn btn-ghost btn-sm delete-container-btn" data-filename="${c.filename}" data-name="${escHtml(c.name)}" title="Delete" style="color: var(--danger-color, #f87171);">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <polyline points="3,6 5,6 21,6" />
                             <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
@@ -158,10 +158,10 @@ function renderContainers() {
 
     // Bind action buttons
     tbody.querySelectorAll('.rename-container-btn').forEach(btn => {
-        btn.addEventListener('click', () => openRenameModal(parseInt(btn.dataset.id)));
+        btn.addEventListener('click', () => openRenameModal(btn.dataset.filename));
     });
     tbody.querySelectorAll('.delete-container-btn').forEach(btn => {
-        btn.addEventListener('click', () => openDeleteModal(parseInt(btn.dataset.id), btn.dataset.name));
+        btn.addEventListener('click', () => openDeleteModal(btn.dataset.filename, btn.dataset.name));
     });
 }
 
@@ -372,14 +372,15 @@ function resetUploadUI() {
 }
 
 // Rename
-function openRenameModal(containerId) {
-    const container = currentContainers.find(c => c.id === containerId);
+function openRenameModal(filename) {
+    const container = currentContainers.find(c => c.filename === filename);
     if (!container) return;
-    renameTargetId = containerId;
+    renameTargetFilename = filename;
     $('#rename-container-name').value = container.name;
     openModal('rename-modal');
     setTimeout(() => $('#rename-container-name').focus(), 100);
 }
+
 
 async function handleRename() {
     const newName = $('#rename-container-name').value.trim();
@@ -387,16 +388,16 @@ async function handleRename() {
         toast('Name cannot be empty', 'warning');
         return;
     }
-    if (renameTargetId === null) return;
+    if (renameTargetFilename === null) return;
 
     try {
-        await api(`/containers/${renameTargetId}`, {
+        await api(`/containers/${encodeURIComponent(renameTargetFilename)}`, {
             method: 'PUT',
             body: JSON.stringify({ name: newName })
         });
         toast('Container renamed');
         closeModal('rename-modal');
-        renameTargetId = null;
+        renameTargetFilename = null;
         await loadContainers();
     } catch (err) {
         toast(`Rename failed: ${err.message}`, 'error');
@@ -404,20 +405,21 @@ async function handleRename() {
 }
 
 // Delete
-function openDeleteModal(containerId, containerName) {
-    deleteTargetId = containerId;
+function openDeleteModal(filename, containerName) {
+    deleteTargetFilename = filename;
     $('#delete-container-name-display').textContent = containerName;
     openModal('delete-modal');
 }
 
+
 async function handleDelete() {
-    if (deleteTargetId === null) return;
+    if (deleteTargetFilename === null) return;
 
     try {
-        await api(`/containers/${deleteTargetId}`, { method: 'DELETE' });
+        await api(`/containers/${encodeURIComponent(deleteTargetFilename)}`, { method: 'DELETE' });
         toast('Container deleted');
         closeModal('delete-modal');
-        deleteTargetId = null;
+        deleteTargetFilename = null;
         await loadContainers();
     } catch (err) {
         toast(`Delete failed: ${err.message}`, 'error');

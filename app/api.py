@@ -28,10 +28,11 @@ from app.condor import (
     submit_from_file,
     submit_job,
 )
-from app.models import ContainerImage, JobSubmission, SubmitTemplate, UploadedFile
+from app.models import JobSubmission, SubmitTemplate
 from app.utils import (
     resolve_shell_commands,
     save_uploaded_stream,
+    scan_uuid_directories,
 )
 
 logger = logging.getLogger(__name__)
@@ -430,18 +431,109 @@ def submit_file():
 # ---------------------------------------------------------------------------
 # File management — upload, list, rename, delete, stage to OSDF
 # ---------------------------------------------------------------------------
+# Files are stored on the filesystem under UPLOAD_DIR.  Each file is saved
+# in a UUID-named subdirectory (e.g., uploads/<uuid>/original_name) so that
+# the filesystem itself is the source of truth — no database model needed.
+#
+# A file's "filename" is the relative path "uuid/original_name" which is
+# unique and can be used to locate the file on disk.  The "original_name"
+# is the name the user uploaded.  When staged to OSDF, the file is moved
+# to OSDF_ROOT_PATH/uploads/<uuid>/original_name.
+
+
+def _build_file_entry(
+    rel_name: str,
+    original_name: str,
+    file_path: Path,
+    stat: os.stat_result,
+) -> dict:
+    """Build a file dict for the frontend, checking both local and OSDF locations.
+
+    A file may be in either UPLOAD_DIR (local) or OSDF_ROOT_PATH/uploads/
+    (staged).  This function checks both locations and sets the appropriate
+    fields.
+    """
+    osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
+    osdf_path = None
+    if osdf_root:
+        candidate = Path(osdf_root) / "uploads" / rel_name
+        if candidate.exists():
+            osdf_path = str(candidate)
+
+    base_uri = current_app.config.get("OSDF_BASE_URI", "osdf:///")
+    if osdf_path:
+        uri = base_uri.rstrip("/") + osdf_path
+    else:
+        uri = str(file_path)
+
+    return {
+        "filename": rel_name,
+        "original_name": original_name,
+        "local_path": str(file_path) if not osdf_path else None,
+        "osdf_path": osdf_path,
+        "uri": uri,
+        "size": stat.st_size,
+        "uploaded_at": stat.st_mtime,
+    }
 
 
 @api_bp.route("/files", methods=["GET"])
 def list_files():
-    """List all uploaded files."""
-    files = UploadedFile.query.order_by(UploadedFile.uploaded_at.desc()).all()
-    return jsonify({"files": [f.to_dict() for f in files], "count": len(files)})
+    """List all uploaded files.
+
+    Scans both UPLOAD_DIR and OSDF_ROOT_PATH/uploads/ for files, merging
+    the results.  Files in OSDF are marked as staged; files in UPLOAD_DIR
+    are marked as local.  If a file exists in both locations (shouldn't
+    happen in normal operation), the OSDF version takes precedence.
+    """
+    upload_dir = current_app.config["UPLOAD_DIR"]
+    osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
+
+    # Build a set of seen filenames to avoid duplicates
+    seen = set()
+    files = []
+
+    # 1. Scan OSDF uploads directory first (takes precedence)
+    if osdf_root:
+        osdf_uploads = str(Path(osdf_root) / "uploads")
+        for entry in scan_uuid_directories(osdf_uploads):
+            rel_name = entry["filename"]
+            seen.add(rel_name)
+            file_path = Path(osdf_uploads) / rel_name
+            files.append(
+                _build_file_entry(
+                    rel_name,
+                    entry["original_name"],
+                    file_path,
+                    file_path.stat(),
+                )
+            )
+
+    # 2. Scan local upload directory for files not already in OSDF
+    for entry in scan_uuid_directories(upload_dir):
+        rel_name = entry["filename"]
+        if rel_name in seen:
+            continue
+        seen.add(rel_name)
+        file_path = Path(upload_dir) / rel_name
+        files.append(
+            _build_file_entry(
+                rel_name,
+                entry["original_name"],
+                file_path,
+                file_path.stat(),
+            )
+        )
+
+    # Sort by uploaded_at descending
+    files.sort(key=lambda f: f.get("uploaded_at", 0), reverse=True)
+
+    return jsonify({"files": files, "count": len(files)})
 
 
 @api_bp.route("/files", methods=["POST"])
 def upload_files():
-    """Upload a file and create a DB record.
+    """Upload a file to the filesystem.
 
     Expects the raw file as the request body with:
       - Content-Type: application/octet-stream
@@ -458,128 +550,169 @@ def upload_files():
             request.stream, upload_dir, original_filename
         )
 
-        uploaded_file = UploadedFile(
-            filename=unique_name,
-            original_name=original_filename,
-            local_path=str(Path(upload_dir) / unique_name),
-            osdf_path=None,
-            size=size,
-        )
-        db.session.add(uploaded_file)
-        db.session.commit()
+        upload_path = Path(upload_dir) / unique_name
 
-        return jsonify(uploaded_file.to_dict()), 201
+        return jsonify(
+            {
+                "filename": unique_name,
+                "original_name": original_filename,
+                "local_path": str(upload_path),
+                "osdf_path": None,
+                "uri": str(upload_path),
+                "size": size,
+                "uploaded_at": upload_path.stat().st_mtime,
+            }
+        ), 201
     except Exception as e:
         logger.exception("File upload failed")
         return jsonify({"error": str(e)}), 500
 
 
-@api_bp.route("/files/<int:file_id>", methods=["PUT"])
-def rename_file(file_id: int):
-    """Rename an uploaded file (display name only)."""
+@api_bp.route("/files/<path:filename>", methods=["PUT"])
+def rename_file(filename: str):
+    """Rename an uploaded file (display name only).
+
+    Since the filesystem stores files under UUID directories, "renaming"
+    means updating the original filename within the UUID directory.
+    """
     data = request.get_json()
     if not data or "filename" not in data:
         return jsonify({"error": "Missing 'filename' in request body"}), 400
 
-    uploaded_file = UploadedFile.query.get_or_404(file_id)
-    uploaded_file.filename = data["filename"]
-    db.session.commit()
-    return jsonify(uploaded_file.to_dict())
+    upload_dir = current_app.config["UPLOAD_DIR"]
+    file_path = Path(upload_dir) / filename
+
+    if not file_path.exists():
+        return jsonify({"error": "File not found"}), 404
+
+    new_name = data["filename"]
+    new_path = file_path.parent / new_name
+
+    if new_path.exists():
+        return jsonify({"error": "A file with that name already exists"}), 409
+
+    file_path.rename(new_path)
+
+    new_rel_name = f"{file_path.parent.name}/{new_name}"
+    stat = new_path.stat()
+
+    return jsonify(
+        {
+            "filename": new_rel_name,
+            "original_name": new_name,
+            "local_path": str(new_path),
+            "osdf_path": None,
+            "uri": str(new_path),
+            "size": stat.st_size,
+            "uploaded_at": stat.st_mtime,
+        }
+    )
 
 
-@api_bp.route("/files/<int:file_id>", methods=["DELETE"])
-def delete_file(file_id: int):
-    """Delete an uploaded file from disk/OSDF and the database."""
-    uploaded_file = UploadedFile.query.get_or_404(file_id)
+@api_bp.route("/files/<path:filename>", methods=["DELETE"])
+def delete_file(filename: str):
+    """Delete an uploaded file from disk/OSDF."""
+    upload_dir = current_app.config["UPLOAD_DIR"]
+    file_path = Path(upload_dir) / filename
 
-    # Remove from local disk if present
-    if uploaded_file.local_path and Path(uploaded_file.local_path).exists():
-        p = Path(uploaded_file.local_path)
-        p.unlink()
-        _remove_empty_parents(p.parent)
+    # Check local path
+    deleted_local = False
+    if file_path.exists():
+        file_path.unlink()
+        _remove_empty_parents(file_path.parent)
+        deleted_local = True
 
-    # Remove from OSDF staging if present
-    if uploaded_file.osdf_path and Path(uploaded_file.osdf_path).exists():
-        p = Path(uploaded_file.osdf_path)
-        p.unlink()
-        _remove_empty_parents(p.parent)
+    # Check OSDF path
+    osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
+    osdf_path = None
+    if osdf_root:
+        osdf_path = Path(osdf_root) / "uploads" / filename
+        if osdf_path.exists():
+            osdf_path.unlink()
+            _remove_empty_parents(osdf_path.parent)
 
-    db.session.delete(uploaded_file)
-    db.session.commit()
-    return jsonify({"message": f"File '{uploaded_file.filename}' deleted"})
+    if not deleted_local and not (osdf_path and osdf_path.exists()):
+        return jsonify({"error": "File not found"}), 404
+
+    return jsonify({"message": f"File '{filename}' deleted"})
 
 
-@api_bp.route("/files/<int:file_id>/stage", methods=["POST"])
-def stage_file(file_id: int):
-    """Move a file to the OSDF uploads subdirectory with a unique name."""
-    uploaded_file = UploadedFile.query.get_or_404(file_id)
+@api_bp.route("/files/<path:filename>/stage", methods=["POST"])
+def stage_file(filename: str):
+    """Move a file to the OSDF uploads subdirectory."""
+    upload_dir = current_app.config["UPLOAD_DIR"]
+    file_path = Path(upload_dir) / filename
 
-    if uploaded_file.osdf_path:
-        return jsonify({"error": "File is already staged to OSDF"}), 400
-
-    if not uploaded_file.local_path or not Path(uploaded_file.local_path).exists():
+    if not file_path.exists():
         return jsonify({"error": "Local file not found on disk"}), 404
 
     osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
     if not osdf_root:
         return jsonify({"error": "OSDF root path is not configured"}), 400
 
-    import uuid
+    # Check if already staged
+    osdf_dest = Path(osdf_root) / "uploads" / filename
+    if osdf_dest.exists():
+        return jsonify({"error": "File is already staged to OSDF"}), 400
 
-    file_uuid = uuid.uuid4().hex
-    rel_name = f"{file_uuid}/{uploaded_file.original_name}"
-    osdf_dest = _resolve_path(str(Path(osdf_root) / "uploads" / rel_name))
-    Path(osdf_dest).parent.mkdir(parents=True, exist_ok=True)
+    osdf_dest.parent.mkdir(parents=True, exist_ok=True)
 
     # Move the file (not copy) — only one copy exists
-    shutil.move(uploaded_file.local_path, osdf_dest)
+    shutil.move(str(file_path), str(osdf_dest))
 
     # Clean up empty parent directories from the source location
-    src_parent = Path(uploaded_file.local_path).parent
-    _remove_empty_parents(src_parent)
+    _remove_empty_parents(file_path.parent)
 
-    uploaded_file.local_path = None
-    uploaded_file.osdf_path = osdf_dest
-    uploaded_file.filename = rel_name
-    db.session.commit()
+    stat = osdf_dest.stat()
+    base_uri = current_app.config.get("OSDF_BASE_URI", "osdf:///")
 
-    return jsonify(uploaded_file.to_dict())
+    return jsonify(
+        {
+            "filename": filename,
+            "original_name": file_path.name,
+            "local_path": None,
+            "osdf_path": str(osdf_dest),
+            "uri": base_uri.rstrip("/") + str(osdf_dest),
+            "size": stat.st_size,
+            "uploaded_at": stat.st_mtime,
+        }
+    )
 
 
-@api_bp.route("/files/<int:file_id>/unstage", methods=["POST"])
-def unstage_file(file_id: int):
+@api_bp.route("/files/<path:filename>/unstage", methods=["POST"])
+def unstage_file(filename: str):
     """Move a staged (OSDF) file back to the local upload directory."""
-    uploaded_file = UploadedFile.query.get_or_404(file_id)
+    osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
+    if not osdf_root:
+        return jsonify({"error": "OSDF root path is not configured"}), 400
 
-    if not uploaded_file.osdf_path:
-        return jsonify({"error": "File is not staged to OSDF"}), 400
-
-    if not Path(uploaded_file.osdf_path).exists():
+    osdf_path = Path(osdf_root) / "uploads" / filename
+    if not osdf_path.exists():
         return jsonify({"error": "OSDF file not found on disk"}), 404
 
     upload_dir = current_app.config["UPLOAD_DIR"]
-
-    # Generate a unique name in the local upload directory
-    import uuid
-
-    file_uuid = uuid.uuid4().hex
-    rel_name = f"{file_uuid}/{uploaded_file.original_name}"
-    local_dest = str(Path(upload_dir) / rel_name)
-    Path(local_dest).parent.mkdir(parents=True, exist_ok=True)
+    local_dest = Path(upload_dir) / filename
+    local_dest.parent.mkdir(parents=True, exist_ok=True)
 
     # Move the file back
-    shutil.move(uploaded_file.osdf_path, local_dest)
+    shutil.move(str(osdf_path), str(local_dest))
 
     # Clean up empty parent directories from the OSDF source location
-    src_parent = Path(uploaded_file.osdf_path).parent
-    _remove_empty_parents(src_parent)
+    _remove_empty_parents(osdf_path.parent)
 
-    uploaded_file.osdf_path = None
-    uploaded_file.local_path = local_dest
-    uploaded_file.filename = rel_name
-    db.session.commit()
+    stat = local_dest.stat()
 
-    return jsonify(uploaded_file.to_dict())
+    return jsonify(
+        {
+            "filename": filename,
+            "original_name": local_dest.name,
+            "local_path": str(local_dest),
+            "osdf_path": None,
+            "uri": str(local_dest),
+            "size": stat.st_size,
+            "uploaded_at": stat.st_mtime,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -651,15 +784,45 @@ def get_quotas():
 # ---------------------------------------------------------------------------
 # Container management — list, pull, upload, rename, delete
 # ---------------------------------------------------------------------------
+# Containers are stored on the filesystem under OSDF_ROOT_PATH/containers/.
+# Each container is saved in a UUID-named subdirectory (e.g.,
+# containers/<uuid>/name.sif) so that the filesystem itself is the source
+# of truth — no database model needed.
+#
+# A container's "filename" is the relative path "uuid/name.sif" which is
+# unique and can be used to locate the file on disk.  The "name" is the
+# display name provided by the user.
 
 
 @api_bp.route("/containers", methods=["GET"])
 def list_containers():
     """List all container images."""
-    containers = ContainerImage.query.order_by(ContainerImage.created_at.desc()).all()
-    return jsonify(
-        {"containers": [c.to_dict() for c in containers], "count": len(containers)}
-    )
+    osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
+    if not osdf_root:
+        return jsonify({"containers": [], "count": 0})
+
+    containers_dir = str(Path(osdf_root) / "containers")
+    raw = scan_uuid_directories(containers_dir, file_filter=".sif")
+    containers = []
+    base_uri = current_app.config.get("OSDF_BASE_URI", "osdf:///")
+    for entry in raw:
+        rel_name = entry["filename"]
+        # Derive display name from filename (strip .sif)
+        display_name = Path(entry["original_name"]).stem.replace("_", " ").title()
+        # Build the URI: OSDF_BASE_URI + absolute path to the .sif file
+        file_path = str(Path(containers_dir) / rel_name)
+        uri = base_uri.rstrip("/") + file_path
+        containers.append(
+            {
+                "filename": rel_name,
+                "name": display_name,
+                "source": f"file:{rel_name}",
+                "uri": uri,
+                "size": entry["size"],
+                "created_at": entry["modified_at"],
+            }
+        )
+    return jsonify({"containers": containers, "count": len(containers)})
 
 
 @api_bp.route("/containers/pull", methods=["POST"])
@@ -717,16 +880,15 @@ def pull_container():
 
         size = dest_path.stat().st_size
 
-        container = ContainerImage(
-            name=name,
-            filename=unique_name,
-            source=image_ref,
-            size=size,
-        )
-        db.session.add(container)
-        db.session.commit()
-
-        return jsonify(container.to_dict()), 201
+        return jsonify(
+            {
+                "filename": unique_name,
+                "name": name,
+                "source": image_ref,
+                "size": size,
+                "created_at": dest_path.stat().st_mtime,
+            }
+        ), 201
 
     except subprocess.TimeoutExpired:
         return jsonify({"error": "apptainer pull timed out after 600 seconds"}), 500
@@ -890,16 +1052,7 @@ def pull_container_stream():
 
             size = dest_path.stat().st_size
 
-            container = ContainerImage(
-                name=name,
-                filename=unique_name,
-                source=image_ref,
-                size=size,
-            )
-            db.session.add(container)
-            db.session.commit()
-
-            yield f"event: complete\ndata: {json.dumps(container.to_dict())}\n\n"
+            yield f"event: complete\ndata: {json.dumps({'filename': unique_name, 'name': name, 'source': image_ref, 'size': size, 'created_at': dest_path.stat().st_mtime})}\n\n"
 
         except FileNotFoundError:
             yield "event: error\ndata: apptainer command not found. Is Apptainer/Singularity installed?\n\n"
@@ -949,49 +1102,80 @@ def upload_container():
             request.stream, containers_dir, original_filename, name=name
         )
 
-        container = ContainerImage(
-            name=name,
-            filename=unique_name,
-            source=f"uploaded:{original_filename}",
-            size=size,
-        )
-        db.session.add(container)
-        db.session.commit()
-
-        return jsonify(container.to_dict()), 201
+        return jsonify(
+            {
+                "filename": unique_name,
+                "name": name,
+                "source": f"uploaded:{original_filename}",
+                "size": size,
+                "created_at": (Path(containers_dir) / unique_name).stat().st_mtime,
+            }
+        ), 201
     except Exception as e:
         logger.exception("Container upload failed")
         return jsonify({"error": str(e)}), 500
 
 
-@api_bp.route("/containers/<int:container_id>", methods=["PUT"])
-def rename_container(container_id: int):
-    """Rename a container (display name only)."""
+@api_bp.route("/containers/<path:filename>", methods=["PUT"])
+def rename_container(filename: str):
+    """Rename a container (display name only).
+
+    Since the filesystem stores containers under UUID directories,
+    "renaming" means updating the display name stored in the filename
+    within the UUID directory.
+    """
     data = request.get_json()
     if not data or "name" not in data:
         return jsonify({"error": "Missing 'name' in request body"}), 400
 
-    container = ContainerImage.query.get_or_404(container_id)
-    container.name = data["name"]
-    db.session.commit()
-    return jsonify(container.to_dict())
-
-
-@api_bp.route("/containers/<int:container_id>", methods=["DELETE"])
-def delete_container(container_id: int):
-    """Delete a container image from disk and the database."""
-    container = ContainerImage.query.get_or_404(container_id)
-
     osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
-    if osdf_root:
-        file_path = Path(osdf_root) / "containers" / container.filename
-        if file_path.exists():
-            file_path.unlink()
-            _remove_empty_parents(file_path.parent)
+    if not osdf_root:
+        return jsonify({"error": "OSDF root path is not configured"}), 400
 
-    db.session.delete(container)
-    db.session.commit()
-    return jsonify({"message": f"Container '{container.name}' deleted"})
+    file_path = Path(osdf_root) / "containers" / filename
+    if not file_path.exists():
+        return jsonify({"error": "Container not found"}), 404
+
+    new_name = data["name"]
+    safe_name = "".join(
+        c if c.isalnum() or c in "._-" else "_" for c in new_name.lower()
+    )
+    new_path = file_path.parent / f"{safe_name}.sif"
+
+    if new_path.exists():
+        return jsonify({"error": "A container with that name already exists"}), 409
+
+    file_path.rename(new_path)
+
+    new_rel_name = f"{file_path.parent.name}/{new_path.name}"
+    stat = new_path.stat()
+
+    return jsonify(
+        {
+            "filename": new_rel_name,
+            "name": new_name,
+            "source": f"file:{new_rel_name}",
+            "size": stat.st_size,
+            "created_at": stat.st_mtime,
+        }
+    )
+
+
+@api_bp.route("/containers/<path:filename>", methods=["DELETE"])
+def delete_container(filename: str):
+    """Delete a container image from disk."""
+    osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
+    if not osdf_root:
+        return jsonify({"error": "OSDF root path is not configured"}), 400
+
+    file_path = Path(osdf_root) / "containers" / filename
+    if not file_path.exists():
+        return jsonify({"error": "Container not found"}), 404
+
+    file_path.unlink()
+    _remove_empty_parents(file_path.parent)
+
+    return jsonify({"message": f"Container '{filename}' deleted"})
 
 
 # ---------------------------------------------------------------------------
@@ -1399,7 +1583,9 @@ def download_output_file(cluster_id: int, filename: str):
     """
     submission = JobSubmission.query.filter_by(cluster_id=cluster_id).first()
     if not submission or not submission.output_dir:
-        return jsonify({"error": f"Output directory not found for cluster {cluster_id}"}), 404
+        return jsonify(
+            {"error": f"Output directory not found for cluster {cluster_id}"}
+        ), 404
 
     file_path = Path(submission.output_dir) / filename
 
@@ -1416,12 +1602,16 @@ def download_output_file(cluster_id: int, filename: str):
         return jsonify({"error": str(e)}), 500
 
 
-@api_bp.route("/output-files/delete/<int:cluster_id>/<path:filename>", methods=["DELETE"])
+@api_bp.route(
+    "/output-files/delete/<int:cluster_id>/<path:filename>", methods=["DELETE"]
+)
 def delete_output_file(cluster_id: int, filename: str):
     """Delete an output file for a given job."""
     submission = JobSubmission.query.filter_by(cluster_id=cluster_id).first()
     if not submission or not submission.output_dir:
-        return jsonify({"error": f"Output directory not found for cluster {cluster_id}"}), 404
+        return jsonify(
+            {"error": f"Output directory not found for cluster {cluster_id}"}
+        ), 404
 
     file_path = Path(submission.output_dir) / filename
 
