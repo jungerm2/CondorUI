@@ -1390,14 +1390,18 @@ def list_output_files():
         return jsonify({"error": str(e)}), 500
 
 
-@api_bp.route("/output-files/<path:filename>/download")
-def download_output_file(filename: str):
-    """Download a specific output file.
+@api_bp.route("/output-files/download/<int:cluster_id>/<path:filename>")
+def download_output_file(cluster_id: int, filename: str):
+    """Download a specific output file for a given job.
 
-    The filename is the full path relative to OUTPUT_DIR.
+    Looks up the job's output directory from the JobSubmission record
+    and resolves the file path from there.
     """
-    output_dir = current_app.config["OUTPUT_DIR"]
-    file_path = Path(output_dir) / filename
+    submission = JobSubmission.query.filter_by(cluster_id=cluster_id).first()
+    if not submission or not submission.output_dir:
+        return jsonify({"error": f"Output directory not found for cluster {cluster_id}"}), 404
+
+    file_path = Path(submission.output_dir) / filename
 
     if not file_path.exists():
         return jsonify({"error": f"Output file not found: {filename}"}), 404
@@ -1412,11 +1416,14 @@ def download_output_file(filename: str):
         return jsonify({"error": str(e)}), 500
 
 
-@api_bp.route("/output-files/<path:filename>", methods=["DELETE"])
-def delete_output_file(filename: str):
-    """Delete an output file from disk."""
-    output_dir = current_app.config["OUTPUT_DIR"]
-    file_path = Path(output_dir) / filename
+@api_bp.route("/output-files/delete/<int:cluster_id>/<path:filename>", methods=["DELETE"])
+def delete_output_file(cluster_id: int, filename: str):
+    """Delete an output file for a given job."""
+    submission = JobSubmission.query.filter_by(cluster_id=cluster_id).first()
+    if not submission or not submission.output_dir:
+        return jsonify({"error": f"Output directory not found for cluster {cluster_id}"}), 404
+
+    file_path = Path(submission.output_dir) / filename
 
     if not file_path.exists():
         return jsonify({"error": f"Output file not found: {filename}"}), 404

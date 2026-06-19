@@ -1,7 +1,7 @@
 // Output Files Management
 
 let currentOutputFiles = [];
-let selectedFileIds = new Set();
+let selectedFiles = new Map(); // filename -> {cluster_id, filename}
 
 // formatFileSize and formatDate are now defined in common.js
 // These duplicates have been removed; use the shared versions instead.
@@ -19,7 +19,7 @@ async function loadOutputFiles() {
 
 // Update selection UI
 function updateSelectionUI() {
-    const count = selectedFileIds.size;
+    const count = selectedFiles.size;
     $('#output-selection-count').textContent = `${count} selected`;
     $('#output-delete-btn').disabled = count === 0;
 
@@ -27,9 +27,9 @@ function updateSelectionUI() {
     const selectAll = $('#output-select-all');
     if (selectAll) {
         if (currentOutputFiles.length > 0) {
-            const allSelected = currentOutputFiles.every(f => selectedFileIds.has(f.filename));
+            const allSelected = currentOutputFiles.every(f => selectedFiles.has(f.filename));
             selectAll.checked = allSelected;
-            selectAll.indeterminate = !allSelected && currentOutputFiles.some(f => selectedFileIds.has(f.filename));
+            selectAll.indeterminate = !allSelected && currentOutputFiles.some(f => selectedFiles.has(f.filename));
         } else {
             selectAll.checked = false;
             selectAll.indeterminate = false;
@@ -57,7 +57,7 @@ function renderOutputFiles() {
     empty.style.display = 'none';
 
     currentOutputFiles.forEach(f => {
-        const isChecked = selectedFileIds.has(f.filename);
+        const isChecked = selectedFiles.has(f.filename);
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td style="text-align: center;">
@@ -70,7 +70,7 @@ function renderOutputFiles() {
             </td>
             <td>${formatDate(f.modified_at)}</td>
             <td>
-                <a href="/api/output-files/${encodeURIComponent(f.filename)}/download" class="btn btn-ghost btn-sm" style="padding: 4px 8px;">
+                <a href="/api/output-files/download/${f.cluster_id}/${encodeURIComponent(f.filename)}" class="btn btn-ghost btn-sm" style="padding: 4px 8px;">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                         <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
                         <polyline points="7,10 12,15 17,10" />
@@ -98,9 +98,11 @@ function renderOutputFiles() {
         cb.addEventListener('change', () => {
             const filename = cb.dataset.filename;
             if (cb.checked) {
-                selectedFileIds.add(filename);
+                // Find the cluster_id for this filename from currentOutputFiles
+                const file = currentOutputFiles.find(f => f.filename === filename);
+                selectedFiles.set(filename, { cluster_id: file ? file.cluster_id : null, filename });
             } else {
-                selectedFileIds.delete(filename);
+                selectedFiles.delete(filename);
             }
             updateSelectionUI();
         });
@@ -111,10 +113,10 @@ function renderOutputFiles() {
 
 // Delete selected output files
 async function handleBulkDelete() {
-    if (selectedFileIds.size === 0) return;
+    if (selectedFiles.size === 0) return;
 
-    const count = selectedFileIds.size;
-    const names = [...selectedFileIds].slice(0, 5);
+    const count = selectedFiles.size;
+    const names = [...selectedFiles.keys()].slice(0, 5);
     let detail = names.join(', ');
     if (count > 5) detail += `, and ${count - 5} more...`;
 
@@ -123,9 +125,9 @@ async function handleBulkDelete() {
     let successCount = 0;
     let failCount = 0;
 
-    for (const filename of selectedFileIds) {
+    for (const [filename, info] of selectedFiles) {
         try {
-            await api(`/output-files/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+            await api(`/output-files/delete/${info.cluster_id}/${encodeURIComponent(filename)}`, { method: 'DELETE' });
             successCount++;
         } catch (err) {
             failCount++;
@@ -134,7 +136,7 @@ async function handleBulkDelete() {
     }
 
     toast(`Deleted ${successCount} file(s)` + (failCount > 0 ? ` (${failCount} failed)` : ''));
-    selectedFileIds.clear();
+    selectedFiles.clear();
     await loadOutputFiles();
 }
 
@@ -146,9 +148,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const checked = e.target.checked;
         currentOutputFiles.forEach(f => {
             if (checked) {
-                selectedFileIds.add(f.filename);
+                selectedFiles.set(f.filename, { cluster_id: f.cluster_id, filename: f.filename });
             } else {
-                selectedFileIds.delete(f.filename);
+                selectedFiles.delete(f.filename);
             }
         });
         $$('.output-row-checkbox').forEach(cb => {
