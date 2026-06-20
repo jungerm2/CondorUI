@@ -22,6 +22,11 @@
             if (theme === 'light') {
                 document.documentElement.classList.add('light-theme');
             }
+            // Restore sidebar state
+            var sidebarCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+            if (sidebarCollapsed) {
+                document.documentElement.classList.add('sidebar-collapsed');
+            }
         })();
     </script>
     {% block extra_css %}{% endblock %}
@@ -42,66 +47,110 @@
                 </svg>
                 <span class="logo-text">&nbsp;&nbsp;&nbsp;Condor UI</span>
             </div>
+            <button class="sidebar-collapse-btn" id="sidebar-collapse-btn" title="Collapse Sidebar">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M15 18l-6-6 6-6" />
+                </svg>
+            </button>
         </div>
         <ul class="nav-links">
-            <li>
-                <a href="/" class="nav-link {% if active_page == 'dashboard' %}active{% endif %}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <rect x="3" y="3" width="7" height="7" rx="1" />
-                        <rect x="14" y="3" width="7" height="7" rx="1" />
-                        <rect x="3" y="14" width="7" height="7" rx="1" />
-                        <rect x="14" y="14" width="7" height="7" rx="1" />
-                    </svg>
-                    <span>Dashboard</span>
-                </a>
+            <!-- Jobs Section -->
+            <li class="nav-section" id="nav-section-jobs">
+                <div class="nav-section-header" data-section="jobs">
+                    <span class="nav-section-title">Jobs</span>
+                    <span class="nav-section-toggle">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="6,9 12,15 18,9" />
+                        </svg>
+                    </span>
+                </div>
+                <ul class="nav-section-content">
+                    <li>
+                        <a href="/" class="nav-link {% if active_page == 'dashboard' %}active{% endif %}">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <rect x="3" y="3" width="7" height="7" rx="1" />
+                                <rect x="14" y="3" width="7" height="7" rx="1" />
+                                <rect x="3" y="14" width="7" height="7" rx="1" />
+                                <rect x="14" y="14" width="7" height="7" rx="1" />
+                            </svg>
+                            <span>Dashboard</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="/submit" class="nav-link {% if active_page == 'submit' %}active{% endif %}">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M12 5v14M5 12h14" />
+                            </svg>
+                            <span>Submit Job</span>
+                        </a>
+                    </li>
+                </ul>
             </li>
-            <li>
-                <a href="/submit" class="nav-link {% if active_page == 'submit' %}active{% endif %}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path d="M12 5v14M5 12h14" />
-                    </svg>
-                    <span>Submit Job</span>
-                </a>
+            <!-- Data Section -->
+            <li class="nav-section" id="nav-section-data">
+                <div class="nav-section-header" data-section="data">
+                    <span class="nav-section-title">Data</span>
+                    <span class="nav-section-toggle">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="6,9 12,15 18,9" />
+                        </svg>
+                    </span>
+                </div>
+                <ul class="nav-section-content">
+                    <li>
+                        <a href="/files" class="nav-link {% if active_page == 'files' %}active{% endif %}">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                                <polyline points="14,2 14,8 20,8" />
+                                <line x1="16" y1="13" x2="8" y2="13" />
+                                <line x1="16" y1="17" x2="8" y2="17" />
+                            </svg>
+                            <span>Input Files</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="/output-files" class="nav-link {% if active_page == 'output-files' %}active{% endif %}">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                                <polyline points="7,10 12,15 17,10" />
+                                <line x1="12" y1="15" x2="12" y2="3" />
+                            </svg>
+                            <span>Output Files</span>
+                        </a>
+                    </li>
+                </ul>
             </li>
-            <li>
-                <a href="/templates" class="nav-link {% if active_page == 'templates' %}active{% endif %}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-                        <polyline points="14,2 14,8 20,8" />
-                    </svg>
-                    <span>Templates</span>
-                </a>
-            </li>
-            <li>
-                <a href="/containers" class="nav-link {% if active_page == 'containers' %}active{% endif %}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" />
-                        <polyline points="3.27,6.96 12,12.01 20.73,6.96" />
-                        <line x1="12" y1="22.08" x2="12" y2="12" />
-                    </svg>
-                    <span>Containers</span>
-                </a>
-            </li>
-            <li>
-                <a href="/files" class="nav-link {% if active_page == 'files' %}active{% endif %}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-                        <polyline points="14,2 14,8 20,8" />
-                        <line x1="16" y1="13" x2="8" y2="13" />
-                        <line x1="16" y1="17" x2="8" y2="17" />
-                    </svg>
-                    <span>Input Files</span>
-                </a>
-            </li>
-            <li>
-                <a href="/output-files" class="nav-link {% if active_page == 'output-files' %}active{% endif %}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                        <polyline points="7,10 12,15 17,10" />
-                        <line x1="12" y1="15" x2="12" y2="3" />
-                    </svg>
-                    <span>Output Files</span>
-                </a>
+            <!-- System Section -->
+            <li class="nav-section" id="nav-section-system">
+                <div class="nav-section-header" data-section="system">
+                    <span class="nav-section-title">System</span>
+                    <span class="nav-section-toggle">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="6,9 12,15 18,9" />
+                        </svg>
+                    </span>
+                </div>
+                <ul class="nav-section-content">
+                    <li>
+                        <a href="/templates" class="nav-link {% if active_page == 'templates' %}active{% endif %}">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                                <polyline points="14,2 14,8 20,8" />
+                            </svg>
+                            <span>Templates</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="/containers" class="nav-link {% if active_page == 'containers' %}active{% endif %}">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" />
+                                <polyline points="3.27,6.96 12,12.01 20.73,6.96" />
+                                <line x1="12" y1="22.08" x2="12" y2="12" />
+                            </svg>
+                            <span>Containers</span>
+                        </a>
+                    </li>
+                </ul>
             </li>
         </ul>
         <div class="sidebar-footer">

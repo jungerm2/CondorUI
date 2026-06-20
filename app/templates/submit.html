@@ -16,63 +16,75 @@
             <button class="toggle-btn" data-mode="file" id="mode-file-btn">Upload File</button>
         </div>
 
-        <!-- Form Builder Mode -->
+        <!-- ===== Form Builder Mode ===== -->
         <div class="submit-mode active" id="mode-form">
-            <div class="form-grid" style="grid-template-columns: 1fr;">
-                <div class="card">
-                    <div class="card-header">
-                        <h2>Job Description</h2>
+            <div class="submit-grid">
+
+                <!-- Job Description -->
+                <div class="submit-card">
+                    <div class="submit-card-header">
+                        <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                            <polyline points="14,2 14,8 20,8" />
+                            <line x1="16" y1="13" x2="8" y2="13" />
+                            <line x1="16" y1="17" x2="8" y2="17" />
+                        </svg>
+                        <h3>Job Description</h3>
+                        <div class="card-tabs" style="margin-left: auto;">
+                            <button class="card-tab active" data-execmode="executable" id="execmode-exec-btn">Executable</button>
+                            <button class="card-tab" data-execmode="shell" id="execmode-shell-btn">Shell</button>
+                        </div>
                     </div>
-                    <div class="card-body">
-                        <div class="form-group">
-                            <label for="job-name">Job Name</label>
-                            <input type="text" id="job-name" placeholder="My Job" class="form-input">
-                        </div>
-                        <div class="form-group">
-                            <label for="job-universe">Universe</label>
-                            <select id="job-universe" class="form-input">
-                                <option value="vanilla">Vanilla</option>
-                                <option value="container">Container</option>
-                                <option value="docker">Docker</option>
-                                <option value="local">Local</option>
-                            </select>
-                        </div>
-                        <div class="form-group" id="container-image-group" style="display:none;">
-                            <label for="job-container-image">
-                                Container Image
-                                <span class="info-icon" data-tip="Path to a container image on OSDF (e.g., osdf:///path/to/image.sif)">?</span>
-                            </label>
-                            <input type="text" id="job-container-image" placeholder="osdf:///path/to/image.sif"
-                                class="form-input">
-                        </div>
-                        <div class="form-group" id="container-select-group" style="display:none;">
-                            <label for="job-container-select">
-                                Available Containers
-                                <span class="info-icon" data-tip="Select from containers already pulled/stored on this system">?</span>
-                            </label>
-                            <select id="job-container-select" class="form-input">
-                                <option value="">— Select a container —</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <div class="exec-shell-toggle">
-                                <button class="toggle-btn active" data-execmode="executable" id="execmode-exec-btn">Executable</button>
-                                <button class="toggle-btn" data-execmode="shell" id="execmode-shell-btn">Shell</button>
+                    <div class="submit-card-body">
+                        <div class="submit-form-row">
+                            <div class="form-group">
+                                <label for="job-name">Job Name</label>
+                                <input type="text" id="job-name" placeholder="My Job" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="job-universe">Universe</label>
+                                <select id="job-universe" class="form-input">
+                                    <option value="vanilla">Vanilla</option>
+                                    <option value="container">Container</option>
+                                    <option value="docker">Docker</option>
+                                    <option value="local">Local</option>
+                                </select>
                             </div>
                         </div>
-                        <div class="form-group execmode-field" id="exec-field">
-                            <label for="job-executable">Executable</label>
-                            <input type="text" id="job-executable" placeholder="/bin/sleep" class="form-input"
-                                required>
+                        <div class="submit-form-row" id="container-image-group" style="display:none;">
+                            <div class="form-group">
+                                <label for="job-container-image">
+                                    Container Image
+                                    <span class="info-icon" data-tip="Path to a container image on OSDF (e.g., osdf:///path/to/image.sif)">?</span>
+                                </label>
+                                <input type="text" id="job-container-image" placeholder="osdf:///path/to/image.sif"
+                                    class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="job-container-select">
+                                    Available Containers
+                                    <span class="info-icon" data-tip="Select from containers already pulled/stored on this system">?</span>
+                                </label>
+                                <select id="job-container-select" class="form-input">
+                                    <option value="">— Select a container —</option>
+                                </select>
+                            </div>
                         </div>
-                        <div class="form-group execmode-field" id="shell-field" style="display:none;">
-                            <label for="job-shell-cmd">Shell Command</label>
-                            <input type="text" id="job-shell-cmd" placeholder="sleep 60" class="form-input"
-                                required>
-                        </div>
-                        <div class="form-group execmode-field" id="args-field">
-                            <label for="job-arguments">Arguments</label>
-                            <input type="text" id="job-arguments" placeholder="60" class="form-input">
+                        <div class="submit-form-row">
+                            <div class="form-group execmode-field" id="exec-field">
+                                <label for="job-executable">Executable</label>
+                                <input type="text" id="job-executable" placeholder="/bin/sleep" class="form-input"
+                                    required>
+                            </div>
+                            <div class="form-group execmode-field form-group-full" id="shell-field" style="display:none;">
+                                <label for="job-shell-cmd">Shell Command</label>
+                                <input type="text" id="job-shell-cmd" placeholder="sleep 60" class="form-input"
+                                    required>
+                            </div>
+                            <div class="form-group execmode-field" id="args-field">
+                                <label for="job-arguments">Arguments</label>
+                                <input type="text" id="job-arguments" placeholder="60" class="form-input">
+                            </div>
                         </div>
                         <div class="form-group">
                             <label for="job-transfer-input">Transfer Input Files</label>
@@ -82,94 +94,142 @@
                     </div>
                 </div>
 
-                <div class="card">
-                    <div class="card-header">
-                        <h2>Resources</h2>
+                <!-- Input Files (co-located with the form, right after Job Description) -->
+                <div class="submit-card">
+                    <div class="submit-card-header">
+                        <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                            <polyline points="14,2 14,8 20,8" />
+                            <line x1="16" y1="13" x2="8" y2="13" />
+                            <line x1="16" y1="17" x2="8" y2="17" />
+                        </svg>
+                        <h3>Input Files</h3>
+                        <a href="/files" class="btn btn-ghost btn-sm" style="text-decoration: none; margin-left: auto;">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                                <polyline points="14,2 14,8 20,8" />
+                                <line x1="16" y1="13" x2="8" y2="13" />
+                                <line x1="16" y1="17" x2="8" y2="17" />
+                            </svg>
+                            Manage Files
+                        </a>
                     </div>
-                    <div class="card-body">
-                        <div class="form-group">
-                            <label for="job-cpus">CPUs</label>
-                            <input type="number" id="job-cpus" value="1" min="1" class="form-input">
-                        </div>
-                        <div class="form-group">
-                            <label for="job-memory">Memory</label>
-                            <input type="text" id="job-memory" value="1 GB" class="form-input">
-                        </div>
-                        <div class="form-group">
-                            <label for="job-disk">Disk</label>
-                            <input type="text" id="job-disk" value="1 GB" class="form-input">
-                        </div>
-                        <div class="form-group">
-                            <label for="job-gpus">
-                                Request GPUs
-                                <span class="info-icon" data-tip="Number of GPUs requested for this job. See: request_gpus in condor_submit">?</span>
-                            </label>
-                            <input type="number" id="job-gpus" value="0" min="0" class="form-input">
-                        </div>
-                        <div class="form-group">
-                            <label for="job-gpu-min-capability">
-                                GPU Min Capability
-                                <span class="info-icon" data-tip="Minimum GPU capability version (e.g., 8.5). See: gpus_minimum_capability in condor_submit">?</span>
-                            </label>
-                            <input type="text" id="job-gpu-min-capability" placeholder="e.g. 8.5" class="form-input">
-                        </div>
-                        <div class="form-group">
-                            <label for="job-gpu-min-memory">
-                                GPU Min Memory
-                                <span class="info-icon" data-tip="Minimum GPU memory (e.g., 4 GB). See: gpus_minimum_memory in condor_submit">?</span>
-                            </label>
-                            <input type="text" id="job-gpu-min-memory" placeholder="e.g. 4 GB" class="form-input">
-                        </div>
-                        <div class="form-group">
-                            <label for="job-gpu-min-runtime">
-                                GPU Min Runtime
-                                <span class="info-icon" data-tip="Minimum GPU runtime version (e.g., 9.1). See: gpus_minimum_runtime in condor_submit">?</span>
-                            </label>
-                            <input type="text" id="job-gpu-min-runtime" placeholder="e.g. 9.1" class="form-input">
-                        </div>
-                        <div class="form-group">
-                            <label for="job-cuda-version">
-                                CUDA Version
-                                <span class="info-icon" data-tip="CUDA runtime version required (e.g., 9.1). See: cuda_version in condor_submit">?</span>
-                            </label>
-                            <input type="text" id="job-cuda-version" placeholder="e.g. 9.1" class="form-input">
+                    <div class="submit-card-body submit-files-card">
+                        <div id="submit-files-list">
+                            <p class="hint" style="color: var(--text-muted); font-size: 0.85rem;">Loading files...</p>
                         </div>
                     </div>
                 </div>
 
-                <div class="card" style="margin-top: 16px;">
-                    <div class="card-header">
-                        <h2>Output</h2>
+                <!-- Resources -->
+                <div class="submit-card">
+                    <div class="submit-card-header">
+                        <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <rect x="2" y="2" width="20" height="8" rx="2" ry="2" />
+                            <rect x="2" y="14" width="20" height="8" rx="2" ry="2" />
+                            <line x1="6" y1="6" x2="6.01" y2="6" />
+                            <line x1="6" y1="18" x2="6.01" y2="18" />
+                        </svg>
+                        <h3>Resources</h3>
                     </div>
-                    <div class="card-body">
-                        <div class="form-group">
-                            <label for="job-output">Output File</label>
-                            <input type="text" id="job-output" value="$(LogsDir)/job_$(ClusterId)_$(ProcId).out"
-                                class="form-input">
+                    <div class="submit-card-body">
+                        <div class="submit-form-row">
+                            <div class="form-group">
+                                <label for="job-cpus">CPUs</label>
+                                <input type="number" id="job-cpus" value="1" min="1" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="job-memory">Memory</label>
+                                <input type="text" id="job-memory" value="1 GB" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="job-disk">Disk</label>
+                                <input type="text" id="job-disk" value="1 GB" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="job-gpus">
+                                    Request GPUs
+                                    <span class="info-icon" data-tip="Number of GPUs requested for this job. See: request_gpus in condor_submit">?</span>
+                                </label>
+                                <input type="number" id="job-gpus" value="0" min="0" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="job-gpu-min-capability">
+                                    GPU Min Capability
+                                    <span class="info-icon" data-tip="Minimum GPU capability version (e.g., 8.5). See: gpus_minimum_capability in condor_submit">?</span>
+                                </label>
+                                <input type="text" id="job-gpu-min-capability" placeholder="e.g. 8.5" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="job-gpu-min-memory">
+                                    GPU Min Memory
+                                    <span class="info-icon" data-tip="Minimum GPU memory (e.g., 4 GB). See: gpus_minimum_memory in condor_submit">?</span>
+                                </label>
+                                <input type="text" id="job-gpu-min-memory" placeholder="e.g. 4 GB" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="job-gpu-min-runtime">
+                                    GPU Min Runtime
+                                    <span class="info-icon" data-tip="Minimum GPU runtime version (e.g., 9.1). See: gpus_minimum_runtime in condor_submit">?</span>
+                                </label>
+                                <input type="text" id="job-gpu-min-runtime" placeholder="e.g. 9.1" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="job-cuda-version">
+                                    CUDA Version
+                                    <span class="info-icon" data-tip="CUDA runtime version required (e.g., 9.1). See: cuda_version in condor_submit">?</span>
+                                </label>
+                                <input type="text" id="job-cuda-version" placeholder="e.g. 9.1" class="form-input">
+                            </div>
                         </div>
-                        <div class="form-group">
-                            <label for="job-error">Error File</label>
-                            <input type="text" id="job-error" value="$(LogsDir)/job_$(ClusterId)_$(ProcId).err"
-                                class="form-input">
-                        </div>
-                        <div class="form-group">
-                            <label for="job-log">Log File</label>
-                            <input type="text" id="job-log" value="$(LogsDir)/job_$(ClusterId).log"
-                                class="form-input">
-                        </div>
-                        <div class="form-group">
-                            <label for="job-transfer-output">
-                                Transfer Output Files
-                                <span class="info-icon" data-tip="Files to transfer back from the job working directory (comma-separated)">?</span>
-                            </label>
-                            <input type="text" id="job-transfer-output" placeholder="output.dat, results.tar.gz" class="form-input">
-                        </div>
-                        <div class="form-group">
-                            <label for="job-output-directory">
-                                Output Directory
-                                <span class="info-icon" data-tip="All output files from 'Transfer Output Files' go to this directory (not logs/stdout/stderr). Use $(OutputsDir) (per-job dir), osdf:///, or file:///staging/ for large outputs.">?</span>
-                            </label>
-                            <input type="text" id="job-output-directory" value="$(OutputsDir)" class="form-input">
+                    </div>
+                </div>
+
+                <!-- Output -->
+                <div class="submit-card">
+                    <div class="submit-card-header">
+                        <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                            <polyline points="7,10 12,15 17,10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                        <h3>Output</h3>
+                    </div>
+                    <div class="submit-card-body">
+                        <div class="submit-form-row">
+                            <div class="form-group">
+                                <label for="job-output">Output File</label>
+                                <input type="text" id="job-output" value="$(LogsDir)/job_$(ClusterId)_$(ProcId).out"
+                                    class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="job-error">Error File</label>
+                                <input type="text" id="job-error" value="$(LogsDir)/job_$(ClusterId)_$(ProcId).err"
+                                    class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="job-log">Log File</label>
+                                <input type="text" id="job-log" value="$(LogsDir)/job_$(ClusterId).log"
+                                    class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="job-transfer-output">
+                                    Transfer Output Files
+                                    <span class="info-icon" data-tip="Files to transfer back from the job working directory (comma-separated)">?</span>
+                                </label>
+                                <input type="text" id="job-transfer-output" placeholder="output.dat, results.tar.gz" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="job-output-directory">
+                                    Output Directory
+                                    <span class="info-icon" data-tip="All output files from 'Transfer Output Files' go to this directory (not logs/stdout/stderr). Use $(OutputsDir) (per-job dir), osdf:///, or file:///staging/ for large outputs.">?</span>
+                                </label>
+                                <input type="text" id="job-output-directory" value="$(OutputsDir)" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="job-count">Number of Jobs</label>
+                                <input type="number" id="job-count" value="1" min="1" class="form-input">
+                            </div>
                         </div>
                         <div class="form-group">
                             <label for="job-output-remaps">
@@ -178,18 +238,20 @@
                             </label>
                             <textarea id="job-output-remaps" rows="3" class="form-input" placeholder="output.dat = osdf:///chtc/staging/u/username/output.dat"></textarea>
                         </div>
-                        <div class="form-group">
-                            <label for="job-count">Number of Jobs</label>
-                            <input type="number" id="job-count" value="1" min="1" class="form-input">
-                        </div>
                     </div>
                 </div>
 
-                <div class="card full-width">
-                    <div class="card-header">
-                        <h2>Additional ClassAd Attributes</h2>
+                <!-- Additional ClassAd Attributes -->
+                <div class="submit-card">
+                    <div class="submit-card-header">
+                        <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <circle cx="12" cy="12" r="10" />
+                            <line x1="12" y1="16" x2="12" y2="12" />
+                            <line x1="12" y1="8" x2="12.01" y2="8" />
+                        </svg>
+                        <h3>Additional ClassAd Attributes</h3>
                     </div>
-                    <div class="card-body">
+                    <div class="submit-card-body">
                         <div id="extra-attrs" class="extra-attrs">
                             <!-- Dynamic key-value rows added here -->
                         </div>
@@ -202,96 +264,96 @@
                         </button>
                     </div>
                 </div>
-            </div>
 
-            <!-- Input Files from server -->
-            <div class="card full-width">
-                <div class="card-header">
-                    <h2>Input Files</h2>
-                    <a href="/files" class="btn btn-ghost btn-sm" style="text-decoration: none;">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-                            <polyline points="14,2 14,8 20,8" />
-                            <line x1="16" y1="13" x2="8" y2="13" />
-                            <line x1="16" y1="17" x2="8" y2="17" />
-                        </svg>
-                        Manage Files
-                    </a>
-                </div>
-                <div class="card-body">
-                    <div id="submit-files-list">
-                        <p class="hint" style="color: var(--text-muted); font-size: 0.85rem;">Loading files...</p>
+                <!-- Available Variables -->
+                <details class="card">
+                    <summary class="card-header" style="cursor: pointer;">
+                        <h2>Available Variables</h2>
+                        <span class="summary-hint">Click to expand</span>
+                    </summary>
+                    <div class="card-body">
+                        <p style="color: var(--text-secondary); margin-bottom: 12px;">
+                            The following variables are automatically set by the Web UI and can be used in submit descriptions:
+                        </p>
+
+                        <h4 style="font-size: 0.85rem; font-weight: 600; color: var(--accent-cyan); margin-bottom: 8px; margin-top: 16px;">Standard HTCondor Variables</h4>
+                        <table class="data-table" style="font-size: 0.85rem;">
+                            <thead>
+                                <tr>
+                                    <th>Variable</th>
+                                    <th>Description</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr><td><code>$(ClusterId)</code></td><td>The cluster ID assigned to this job by HTCondor</td></tr>
+                                <tr><td><code>$(ProcId)</code></td><td>The proc ID for each process (0, 1, 2, ...)</td></tr>
+                                <tr><td><code>$(Owner)</code></td><td>The user who submitted the job</td></tr>
+                                <tr><td><code>$(QDate)</code></td><td>The date and time the job entered the queue (Unix timestamp)</td></tr>
+                            </tbody>
+                        </table>
+
+                        <h4 style="font-size: 0.85rem; font-weight: 600; color: var(--accent-purple); margin-bottom: 8px; margin-top: 20px;">Web UI Custom Variables</h4>
+                        <table class="data-table" style="font-size: 0.85rem;">
+                            <thead>
+                                <tr>
+                                    <th>Variable</th>
+                                    <th>Description</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr><td><code>$(LogsDir)</code></td><td>Per-job directory for log, stdout, and stderr files</td></tr>
+                                <tr><td><code>$(OutputsDir)</code></td><td>Per-job directory for output files transferred back from the job</td></tr>
+                            </tbody>
+                        </table>
+
+                        <p style="color: var(--text-muted); font-size: 0.82rem; margin-top: 12px;">
+                            Example: <code>output = $(OutputsDir)/$(ClusterId).out</code> writes output to a per-job directory.
+                            See the <a href="https://htcondor.readthedocs.io/en/latest/man-pages/condor_submit.html#submit-variables" target="_blank" style="color: var(--accent-cyan);">HTCondor Manual</a> for more submit file options.
+                        </p>
                     </div>
-                </div>
-            </div>
+                </details>
 
-            <!-- Available Variables -->
-            <details class="card full-width" style="margin-top: 16px;">
-                <summary class="card-header" style="cursor: pointer;">
-                    <h2>Available Variables</h2>
-                    <span class="summary-hint">Click to expand</span>
-                </summary>
-                <div class="card-body">
-                    <p style="color: var(--text-secondary); margin-bottom: 12px;">
-                        The following variables are automatically set by the Web UI and can be used in submit descriptions:
-                    </p>
-                    <table class="data-table" style="font-size: 0.85rem;">
-                        <thead>
-                            <tr>
-                                <th>Variable</th>
-                                <th>Description</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr><td><code>$(ClusterId)</code></td><td>The cluster ID assigned to this job by HTCondor</td></tr>
-                            <tr><td><code>$(ProcId)</code></td><td>The proc ID for each process (0, 1, 2, ...)</td></tr>
-                            <tr><td><code>$(LogsDir)</code></td><td>Per-job directory for log, stdout, and stderr files</td></tr>
-                            <tr><td><code>$(OutputsDir)</code></td><td>Per-job directory for output files transferred back from the job</td></tr>
-                            <tr><td><code>$(Owner)</code></td><td>The user who submitted the job</td></tr>
-                            <tr><td><code>$(QDate)</code></td><td>The date and time the job entered the queue (Unix timestamp)</td></tr>
-                        </tbody>
-                    </table>
-                    <p style="color: var(--text-muted); font-size: 0.82rem; margin-top: 12px;">
-                        Example: <code>output = $(OutputsDir)/$(ClusterId).out</code> writes output to a per-job directory.
-                        See the <a href="https://htcondor.readthedocs.io/en/latest/man-pages/condor_submit.html#submit-variables" target="_blank" style="color: var(--accent-cyan);">HTCondor Manual</a> for more submit file options.
-                    </p>
+                <!-- Submit Actions -->
+                <div class="submit-actions">
+                    <button class="btn btn-ghost btn-lg" id="save-as-tmpl-btn" type="button">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="margin-right: 8px;">
+                            <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" />
+                            <polyline points="17,21 17,13 7,13 7,21" />
+                            <polyline points="7,3 7,8 15,8" />
+                        </svg>
+                        Save as Template
+                    </button>
+                    <button class="btn btn-primary btn-lg" id="submit-form-btn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18"
+                            height="18">
+                            <path d="M22 2L11 13" />
+                            <polygon points="22,2 15,22 11,13 2,9" />
+                        </svg>
+                        Submit Job
+                    </button>
                 </div>
-            </details>
-
-            <div class="submit-actions">
-                <button class="btn btn-ghost btn-lg" id="save-as-tmpl-btn" type="button">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="margin-right: 8px;">
-                        <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" />
-                        <polyline points="17,21 17,13 7,13 7,21" />
-                        <polyline points="7,3 7,8 15,8" />
-                    </svg>
-                    Save as Template
-                </button>
-                <button class="btn btn-primary btn-lg" id="submit-form-btn">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18"
-                        height="18">
-                        <path d="M22 2L11 13" />
-                        <polygon points="22,2 15,22 11,13 2,9" />
-                    </svg>
-                    Submit Job
-                </button>
             </div>
         </div>
 
-        <!-- Raw Editor Mode -->
+        <!-- ===== Raw Editor Mode ===== -->
         <div class="submit-mode" id="mode-raw">
-            <div class="card">
-                <div class="card-header">
-                    <h2>Submit Description</h2>
-                    <span class="hint">Write your submit description as you would in a .sub file</span>
-                </div>
-                <div class="card-body">
-                    <div class="form-group">
-                        <label for="raw-job-name">Job Name</label>
-                        <input type="text" id="raw-job-name" placeholder="My Job" class="form-input">
+            <div class="submit-grid">
+                <div class="submit-card">
+                    <div class="submit-card-header">
+                        <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <polyline points="16,18 22,12 16,6" />
+                            <polyline points="8,6 2,12 8,18" />
+                        </svg>
+                        <h3>Submit Description</h3>
+                        <span class="hint" style="margin-left: auto;">Write your submit description as you would in a .sub file</span>
                     </div>
-                    <textarea class="code-editor" id="raw-submit-editor" rows="20" spellcheck="false"
-                        placeholder="universe = vanilla
+                    <div class="submit-card-body">
+                        <div class="form-group">
+                            <label for="raw-job-name">Job Name</label>
+                            <input type="text" id="raw-job-name" placeholder="My Job" class="form-input">
+                        </div>
+                        <textarea class="code-editor" id="raw-submit-editor" rows="20" spellcheck="false"
+                            placeholder="universe = vanilla
 executable = /bin/sleep
 arguments = 60
 
@@ -304,53 +366,68 @@ request_memory = 1 GB
 request_disk = 1 GB
 
 queue 1"></textarea>
+                    </div>
                 </div>
-            </div>
-            <div class="submit-actions">
-                <button class="btn btn-primary btn-lg" id="submit-raw-btn">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18"
-                        height="18">
-                        <path d="M22 2L11 13" />
-                        <polygon points="22,2 15,22 11,13 2,9" />
-                    </svg>
-                    Submit Job
-                </button>
+                <div class="submit-actions">
+                    <button class="btn btn-ghost btn-lg" id="raw-save-as-tmpl-btn" type="button">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="margin-right: 8px;">
+                            <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" />
+                            <polyline points="17,21 17,13 7,13 7,21" />
+                            <polyline points="7,3 7,8 15,8" />
+                        </svg>
+                        Save as Template
+                    </button>
+                    <button class="btn btn-primary btn-lg" id="submit-raw-btn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18"
+                            height="18">
+                            <path d="M22 2L11 13" />
+                            <polygon points="22,2 15,22 11,13 2,9" />
+                        </svg>
+                        Submit Job
+                    </button>
+                </div>
             </div>
         </div>
 
-        <!-- File Upload Mode -->
+        <!-- ===== File Upload Mode ===== -->
         <div class="submit-mode" id="mode-file">
-            <div class="card">
-                <div class="card-header">
-                    <h2>Upload Submit File</h2>
-                </div>
-                <div class="card-body">
-                    <div class="form-group">
-                        <label for="file-job-name">Job Name</label>
-                        <input type="text" id="file-job-name" placeholder="My Job" class="form-input">
-                    </div>
-                    <div class="dropzone" id="submit-file-dropzone">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48"
-                            height="48">
+            <div class="submit-grid">
+                <div class="submit-card">
+                    <div class="submit-card-header">
+                        <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                             <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
                             <polyline points="14,2 14,8 20,8" />
                         </svg>
-                        <p>Drag & drop a <strong>.sub</strong> file here, or <strong>click to browse</strong>
-                        </p>
-                        <input type="file" id="submit-file-input" accept=".sub,.submit,.txt,.condor" hidden>
+                        <h3>Upload Submit File</h3>
                     </div>
-                    <div class="file-preview" id="file-preview"></div>
+                    <div class="submit-card-body">
+                        <div class="form-group">
+                            <label for="file-job-name">Job Name</label>
+                            <input type="text" id="file-job-name" placeholder="My Job" class="form-input">
+                        </div>
+                        <div class="dropzone" id="submit-file-dropzone">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48"
+                                height="48">
+                                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                                <polyline points="14,2 14,8 20,8" />
+                            </svg>
+                            <p>Drag & drop a <strong>.sub</strong> file here, or <strong>click to browse</strong>
+                            </p>
+                            <input type="file" id="submit-file-input" accept=".sub,.submit,.txt,.condor" hidden>
+                        </div>
+                        <div class="file-preview" id="file-preview"></div>
+                    </div>
                 </div>
-            </div>
-            <div class="submit-actions">
-                <button class="btn btn-primary btn-lg" id="submit-file-btn" disabled>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18"
-                        height="18">
-                        <path d="M22 2L11 13" />
-                        <polygon points="22,2 15,22 11,13 2,9" />
-                    </svg>
-                    Submit File
-                </button>
+                <div class="submit-actions">
+                    <button class="btn btn-primary btn-lg" id="submit-file-btn" disabled>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18"
+                            height="18">
+                            <path d="M22 2L11 13" />
+                            <polygon points="22,2 15,22 11,13 2,9" />
+                        </svg>
+                        Submit File
+                    </button>
+                </div>
             </div>
         </div>
     </div>

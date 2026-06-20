@@ -785,12 +785,12 @@ document.addEventListener('DOMContentLoaded', () => {
     $('#job-universe').addEventListener('change', (e) => {
         const containerGroup = $('#container-image-group');
         const containerSelectGroup = $('#container-select-group');
-        if (e.target.value === 'container') {
+        if (e.target.value === 'container' || e.target.value === 'docker') {
             containerGroup.style.display = 'block';
-            containerSelectGroup.style.display = 'block';
+            if (containerSelectGroup) containerSelectGroup.style.display = 'block';
         } else {
             containerGroup.style.display = 'none';
-            containerSelectGroup.style.display = 'none';
+            if (containerSelectGroup) containerSelectGroup.style.display = 'none';
         }
     });
 
@@ -839,19 +839,5 @@ document.addEventListener('DOMContentLoaded', () => {
     $('#submit-file-btn').addEventListener('click', submitUploadedFileJob);
 
     $('#save-as-tmpl-btn').addEventListener('click', () => saveAsTemplate('form'));
-
-    const rawSaveBtn = document.createElement('button');
-    rawSaveBtn.className = 'btn btn-ghost btn-lg';
-    rawSaveBtn.id = 'raw-save-as-tmpl-btn';
-    rawSaveBtn.type = 'button';
-    rawSaveBtn.innerHTML = `
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="margin-right: 8px;">
-            <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" />
-            <polyline points="17,21 17,13 7,13 7,21" />
-            <polyline points="7,3 7,8 15,8" />
-        </svg>
-        Save as Template
-    `;
-    $('#mode-raw .submit-actions').insertBefore(rawSaveBtn, $('#submit-raw-btn'));
-    rawSaveBtn.addEventListener('click', () => saveAsTemplate('raw'));
+    $('#raw-save-as-tmpl-btn').addEventListener('click', () => saveAsTemplate('raw'));
 });

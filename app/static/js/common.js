@@ -722,8 +722,65 @@ function uploadFileRaw(file, url, options = {}) {
     return { promise, abort: () => xhr.abort() };
 }
 
+// ---------------------------------------------------------------------------
+// Sidebar Collapse / Expand
+// ---------------------------------------------------------------------------
+
+function initSidebar() {
+    const collapseBtn = $('#sidebar-collapse-btn');
+    if (!collapseBtn) return;
+
+    // Toggle sidebar collapsed state
+    collapseBtn.addEventListener('click', () => {
+        const isCollapsed = document.documentElement.classList.toggle('sidebar-collapsed');
+        localStorage.setItem('sidebarCollapsed', isCollapsed);
+    });
+
+    // Initialize nav section collapse/expand
+    initNavSections();
+}
+
+function initNavSections() {
+    const sections = document.querySelectorAll('.nav-section');
+    if (!sections.length) return;
+
+    sections.forEach(section => {
+        const header = section.querySelector('.nav-section-header');
+        const content = section.querySelector('.nav-section-content');
+        if (!header || !content) return;
+
+        // Set initial max-height so the collapse animation works
+        const sectionId = section.id;
+        const isCollapsed = localStorage.getItem(`navSection_${sectionId}`) === 'collapsed';
+
+        if (isCollapsed) {
+            section.classList.add('collapsed');
+        } else {
+            // Expand: set max-height to scrollHeight
+            content.style.maxHeight = content.scrollHeight + 'px';
+        }
+
+        header.addEventListener('click', () => {
+            const wasCollapsed = section.classList.contains('collapsed');
+
+            if (wasCollapsed) {
+                // Expand
+                section.classList.remove('collapsed');
+                content.style.maxHeight = content.scrollHeight + 'px';
+                localStorage.setItem(`navSection_${sectionId}`, 'expanded');
+            } else {
+                // Collapse
+                section.classList.add('collapsed');
+                content.style.maxHeight = '0';
+                localStorage.setItem(`navSection_${sectionId}`, 'collapsed');
+            }
+        });
+    });
+}
+
 // Run basic initializations on DOMContentLoaded
 document.addEventListener('DOMContentLoaded', () => {
     initTheme();
     initConnectionMonitor();
+    initSidebar();
 });
