@@ -526,17 +526,6 @@ body {
 .btn-danger { background: rgba(248,113,113,0.15); color: var(--status-held); border: 1px solid rgba(248,113,113,0.2); }
 .btn-danger:hover:not(:disabled) { background: rgba(248,113,113,0.25); }
 
-.btn-remove {
-    background: rgba(248,113,113,0.12);
-    color: var(--status-held);
-    border: 1px solid rgba(248,113,113,0.2);
-}
-.btn-remove:hover:not(:disabled) {
-    background: rgba(248,113,113,0.25);
-    border-color: var(--status-held);
-    color: #fff;
-}
-
 .btn-sm { padding: 5px 10px; font-size: 0.8rem; }
 .btn-lg { padding: 12px 24px; font-size: 0.95rem; }
 
@@ -622,49 +611,6 @@ select option {
     color: var(--text-primary);
 }
 
-.form-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.form-grid .full-width { grid-column: 1 / -1; }
-
-/* Gap between form-grid and sibling full-width cards (e.g., Upload Input Files) */
-.form-grid + .card.full-width { margin-top: 16px; }
-
-/* ===== Checkbox Label ===== */
-.checkbox-label {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    cursor: pointer;
-    padding: 8px 12px;
-    background: var(--bg-input);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-sm);
-    transition: all var(--transition);
-}
-.checkbox-label:hover {
-    border-color: var(--border-hover);
-    background: rgba(100, 120, 180, 0.05);
-}
-.form-checkbox {
-    width: 18px;
-    height: 18px;
-    accent-color: var(--accent-cyan);
-    cursor: pointer;
-    flex-shrink: 0;
-}
-.checkbox-text {
-    font-size: 0.85rem;
-    color: var(--text-secondary);
-    user-select: none;
-}
-.checkbox-label:has(.form-checkbox:checked) {
-    border-color: rgba(34, 211, 238, 0.3);
-    background: rgba(34, 211, 238, 0.05);
-}
-.checkbox-label:has(.form-checkbox:checked) .checkbox-text {
-    color: var(--accent-cyan);
-}
-
 .extra-attrs { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 .attr-row { display: flex; gap: 8px; align-items: center; }
 .attr-row input { flex: 1; }
@@ -707,7 +653,7 @@ select option {
     font-weight: 400;
     color: var(--text-secondary);
     white-space: nowrap;
-    max-width: 480px;
+    width: 15em;
     white-space: normal;
     word-wrap: break-word;
     box-shadow: var(--shadow-md);
@@ -795,15 +741,6 @@ details.card[open] .card-body {
     display: inline-flex; 
     gap: 4px; 
     margin-bottom: 24px; 
-    background: var(--bg-secondary); 
-    border: 1px solid var(--border-color); 
-    border-radius: var(--radius-md); 
-    padding: 4px; 
-}
-
-.exec-shell-toggle { 
-    display: inline-flex; 
-    gap: 4px; 
     background: var(--bg-secondary); 
     border: 1px solid var(--border-color); 
     border-radius: var(--radius-md); 
@@ -1007,11 +944,6 @@ details.card[open] .card-body {
     color: var(--text-muted);
 }
 
-/* Variables section - compact table style in submit */
-.submit-variables {
-    font-size: 0.85rem;
-}
-
 /* ===== Code Editor ===== */
 .code-editor {
     width: 100%; padding: 16px; min-height: 400px; resize: vertical;
@@ -1033,16 +965,6 @@ details.card[open] .card-body {
 .dropzone svg { margin-bottom: 12px; color: var(--text-muted); }
 .dropzone p { margin-bottom: 4px; }
 .dropzone .dropzone-hint { font-size: 0.8rem; color: var(--text-muted); }
-
-.uploaded-files { margin-top: 12px; }
-.uploaded-file {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 8px 12px; background: rgba(34,211,238,0.05);
-    border: 1px solid rgba(34,211,238,0.15);
-    border-radius: var(--radius-sm); margin-bottom: 6px;
-    font-size: 0.85rem;
-}
-.uploaded-file .filename { font-family: var(--font-mono); color: var(--accent-cyan); }
 
 .file-preview { margin-top: 12px; }
 .file-preview pre {
@@ -1102,87 +1024,12 @@ details.card[open] .card-body {
     flex: 1;
 }
 
-/* ===== Sort Arrows ===== */
-.sort-arrow {
-    font-size: 0.7rem;
-    margin-left: 2px;
-    color: var(--accent-cyan);
-}
-.data-table thead th.sortable:hover .sort-arrow {
-    opacity: 0.5;
-}
-
-.detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
-.detail-item { padding: 10px 14px; background: var(--bg-card); border-radius: var(--radius-sm); border: 1px solid var(--border-color); }
-.detail-item .detail-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
-.detail-item .detail-value { font-size: 0.9rem; font-family: var(--font-mono); word-break: break-all; }
-.detail-item.full-width { grid-column: 1 / -1; }
-
 .log-output {
     background: #050810; border: 1px solid var(--border-color);
     border-radius: var(--radius-sm); padding: 16px;
     font-family: var(--font-mono); font-size: 0.78rem;
     line-height: 1.7; max-height: 300px; overflow: auto;
     color: var(--text-secondary); white-space: pre-wrap; word-break: break-all;
-}
-
-/* ===== Resource Usage Grid (Job Details) ===== */
-.usage-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-.usage-item {
-    background: var(--bg-card);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-sm);
-    padding: 12px 16px;
-}
-.usage-label {
-    display: block;
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 8px;
-    font-weight: 600;
-}
-.usage-values {
-    display: flex;
-    gap: 24px;
-    flex-wrap: wrap;
-}
-.usage-value {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-.usage-value-label {
-    font-size: 0.7rem;
-    color: var(--text-muted);
-    text-transform: uppercase;
-}
-.usage-value-num {
-    font-size: 0.95rem;
-    font-family: var(--font-mono);
-    color: var(--text-primary);
-    font-weight: 500;
-}
-.usage-pct {
-    font-size: 0.75rem;
-    margin-left: 4px;
-    font-weight: 600;
-}
-.usage-pct.usage-warning {
-    color: var(--status-idle);
-}
-.usage-pct.usage-exceeded {
-    color: var(--status-held);
-}
-.usage-notes {
-    color: var(--text-muted);
-    font-size: 0.85rem;
-    font-style: italic;
 }
 
 /* ===== Toast Notifications ===== */
@@ -1204,174 +1051,4 @@ details.card[open] .card-body {
 @keyframes toastIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
 @keyframes toastOut { to { opacity: 0; transform: translateX(40px); } }
 
-/* ===== Badges ===== */
-.badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-}
-.badge-local {
-    background: rgba(96, 165, 250, 0.12);
-    color: var(--status-completed);
-    border: 1px solid rgba(96, 165, 250, 0.2);
-}
-.badge-osdf {
-    background: rgba(192, 132, 252, 0.12);
-    color: var(--status-transferring);
-    border: 1px solid rgba(192, 132, 252, 0.2);
-}
-
-/* ===== Action Buttons ===== */
-.action-btns {
-    display: flex;
-    gap: 4px;
-    flex-wrap: nowrap;
-}
-
-/* ===== Danger Button ===== */
-.btn-danger {
-    background: rgba(248, 113, 113, 0.12);
-    color: var(--status-held);
-    border: 1px solid rgba(248, 113, 113, 0.2);
-}
-.btn-danger:hover {
-    background: rgba(248, 113, 113, 0.2);
-    border-color: rgba(248, 113, 113, 0.4);
-}
-
-/* ===== Submit File Items (clickable file list on submit page) ===== */
-/* (Moved to submit-card context above) */
-
-/* ===== Alert / Warning Banner ===== */
-.alert {
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    padding: 14px 18px;
-    border-radius: var(--radius-md);
-    border: 1px solid;
-    font-size: 0.88rem;
-    line-height: 1.5;
-}
-.alert svg {
-    flex-shrink: 0;
-    margin-top: 2px;
-}
-.alert strong {
-    display: block;
-    margin-bottom: 2px;
-}
-.alert p {
-    margin: 0;
-    color: inherit;
-    font-size: 0.85rem;
-}
-.alert code {
-    background: rgba(0,0,0,0.15);
-    padding: 1px 5px;
-    border-radius: 3px;
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
-}
-.alert-warning {
-    background: rgba(251, 191, 36, 0.1);
-    border-color: rgba(251, 191, 36, 0.25);
-    color: var(--status-idle);
-}
-
-/* ===== Pull Log Output (SSE streaming) ===== */
-.pull-log-container {
-    margin-top: 12px;
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-sm);
-    overflow: hidden;
-}
-.pull-log-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 12px;
-    background: var(--bg-card);
-    border-bottom: 1px solid var(--border-color);
-    font-size: 0.82rem;
-    font-weight: 500;
-    color: var(--text-secondary);
-}
-.pull-log-output {
-    width: 100%;
-    min-height: 120px;
-    max-height: 400px;
-    padding: 12px;
-    margin: 0;
-    background: #050810;
-    border: none;
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-    line-height: 1.6;
-    color: var(--text-secondary);
-    overflow: auto;
-    white-space: pre;           /* preserve spacing for progress bars */
-    word-break: keep-all;       /* don't break progress bars mid-character */
-    overflow-wrap: normal;      /* don't wrap lines */
-}
-
-/* ===== Upload Progress Bar ===== */
-.upload-progress {
-    margin-top: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-.progress-bar-container {
-    width: 100%;
-    height: 8px;
-    background: var(--bg-input);
-    border-radius: 4px;
-    overflow: hidden;
-    border: 1px solid var(--border-color);
-}
-.progress-bar-fill {
-    height: 100%;
-    background: var(--accent-gradient);
-    border-radius: 4px;
-    transition: width 0.3s ease;
-}
-.progress-text {
-    font-size: 0.8rem;
-    color: var(--text-secondary);
-    font-family: var(--font-mono);
-}
-
-/* ===== Per-File Upload Progress List ===== */
-.upload-progress-item {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 10px 12px;
-    margin-bottom: 8px;
-    background: var(--bg-card);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-sm);
-}
-.upload-progress-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-}
-.upload-progress-filename {
-    font-size: 0.82rem;
-    font-weight: 500;
-    color: var(--text-primary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-.upload-progress-item .progress-bar-container {
-    height: 6px;
-}
 </style>

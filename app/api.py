@@ -1284,15 +1284,64 @@ def job_details(cluster_id: int):
     proc_id = request.args.get("proc", 0, type=int)
     tail = request.args.get("tail", 500, type=int)
     try:
+        # 1. Try the active schedd first (fast for running jobs)
         jobs = query_jobs(
             constraint=f"ClusterId == {cluster_id} && ProcId == {proc_id}"
         )
-        if not jobs:
-            jobs = query_history(
-                constraint=f"ClusterId == {cluster_id} && ProcId == {proc_id}",
-                limit=1,
-            )
         job = jobs[0] if jobs else {}
+
+        # 2. If not found in active queue, try the local DB first (fast, avoids slow condor_history)
+        if not job:
+            submission = JobSubmission.query.filter_by(cluster_id=cluster_id).first()
+            if submission:
+                # Build a synthetic job record from the local DB submission
+                from app.condor import JOB_STATUS_MAP
+
+                cmd = ""
+                try:
+                    if submission.submit_description.strip().startswith("{"):
+                        desc = json.loads(submission.submit_description)
+                        cmd = desc.get("executable", desc.get("shell", ""))
+                except (json.JSONDecodeError, AttributeError):
+                    cmd = ""
+
+                qdate = int(submission.submitted_at.timestamp()) if submission.submitted_at else 0
+                job = {
+                    "ClusterId": cluster_id,
+                    "ProcId": proc_id,
+                    "JobStatus": 4,
+                    "JobStatusName": "Completed",
+                    "Owner": "—",
+                    "Cmd": cmd,
+                    "Args": "",
+                    "RequestCpus": "—",
+                    "RequestMemory": "—",
+                    "RequestDisk": "—",
+                    "QDate": qdate,
+                    "JobStartDate": None,
+                    "CompletionDate": None,
+                    "HoldReason": "",
+                    "RemoteHost": "",
+                    "ImageSize": 0,
+                    "DiskUsage": 0,
+                    "ExitCode": 0,
+                    "ExitBySignal": False,
+                    "JobCurrentStartDate": None,
+                    "NumJobStarts": 1,
+                    "NumShadowStarts": 1,
+                    "JobBatchName": submission.name,
+                    "RemoteWallClockTime": 0,
+                    "CumulativeRemoteSysCpu": 0,
+                    "CumulativeRemoteUserCpu": 0,
+                }
+            else:
+                # 3. Last resort: query condor_history (slow, but necessary for jobs
+                #    submitted outside the web UI)
+                jobs = query_history(
+                    constraint=f"ClusterId == {cluster_id} && ProcId == {proc_id}",
+                    limit=1,
+                )
+                job = jobs[0] if jobs else {}
 
         # If the command is /bin/sh (shell job), try to extract the original
         # shell command from the submission record in the local database.
@@ -1310,10 +1359,28 @@ def job_details(cluster_id: int):
                         job["Cmd"] = shell_cmd
                         # Clear Args since the shell command is now the full Cmd
                         job["Args"] = ""
-            except json.JSONDecodeError, AttributeError:
+            except (json.JSONDecodeError, AttributeError):
                 pass
 
-        paths = get_job_log_file_paths(cluster_id, proc_id=proc_id)
+        # 4. Resolve log file paths — prefer DB paths, avoid redundant schedd queries
+        #    by extracting UserLog/Out/Err from the job data if available.
+        paths = {"log": "", "out": "", "err": ""}
+        if submission and submission.log_dir:
+            log_dir = submission.log_dir
+            paths["log"] = str(Path(log_dir) / f"job_{cluster_id}.log")
+            paths["out"] = str(Path(log_dir) / f"job_{cluster_id}_{proc_id}.out")
+            paths["err"] = str(Path(log_dir) / f"job_{cluster_id}_{proc_id}.err")
+            # If the DB paths don't exist on disk, fall through to check job ClassAds
+            if not Path(paths["log"]).exists():
+                paths = {"log": "", "out": "", "err": ""}
+        # Fallback: extract log paths from the job ClassAd data we already have
+        if not paths.get("log") and job:
+            if "UserLog" in job:
+                paths["log"] = job["UserLog"]
+            if "Out" in job:
+                paths["out"] = job["Out"]
+            if "Err" in job:
+                paths["err"] = job["Err"]
 
         log_content = get_job_file_content(paths.get("log", ""), tail=tail)
         stdout_content = get_job_file_content(paths.get("out", ""), tail=tail)
