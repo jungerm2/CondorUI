@@ -755,7 +755,7 @@ async function saveAsTemplate(mode) {
     window._saveTemplateMode = mode;
 }
 
-function confirmSaveTemplate() {
+async function confirmSaveTemplate() {
     const name = $('#save-template-name').value.trim();
     if (!name) {
         toast('Please enter a template name', 'warning');
