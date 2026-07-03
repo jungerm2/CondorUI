@@ -59,40 +59,52 @@ def create_job_directories(
 # ---------------------------------------------------------------------------
 
 
-def resolve_shell_commands(jobs: list[dict]) -> None:
-    """Resolve /bin/sh commands to the original shell command from the DB.
+def resolve_commands(jobs: list[dict]) -> None:
+    """Resolve Cmd attributes to their original values from the DB.
 
-    For any job in the list with Cmd == "/bin/sh", look up the submission
-    record in the local database and replace Cmd with the original shell
-    command (e.g., "ls -al") stored in the submit_description.
+    Handles two cases:
+    1. Shell jobs (Cmd == "/bin/sh"): Replace Cmd with the original shell
+       command (e.g., "ls -al") stored in the submit_description.
+    2. Executable jobs (Cmd is an absolute path): Replace Cmd with the
+       original relative executable path from the submit description.
 
     Modifies the list in-place.
     """
     from app.models import JobSubmission
 
-    shell_job_ids = [j.get("ClusterId") for j in jobs if j.get("Cmd") == "/bin/sh"]
-    if not shell_job_ids:
+    cluster_ids = [
+        j.get("ClusterId")
+        for j in jobs
+        if j.get("Cmd") == "/bin/sh" or Path(j.get("Cmd", "")).is_absolute()
+    ]
+    if not cluster_ids:
         return
 
     submissions = JobSubmission.query.filter(
-        JobSubmission.cluster_id.in_(shell_job_ids)
+        JobSubmission.cluster_id.in_(cluster_ids)
     ).all()
     sub_map = {s.cluster_id: s for s in submissions}
 
     for job in jobs:
-        if job.get("Cmd") != "/bin/sh":
-            continue
         sub = sub_map.get(job.get("ClusterId"))
         if not sub:
             continue
         try:
             desc = sub.submit_description
-            if desc and desc.strip().startswith("{"):
-                parsed = json.loads(desc)
+            if not desc or not desc.strip().startswith("{"):
+                continue
+            parsed = json.loads(desc)
+
+            cmd = job.get("Cmd", "")
+            if cmd == "/bin/sh":
                 shell_cmd = parsed.get("shell", "")
                 if shell_cmd:
                     job["Cmd"] = shell_cmd
                     job["Args"] = ""
+            elif Path(cmd).is_absolute():
+                orig_exec = parsed.get("executable", "")
+                if orig_exec and not Path(orig_exec).is_absolute():
+                    job["Cmd"] = orig_exec
         except json.JSONDecodeError, AttributeError:
             pass
 
@@ -235,20 +247,6 @@ def build_history_job(
         real_status = schedd_job.get("JobStatus", 4)
         cmd = schedd_job.get("Cmd", "")
         args = schedd_job.get("Args", "")
-
-        # If the command is /bin/sh (shell job), try to extract the original
-        # shell command from the submission record in the local database.
-        if cmd == "/bin/sh":
-            try:
-                desc = submission.submit_description
-                if desc and desc.strip().startswith("{"):
-                    parsed = json.loads(desc)
-                    shell_cmd = parsed.get("shell", "")
-                    if shell_cmd:
-                        cmd = shell_cmd
-                        args = ""
-            except json.JSONDecodeError, AttributeError:
-                pass
 
         return {
             "ClusterId": submission.cluster_id,

@@ -120,24 +120,33 @@ async function handleBulkDelete() {
     let detail = names.join(', ');
     if (count > 5) detail += `, and ${count - 5} more...`;
 
-    if (!confirm(`Are you sure you want to delete ${count} output file(s)?\n\n${detail}`)) return;
+    // Show confirmation modal
+    showConfirmModal(
+        `Are you sure you want to delete <strong>${count}</strong> output file(s)?<br><br><code style="font-size: 0.82rem;">${escHtml(detail)}</code>`,
+        {
+            title: 'Delete Output Files',
+            confirmText: `Delete ${count} File(s)`,
+            confirmClass: 'btn-danger',
+            onConfirm: async () => {
+                let successCount = 0;
+                let failCount = 0;
 
-    let successCount = 0;
-    let failCount = 0;
+                for (const [filename, info] of selectedFiles) {
+                    try {
+                        await api(`/output-files/delete/${info.cluster_id}/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+                        successCount++;
+                    } catch (err) {
+                        failCount++;
+                        toast(`Failed to delete '${filename}': ${err.message}`, 'error');
+                    }
+                }
 
-    for (const [filename, info] of selectedFiles) {
-        try {
-            await api(`/output-files/delete/${info.cluster_id}/${encodeURIComponent(filename)}`, { method: 'DELETE' });
-            successCount++;
-        } catch (err) {
-            failCount++;
-            toast(`Failed to delete '${filename}': ${err.message}`, 'error');
+                toast(`Deleted ${successCount} file(s)` + (failCount > 0 ? ` (${failCount} failed)` : ''));
+                selectedFiles.clear();
+                await loadOutputFiles();
+            },
         }
-    }
-
-    toast(`Deleted ${successCount} file(s)` + (failCount > 0 ? ` (${failCount} failed)` : ''));
-    selectedFiles.clear();
-    await loadOutputFiles();
+    );
 }
 
 document.addEventListener('DOMContentLoaded', () => {

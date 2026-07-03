@@ -115,7 +115,7 @@ function renderFiles() {
             </td>
             <td class="monospace">${escHtml(f.original_name)}</td>
             <td>${formatFileSize(f.size)}</td>
-            <td>${formatDateIso(f.uploaded_at)}</td>
+            <td>${formatDate(f.uploaded_at)}</td>
             <td><span class="badge ${locationClass}">${locationLabel}</span></td>
         `;
         tbody.appendChild(tr);

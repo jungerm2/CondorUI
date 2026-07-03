@@ -40,5 +40,8 @@ class Config:
     # Maximum number of history results to return by default
     MAX_HISTORY_RESULTS = int(os.environ.get("MAX_HISTORY_RESULTS", "200"))
 
+    # Directory for uploaded executables (flat, no UUID paths)
+    EXECUTABLES_DIR = os.environ.get("EXECUTABLES_DIR", str(BASE_DIR / "executables"))
+
     # Maximum upload size (10 GB) — containers can be very large
     MAX_CONTENT_LENGTH = 10 * 1024 * 1024 * 1024

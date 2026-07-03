@@ -58,7 +58,13 @@ function renderTemplatesGrid(templates) {
                 <span style="font-size: 0.75rem; color: var(--text-muted);">Saved: ${formatDate(new Date(tmpl.created_at).getTime()/1000)}</span>
             </div>
             <div class="card-footer" style="display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border-color); padding: 12px 16px; background: var(--bg-secondary);">
-                <button class="btn btn-ghost btn-sm delete-tmpl-btn" data-id="${tmpl.id}" style="color: var(--danger-color);">Delete</button>
+                <button class="btn btn-danger btn-sm delete-tmpl-btn" data-id="${tmpl.id}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                        <polyline points="3,6 5,6 21,6"></polyline>
+                        <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"></path>
+                    </svg>
+                    Delete
+                </button>
                 <button class="btn btn-primary btn-sm use-tmpl-btn" style="cursor: pointer;">Use Template</button>
             </div>
         `;

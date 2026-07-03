@@ -70,6 +70,15 @@ function escHtml(str) {
     return div.innerHTML;
 }
 
+// Modal helpers (shared across pages)
+function openModal(id) {
+    document.getElementById(id).classList.add('active');
+}
+
+function closeModal(id) {
+    document.getElementById(id).classList.remove('active');
+}
+
 // Common Formatting Helpers
 function formatDate(timestamp) {
     if (!timestamp) return '—';

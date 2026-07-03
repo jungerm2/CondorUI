@@ -13,6 +13,7 @@ import uuid
 from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, request, send_file
+from werkzeug.exceptions import HTTPException
 
 from app import db
 from app.condor import (
@@ -30,7 +31,7 @@ from app.condor import (
 )
 from app.models import JobSubmission, SubmitTemplate
 from app.utils import (
-    resolve_shell_commands,
+    resolve_commands,
     save_uploaded_stream,
     scan_uuid_directories,
 )
@@ -41,7 +42,6 @@ api_bp = Blueprint("api", __name__, url_prefix="/api")
 
 # These functions are now imported from app.utils
 # _save_uploaded_stream → save_uploaded_stream
-# _resolve_shell_commands → resolve_shell_commands
 
 
 def _resolve_path(path: str) -> str:
@@ -68,6 +68,8 @@ def _remove_empty_parents(path: Path) -> None:
 
 @api_bp.errorhandler(Exception)
 def handle_error(e: Exception):
+    if isinstance(e, HTTPException):
+        return jsonify({"error": e.description}), e.code
     logger.exception("Unhandled API error")
     return jsonify({"error": str(e)}), 500
 
@@ -133,9 +135,8 @@ def list_jobs():
         paginated = jobs[offset : offset + limit]
         has_more = (offset + limit) < total
 
-        # Resolve shell commands (/bin/sh) to the original shell command
-        # from the submission record in the local database.
-        resolve_shell_commands(paginated)
+        # Resolve shell & executable commands to original values from the DB
+        resolve_commands(paginated)
 
         return jsonify(
             {
@@ -252,22 +253,6 @@ def list_history():
             if schedd_job:
                 # Use the real status from the schedd
                 real_status = schedd_job.get("JobStatus", 4)
-                cmd = schedd_job.get("Cmd", "")
-                args = schedd_job.get("Args", "")
-
-                # If the command is /bin/sh (shell job), try to extract the original
-                # shell command from the submission record in the local database.
-                if cmd == "/bin/sh":
-                    try:
-                        desc = sub.submit_description
-                        if desc and desc.strip().startswith("{"):
-                            parsed = json.loads(desc)
-                            shell_cmd = parsed.get("shell", "")
-                            if shell_cmd:
-                                cmd = shell_cmd
-                                args = ""
-                    except json.JSONDecodeError, AttributeError:
-                        pass
 
                 jobs.append(
                     {
@@ -276,8 +261,8 @@ def list_history():
                         "JobStatus": real_status,
                         "JobStatusName": JOB_STATUS_MAP.get(real_status, "Unknown"),
                         "Owner": schedd_job.get("Owner", "—"),
-                        "Cmd": cmd,
-                        "Args": args,
+                        "Cmd": schedd_job.get("Cmd", ""),
+                        "Args": schedd_job.get("Args", ""),
                         "RequestCpus": schedd_job.get("RequestCpus", "—"),
                         "RequestMemory": schedd_job.get("RequestMemory", "—"),
                         "RequestDisk": schedd_job.get("RequestDisk", "—"),
@@ -713,6 +698,90 @@ def unstage_file(filename: str):
             "uploaded_at": stat.st_mtime,
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# Executables management
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route("/executables")
+def list_executables():
+    """List all uploaded executables (flat directory, no UUID paths)."""
+    exec_dir = Path(current_app.config["EXECUTABLES_DIR"])
+    exec_dir.mkdir(parents=True, exist_ok=True)
+
+    files = []
+    for p in sorted(exec_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+        if p.is_file():
+            stat = p.stat()
+            files.append(
+                {
+                    "filename": p.name,
+                    "size": stat.st_size,
+                    "uploaded_at": stat.st_mtime,
+                }
+            )
+    return jsonify({"executables": files})
+
+
+@api_bp.route("/executables", methods=["POST"])
+def upload_executable():
+    """Upload an executable file (stored flat, no UUID path).
+
+    Expects the raw file as the request body with:
+      - Content-Type: application/octet-stream
+      - X-Upload-Filename: original filename (required)
+    """
+    original_filename = request.headers.get("X-Upload-Filename", "").strip()
+    if not original_filename:
+        return jsonify({"error": "Missing 'X-Upload-Filename' header"}), 400
+
+    exec_dir = Path(current_app.config["EXECUTABLES_DIR"])
+    exec_dir.mkdir(parents=True, exist_ok=True)
+
+    # Sanitize filename — no path separators
+    filename = Path(original_filename).name
+    dest = exec_dir / filename
+
+    if dest.exists():
+        return jsonify({"error": f"Executable '{filename}' already exists"}), 409
+
+    # Save raw stream to disk
+    with open(dest, "wb") as f:
+        while True:
+            chunk = request.stream.read(65536)
+            if not chunk:
+                break
+            f.write(chunk)
+
+    os.chmod(str(dest), 0o755)  # Make executable
+
+    stat = dest.stat()
+    return jsonify(
+        {
+            "filename": filename,
+            "size": stat.st_size,
+            "uploaded_at": stat.st_mtime,
+        }
+    ), 201
+
+
+@api_bp.route("/executables/<path:filename>", methods=["DELETE"])
+def delete_executable(filename: str):
+    """Delete an uploaded executable."""
+    exec_dir = Path(current_app.config["EXECUTABLES_DIR"])
+    file_path = exec_dir / filename
+
+    # Prevent path traversal
+    if file_path.resolve().parent != exec_dir.resolve():
+        return jsonify({"error": "Invalid filename"}), 400
+
+    if not file_path.exists():
+        return jsonify({"error": "Executable not found"}), 404
+
+    file_path.unlink()
+    return jsonify({"message": f"Executable '{filename}' deleted"})
 
 
 # ---------------------------------------------------------------------------
@@ -1295,17 +1364,20 @@ def job_details(cluster_id: int):
             submission = JobSubmission.query.filter_by(cluster_id=cluster_id).first()
             if submission:
                 # Build a synthetic job record from the local DB submission
-                from app.condor import JOB_STATUS_MAP
 
                 cmd = ""
                 try:
                     if submission.submit_description.strip().startswith("{"):
                         desc = json.loads(submission.submit_description)
                         cmd = desc.get("executable", desc.get("shell", ""))
-                except (json.JSONDecodeError, AttributeError):
+                except json.JSONDecodeError, AttributeError:
                     cmd = ""
 
-                qdate = int(submission.submitted_at.timestamp()) if submission.submitted_at else 0
+                qdate = (
+                    int(submission.submitted_at.timestamp())
+                    if submission.submitted_at
+                    else 0
+                )
                 job = {
                     "ClusterId": cluster_id,
                     "ProcId": proc_id,
@@ -1343,24 +1415,12 @@ def job_details(cluster_id: int):
                 )
                 job = jobs[0] if jobs else {}
 
-        # If the command is /bin/sh (shell job), try to extract the original
-        # shell command from the submission record in the local database.
+        # Resolve shell & executable commands to original values from the DB
         submission = JobSubmission.query.filter_by(cluster_id=cluster_id).first()
         submission_name = submission.name if submission else "Job Subbed Outside Web UI"
 
-        if job and submission and job.get("Cmd") == "/bin/sh":
-            try:
-                desc = submission.submit_description
-                if desc and desc.strip().startswith("{"):
-                    parsed = json.loads(desc)
-                    shell_cmd = parsed.get("shell", "")
-                    if shell_cmd:
-                        # Override Cmd with the original shell command for display
-                        job["Cmd"] = shell_cmd
-                        # Clear Args since the shell command is now the full Cmd
-                        job["Args"] = ""
-            except (json.JSONDecodeError, AttributeError):
-                pass
+        if job and submission:
+            resolve_commands([job])
 
         # 4. Resolve log file paths — prefer DB paths, avoid redundant schedd queries
         #    by extracting UserLog/Out/Err from the job data if available.

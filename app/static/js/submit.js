@@ -210,6 +210,10 @@ function buildSubmitDict() {
         d.shell = $('#job-shell-cmd').value.trim();
     } else {
         d.executable = $('#job-executable').value.trim();
+        // Transfer executable checkbox
+        if ($('#job-transfer-executable').checked) {
+            d.transfer_executable = true;
+        }
     }
 
     if (universe === 'container') {
@@ -737,9 +741,28 @@ function checkSelectedTemplate() {
 }
 
 async function saveAsTemplate(mode) {
-    const name = prompt('Enter a name for this template:');
-    if (!name) return;
+    // Pre-fill the template name with the job name
+    const jobNameInput = mode === 'form' ? $('#job-name') : $('#raw-job-name');
+    const defaultName = jobNameInput ? jobNameInput.value.trim() || 'My Template' : 'My Template';
+    $('#save-template-name').value = defaultName;
 
+    // Open the modal
+    openModal('save-template-modal');
+    $('#save-template-name').focus();
+    $('#save-template-name').select();
+
+    // Store the mode for the confirm handler
+    window._saveTemplateMode = mode;
+}
+
+function confirmSaveTemplate() {
+    const name = $('#save-template-name').value.trim();
+    if (!name) {
+        toast('Please enter a template name', 'warning');
+        return;
+    }
+
+    const mode = window._saveTemplateMode;
     let submit_data = '';
     if (mode === 'form') {
         const submit = buildSubmitDict();
@@ -764,9 +787,85 @@ async function saveAsTemplate(mode) {
             body: JSON.stringify({ name, submit_data })
         });
         toast('Template saved successfully!');
+        closeModal('save-template-modal');
     } catch (err) {
         toast(`Failed to save template: ${err.message}`, 'error');
     }
+}
+// ---------------------------------------------------------------------------
+// Executables card — always visible, single-select with toggle, like input files
+// ---------------------------------------------------------------------------
+
+let serverExecutables = [];
+let selectedExecutableName = null;
+
+async function loadExecutablesForPicker() {
+    try {
+        const data = await api('/executables');
+        serverExecutables = data.executables || [];
+    } catch (err) {
+        serverExecutables = [];
+    }
+}
+
+function renderExecPicker() {
+    const listEl = $('#exec-picker-list');
+    if (!listEl) return;
+
+    if (serverExecutables.length === 0) {
+        listEl.innerHTML = `
+            <p class="hint" style="color: var(--text-muted); font-size: 0.85rem;">
+                No executables uploaded yet.
+                <a href="/executables" style="color: var(--accent-cyan);">Upload executables</a>
+            </p>`;
+        return;
+    }
+
+    listEl.innerHTML = '';
+    serverExecutables.forEach(ex => {
+        const isSelected = selectedExecutableName === ex.filename;
+        const item = document.createElement('div');
+        item.className = `submit-file-item ${isSelected ? 'selected' : ''}`;
+        item.style.cursor = 'pointer';
+        item.innerHTML = `
+            <div class="submit-file-check">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" class="check-icon">
+                    <polyline points="20,6 9,17 4,12" />
+                </svg>
+            </div>
+            <div class="submit-file-info">
+                <span class="submit-file-name monospace">${escHtml(ex.filename)}</span>
+                <span class="submit-file-meta">${formatFileSize(ex.size)}</span>
+            </div>
+        `;
+        item.addEventListener('click', () => {
+            // Toggle selection: if already selected, un-select; otherwise select
+            if (selectedExecutableName === ex.filename) {
+                // Un-select
+                selectedExecutableName = null;
+                $('#job-executable').value = '';
+                item.classList.remove('selected');
+            } else {
+                // Select this one
+                selectedExecutableName = ex.filename;
+                // Use the full path (EXECUTABLES_DIR + filename) for the input field
+                $('#job-executable').value = 'executables/' + ex.filename;
+                $('#job-transfer-executable').checked = true;
+                // Refresh visual state — deselect all others
+                listEl.querySelectorAll('.submit-file-item').forEach(el => el.classList.remove('selected'));
+                item.classList.add('selected');
+            }
+        });
+        listEl.appendChild(item);
+    });
+}
+
+// Show/hide the executables card based on exec/shell mode
+function updateExecutablesCardVisibility() {
+    const card = $('#executables-card');
+    if (!card) return;
+    const isShell = $('#execmode-shell-btn').classList.contains('active');
+    card.style.display = isShell ? 'none' : '';
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -774,12 +873,15 @@ document.addEventListener('DOMContentLoaded', () => {
     initExtraAttrs();
     initSubmitFileUpload();
 
-    // Load server files and containers, then check for template
+    // Load server files, containers, and executables, then check for template
     Promise.all([
         loadServerFiles(),
-        loadContainers()
+        loadContainers(),
+        loadExecutablesForPicker()
     ]).then(() => {
         checkSelectedTemplate();
+        // Render executables card after data is loaded
+        renderExecPicker();
     });
 
     $('#job-universe').addEventListener('change', (e) => {
@@ -813,6 +915,7 @@ document.addEventListener('DOMContentLoaded', () => {
             execField.style.display = 'block';
             shellField.style.display = 'none';
             argsField.style.display = 'block';
+            updateExecutablesCardVisibility();
         });
 
         shellBtn.addEventListener('click', () => {
@@ -821,6 +924,7 @@ document.addEventListener('DOMContentLoaded', () => {
             shellField.style.display = 'block';
             execField.style.display = 'none';
             argsField.style.display = 'none';
+            updateExecutablesCardVisibility();
         });
     }
     initExecShellToggle();
@@ -840,4 +944,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
     $('#save-as-tmpl-btn').addEventListener('click', () => saveAsTemplate('form'));
     $('#raw-save-as-tmpl-btn').addEventListener('click', () => saveAsTemplate('raw'));
+
+    // Save template modal confirm button (defined in common.js openModal/closeModal)
+    const saveConfirmBtn = $('#save-template-confirm-btn');
+    if (saveConfirmBtn) {
+        saveConfirmBtn.addEventListener('click', confirmSaveTemplate);
+    }
+
+    // Also allow Enter key to confirm in the save template modal
+    const saveNameInput = $('#save-template-name');
+    if (saveNameInput) {
+        saveNameInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                confirmSaveTemplate();
+            }
+        });
+    }
 });

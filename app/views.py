@@ -29,6 +29,12 @@ def files_page():
     return render_template("files.html", active_page="files")
 
 
+@views_bp.route("/executables")
+def executables_page():
+    """Serve the executables management page."""
+    return render_template("executables.html", active_page="executables")
+
+
 @views_bp.route("/containers")
 def containers_page():
     """Serve the containers management page."""
