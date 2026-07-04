@@ -9,6 +9,8 @@ let refreshInProgress = false;
 let countdown = 30;
 const REFRESH_RATE = 30; // seconds
 let selectedIds = new Set(); // Set of "clusterId.procId" strings
+let groupByCluster = false; // Group by ClusterId toggle
+let expandedClusters = new Set(); // Set of clusterIds that are expanded in grouped view
 
 async function loadJobs() {
     // Prevent concurrent refresh calls
@@ -176,7 +178,354 @@ function updateSelectionUI() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Status Bar Helper — builds a stacked bar showing status distribution
+// ---------------------------------------------------------------------------
+
+function renderStatusBar(jobs) {
+    // Count jobs by status
+    const counts = {};
+    jobs.forEach(job => {
+        const status = parseInt(job.JobStatus);
+        counts[status] = (counts[status] || 0) + 1;
+    });
+
+    const total = jobs.length;
+    if (total === 0) return '<span class="status-badge status-completed">—</span>';
+
+    // Define status order and labels
+    const statusOrder = [1, 2, 5, 4, 3, 6]; // Idle, Running, Held, Completed, Removed, Transferring
+    const statusLabels = {
+        1: 'Idle', 2: 'Running', 3: 'Removed', 4: 'Completed', 5: 'Held', 6: 'Transferring'
+    };
+    const statusClasses = {
+        1: 'status-idle', 2: 'status-running', 3: 'status-removed',
+        4: 'status-completed', 5: 'status-held', 6: 'status-transferring'
+    };
+
+    // Build segments
+    let segments = '';
+    statusOrder.forEach(status => {
+        const count = counts[status] || 0;
+        if (count === 0) return;
+        const pct = (count / total) * 100;
+        const label = statusLabels[status] || 'Unknown';
+        const cls = statusClasses[status] || 'status-unknown';
+        segments += `<div class="status-bar-segment ${cls}" style="width: ${pct}%" title="${count} ${label} (${Math.round(pct)}%)"></div>`;
+    });
+
+    // If no segments match known statuses, show a fallback
+    if (!segments) {
+        const otherCount = total;
+        segments = `<div class="status-bar-segment status-completed" style="width: 100%" title="${otherCount} jobs"></div>`;
+    }
+
+    return `<div class="status-bar">${segments}</div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Grouped Table Rendering
+// ---------------------------------------------------------------------------
+
+function getGroupSortValue(group, field) {
+    // For sorting groups, use aggregated values
+    const first = group.jobs[0];
+    switch (field) {
+        case 'ClusterId': return group.clusterId || 0;
+        case 'JobBatchName': return (group.name || '').toLowerCase();
+        case 'Owner': return (group.owner || '').toLowerCase();
+        case 'Cmd': return (group.cmd || '').toLowerCase();
+        case 'JobStatus': {
+            // Sort by the dominant status (most common)
+            const counts = {};
+            group.jobs.forEach(j => {
+                const s = parseInt(j.JobStatus) || 0;
+                counts[s] = (counts[s] || 0) + 1;
+            });
+            let maxCount = 0;
+            let dominantStatus = 0;
+            for (const [s, c] of Object.entries(counts)) {
+                if (c > maxCount) { maxCount = c; dominantStatus = parseInt(s); }
+            }
+            return dominantStatus;
+        }
+        case 'ExitCode': return group.exitCode !== undefined ? group.exitCode : -1;
+        case 'QDate': return group.qDate || 0;
+        case 'CompletionDate': return group.completionDate || 0;
+        case 'RemoteWallClockTime': return group.wallTime || 0;
+        case 'Resources': {
+            const cpus = group.totalCpus || 0;
+            const mem = group.maxMemory || 0;
+            const disk = group.maxDisk || 0;
+            return cpus * 1000000 + mem * 1000 + disk;
+        }
+        default: return 0;
+    }
+}
+
+function groupJobs(jobs) {
+    const groups = {};
+    jobs.forEach(job => {
+        const cid = job.ClusterId;
+        if (!groups[cid]) {
+            groups[cid] = {
+                clusterId: cid,
+                jobs: [],
+                name: job.JobBatchName || '—',
+                owner: job.Owner || '—',
+                cmd: job.Cmd || '',
+                args: job.Args || '',
+                qDate: job.QDate || 0,
+                completionDate: job.CompletionDate || 0,
+                wallTime: parseFloat(job.RemoteWallClockTime) || 0,
+                exitCode: job.ExitCode !== undefined ? job.ExitCode : -1,
+                totalCpus: 0,
+                maxMemory: 0,
+                maxDisk: 0,
+            };
+        }
+        const g = groups[cid];
+        g.jobs.push(job);
+        // Aggregate resources
+        g.totalCpus += parseInt(job.RequestCpus) || 0;
+        g.maxMemory = Math.max(g.maxMemory, parseInt(job.RequestMemory) || 0);
+        g.maxDisk = Math.max(g.maxDisk, parseInt(job.RequestDisk) || 0);
+        // Use earliest QDate
+        if (job.QDate && job.QDate < g.qDate) g.qDate = job.QDate;
+        // Use latest completion date
+        if (job.CompletionDate && job.CompletionDate > g.completionDate) g.completionDate = job.CompletionDate;
+        // Use max wall time
+        const wt = parseFloat(job.RemoteWallClockTime) || 0;
+        if (wt > g.wallTime) g.wallTime = wt;
+        // Use first non-negative exit code
+        if (job.ExitCode !== undefined && job.ExitCode >= 0 && (g.exitCode < 0 || g.exitCode === undefined)) {
+            g.exitCode = job.ExitCode;
+        }
+    });
+    return Object.values(groups);
+}
+
+function renderGroupedTable() {
+    const tbody = $('#jobs-tbody');
+    tbody.innerHTML = '';
+
+    let filtered = getFilteredJobs();
+    let groups = groupJobs(filtered);
+
+    // Sort groups
+    groups.sort((a, b) => {
+        const va = getGroupSortValue(a, sortField);
+        const vb = getGroupSortValue(b, sortField);
+        if (va < vb) return sortAsc ? -1 : 1;
+        if (va > vb) return sortAsc ? 1 : -1;
+        return 0;
+    });
+
+    if (groups.length === 0) {
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="11">No jobs found</td></tr>`;
+        updateSelectionUI();
+        return;
+    }
+
+    groups.forEach(group => {
+        const cid = group.clusterId;
+        const firstJob = group.jobs[0];
+        const name = group.name;
+        const owner = group.owner;
+        const cmd = group.cmd;
+        const args = group.args;
+        const qDate = formatDate(group.qDate);
+        const compDate = formatDate(group.completionDate);
+        let wallTime = '—';
+        if (group.wallTime) {
+            wallTime = formatDuration(Math.round(group.wallTime));
+        } else if (group.completionDate && group.qDate) {
+            wallTime = formatDuration(group.completionDate - group.qDate);
+        }
+        // Use the same formatting as individual jobs for consistency.
+        // Take the display values from the first job's formatted output.
+        const firstCpus = firstJob.RequestCpus || '—';
+        const firstMem = formatMemory(firstJob.RequestMemory);
+        const firstDisk = formatDisk(firstJob.RequestDisk);
+        // For CPU, show total across all jobs; for memory/disk, show max with unit from first job
+        const cpus = group.totalCpus || '—';
+        const mem = firstMem;
+        const disk = firstDisk;
+        const statusBarHtml = renderStatusBar(group.jobs);
+
+        // Check if all jobs in this group are selected
+        const allSelected = group.jobs.every(j => selectedIds.has(`${j.ClusterId}.${j.ProcId}`));
+        const someSelected = group.jobs.some(j => selectedIds.has(`${j.ClusterId}.${j.ProcId}`));
+
+        // Group header row
+        const headerTr = document.createElement('tr');
+        headerTr.className = 'group-header';
+        headerTr.dataset.clusterId = cid;
+        headerTr.innerHTML = `
+            <td style="text-align: center;">
+                <input type="checkbox" class="group-checkbox" data-cluster-id="${cid}" ${allSelected ? 'checked' : ''}>
+            </td>
+            <td>
+                <span class="expand-chevron">▶</span>
+                <a href="/job/${cid}/${firstJob.ProcId || 0}" class="job-id-link">${cid}</a>
+                <span style="font-size: 0.75rem; color: var(--text-muted); margin-left: 4px;">(${group.jobs.length})</span>
+            </td>
+            <td style="max-width: 120px; overflow: hidden; text-overflow: ellipsis;" title="${escHtml(name)}">${escHtml(name)}</td>
+            <td>${escHtml(owner)}</td>
+            <td class="monospace" title="${escHtml(cmd || args || '')}">${formatCommand(cmd, args)}</td>
+            <td>${statusBarHtml}</td>
+            <td class="monospace">${group.exitCode >= 0 ? group.exitCode : '—'}</td>
+            <td>${qDate}</td>
+            <td>${compDate}</td>
+            <td>${wallTime}</td>
+            <td style="font-size: 0.85rem;">${cpus} CPU, ${mem}, ${disk}</td>
+        `;
+
+        // Sort sub-jobs by ProcId
+        const sortedJobs = [...group.jobs].sort((a, b) => (a.ProcId || 0) - (b.ProcId || 0));
+
+        // Create sub-rows as direct <tr> elements in the main tbody (not nested table)
+        // so columns align with the parent table
+        const subRows = [];
+
+        sortedJobs.forEach(job => {
+            const statusClass = getStatusClass(job.JobStatus);
+            const statusName = getStatusName(job.JobStatus);
+            const jobKey = `${job.ClusterId}.${job.ProcId}`;
+
+            const subQDate = formatDate(job.QDate);
+            const subCompDate = formatDate(job.CompletionDate);
+
+            let subWallTime = '—';
+            if (job.RemoteWallClockTime) {
+                subWallTime = formatDuration(Math.round(parseFloat(job.RemoteWallClockTime)));
+            } else if (job.CompletionDate && job.QDate) {
+                subWallTime = formatDuration(job.CompletionDate - job.QDate);
+            }
+
+            const subExitCode = job.ExitCode !== undefined ? job.ExitCode : '—';
+            const subCpus = job.RequestCpus || '—';
+            const subMem = formatMemory(job.RequestMemory);
+            const subDisk = formatDisk(job.RequestDisk);
+            const subName = job.JobBatchName || '—';
+
+            const isChecked = selectedIds.has(jobKey);
+
+            const subRow = document.createElement('tr');
+            subRow.className = 'group-subrow';
+            subRow.dataset.clusterId = cid;
+            subRow.style.display = 'none';
+            subRow.innerHTML = `
+                <td style="text-align: center;">
+                    <input type="checkbox" class="row-checkbox" data-job-key="${escHtml(jobKey)}" ${isChecked ? 'checked' : ''}>
+                </td>
+                <td><a href="/job/${job.ClusterId}/${job.ProcId}" class="job-id-link">${job.ClusterId}.${job.ProcId}</a></td>
+                <td style="max-width: 120px; overflow: hidden; text-overflow: ellipsis;" title="${escHtml(subName)}">${escHtml(subName)}</td>
+                <td>${escHtml(job.Owner || '—')}</td>
+                <td class="monospace" title="${escHtml(job.Cmd || job.Args || '')}">${formatCommand(job.Cmd, job.Args)}</td>
+                <td><span class="status-badge ${statusClass}">${statusName}</span></td>
+                <td class="monospace">${subExitCode}</td>
+                <td>${subQDate}</td>
+                <td>${subCompDate}</td>
+                <td>${subWallTime}</td>
+                <td style="font-size: 0.85rem;">${subCpus} CPU, ${subMem}, ${subDisk}</td>
+            `;
+
+            // Row click toggles checkbox
+            subRow.addEventListener('click', (e) => {
+                if (e.target.closest('a') || e.target.closest('input[type="checkbox"]')) return;
+                const cb = subRow.querySelector('.row-checkbox');
+                if (cb) {
+                    cb.checked = !cb.checked;
+                    cb.dispatchEvent(new Event('change'));
+                }
+            });
+
+            subRows.push(subRow);
+        });
+
+        tbody.appendChild(headerTr);
+        subRows.forEach(tr => tbody.appendChild(tr));
+
+        // --- Event handlers ---
+
+        // Restore expanded state from previous render
+        const wasExpanded = expandedClusters.has(cid);
+        if (wasExpanded) {
+            subRows.forEach(tr => { tr.style.display = ''; });
+            headerTr.querySelector('.expand-chevron').classList.add('expanded');
+        }
+
+        // Group header click: expand/collapse
+        headerTr.addEventListener('click', (e) => {
+            if (e.target.closest('a') || e.target.closest('input[type="checkbox"]')) return;
+            const chevron = headerTr.querySelector('.expand-chevron');
+            const isExpanded = chevron.classList.contains('expanded');
+            if (isExpanded) {
+                subRows.forEach(tr => { tr.style.display = 'none'; });
+                chevron.classList.remove('expanded');
+                expandedClusters.delete(cid);
+            } else {
+                subRows.forEach(tr => { tr.style.display = ''; });
+                chevron.classList.add('expanded');
+                expandedClusters.add(cid);
+            }
+        });
+
+        // Group checkbox: select/deselect all jobs in group
+        const groupCheckbox = headerTr.querySelector('.group-checkbox');
+        groupCheckbox.addEventListener('change', () => {
+            const checked = groupCheckbox.checked;
+            group.jobs.forEach(job => {
+                const key = `${job.ClusterId}.${job.ProcId}`;
+                if (checked) {
+                    selectedIds.add(key);
+                } else {
+                    selectedIds.delete(key);
+                }
+            });
+            // Update sub-row checkboxes
+            subRows.forEach(tr => {
+                const cb = tr.querySelector('.row-checkbox');
+                if (cb) cb.checked = checked;
+            });
+            updateSelectionUI();
+        });
+
+        // Sub-row checkbox: update group checkbox state
+        subRows.forEach(tr => {
+            const cb = tr.querySelector('.row-checkbox');
+            cb.addEventListener('change', () => {
+                const key = cb.dataset.jobKey;
+                if (cb.checked) {
+                    selectedIds.add(key);
+                } else {
+                    selectedIds.delete(key);
+                }
+                // Update group checkbox
+                const allSel = group.jobs.every(j => selectedIds.has(`${j.ClusterId}.${j.ProcId}`));
+                const someSel = group.jobs.some(j => selectedIds.has(`${j.ClusterId}.${j.ProcId}`));
+                groupCheckbox.checked = allSel;
+                groupCheckbox.indeterminate = !allSel && someSel;
+                updateSelectionUI();
+            });
+        });
+    });
+
+    updateSortArrows();
+    updateSelectionUI();
+}
+
+// ---------------------------------------------------------------------------
+// Standard (non-grouped) Table Rendering
+// ---------------------------------------------------------------------------
+
 function renderTable() {
+    if (groupByCluster) {
+        renderGroupedTable();
+        return;
+    }
+
     const tbody = $('#jobs-tbody');
     tbody.innerHTML = '';
 
@@ -440,6 +789,12 @@ document.addEventListener('DOMContentLoaded', () => {
     $('#status-filter').addEventListener('change', renderTable);
     $('#history-limit').addEventListener('change', loadJobs);
 
+    // Group by ClusterID toggle
+    $('#group-toggle').addEventListener('change', (e) => {
+        groupByCluster = e.target.checked;
+        renderTable();
+    });
+
     // Select-all checkbox
     $('#select-all').addEventListener('change', (e) => {
         const checked = e.target.checked;
@@ -454,6 +809,11 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         $$('.row-checkbox').forEach(cb => {
             cb.checked = checked;
+        });
+        // Also update group checkboxes
+        $$('.group-checkbox').forEach(cb => {
+            cb.checked = checked;
+            cb.indeterminate = false;
         });
         updateSelectionUI();
     });
