@@ -310,36 +310,37 @@ def list_history():
 
                 qdate = int(sub.submitted_at.timestamp()) if sub.submitted_at else 0
 
-                jobs.append(
-                    {
-                        "ClusterId": sub.cluster_id,
-                        "ProcId": 0,
-                        "JobStatus": 4,
-                        "JobStatusName": "Completed",
-                        "Owner": "—",
-                        "Cmd": cmd,
-                        "Args": "",
-                        "RequestCpus": request_cpus,
-                        "RequestMemory": request_memory,
-                        "RequestDisk": request_disk,
-                        "QDate": qdate,
-                        "JobStartDate": None,
-                        "CompletionDate": None,
-                        "HoldReason": "",
-                        "RemoteHost": "",
-                        "ImageSize": 0,
-                        "DiskUsage": 0,
-                        "ExitCode": 0,
-                        "ExitBySignal": False,
-                        "JobCurrentStartDate": None,
-                        "NumJobStarts": 1,
-                        "NumShadowStarts": 1,
-                        "JobBatchName": sub.name,
-                        "RemoteWallClockTime": 0,
-                        "CumulativeRemoteSysCpu": 0,
-                        "CumulativeRemoteUserCpu": 0,
-                    }
-                )
+                for proc_id in range(sub.num_procs):
+                    jobs.append(
+                        {
+                            "ClusterId": sub.cluster_id,
+                            "ProcId": proc_id,
+                            "JobStatus": 4,
+                            "JobStatusName": "Completed",
+                            "Owner": "—",
+                            "Cmd": cmd,
+                            "Args": "",
+                            "RequestCpus": request_cpus,
+                            "RequestMemory": request_memory,
+                            "RequestDisk": request_disk,
+                            "QDate": qdate,
+                            "JobStartDate": None,
+                            "CompletionDate": None,
+                            "HoldReason": "",
+                            "RemoteHost": "",
+                            "ImageSize": 0,
+                            "DiskUsage": 0,
+                            "ExitCode": 0,
+                            "ExitBySignal": False,
+                            "JobCurrentStartDate": None,
+                            "NumJobStarts": 1,
+                            "NumShadowStarts": 1,
+                            "JobBatchName": sub.name,
+                            "RemoteWallClockTime": 0,
+                            "CumulativeRemoteSysCpu": 0,
+                            "CumulativeRemoteUserCpu": 0,
+                        }
+                    )
 
         return jsonify({"jobs": jobs, "count": len(jobs)})
     except Exception as e:
@@ -1658,6 +1659,9 @@ def list_output_files():
 
     Scans the OUTPUT_DIR directory for files and cross-references
     with JobSubmission records to show which job produced each file.
+
+    Builds a cluster_id → {name, command} lookup in a single query
+    to avoid N+1 queries when enriching each output file entry.
     """
     output_dir = current_app.config["OUTPUT_DIR"]
     output_path = Path(output_dir)
@@ -1665,8 +1669,26 @@ def list_output_files():
     if not output_path.exists():
         return jsonify({"output_files": [], "count": 0})
 
-    # Get all job submissions that have output_dir set
-    submissions = JobSubmission.query.filter(JobSubmission.output_dir.isnot(None)).all()
+    # Single query: load all submissions with output_dir set
+    submissions = JobSubmission.query.filter(
+        JobSubmission.output_dir.isnot(None)
+    ).all()
+
+    # Build cluster_id → metadata lookup (in-memory, no extra queries)
+    cluster_meta: dict[int, dict[str, str]] = {}
+    for sub in submissions:
+        command = ""
+        try:
+            desc_text = sub.submit_description or ""
+            if desc_text.strip().startswith("{"):
+                desc = json.loads(desc_text)
+                command = desc.get("shell") or desc.get("executable", "")
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        cluster_meta[sub.cluster_id] = {
+            "name": sub.name,
+            "command": command,
+        }
 
     output_files = []
     try:
@@ -1678,6 +1700,8 @@ def list_output_files():
             if not job_output_path.exists():
                 continue
 
+            meta = cluster_meta.get(sub.cluster_id, {"name": sub.name, "command": ""})
+
             for f in job_output_path.iterdir():
                 if f.is_file():
                     stat = f.stat()
@@ -1688,7 +1712,8 @@ def list_output_files():
                             "size": stat.st_size,
                             "modified_at": stat.st_mtime,
                             "cluster_id": sub.cluster_id,
-                            "job_name": sub.name,
+                            "job_name": meta["name"],
+                            "command": meta["command"],
                         }
                     )
 

@@ -25,6 +25,7 @@
                         </svg>
                         Delete
                     </button>
+                    <input type="text" class="search-input" id="output-search" placeholder="Search output files..." style="margin-left: auto;">
                 </div>
                 <div class="table-container" id="output-files-table-container">
                     <table class="data-table" id="output-files-table">
@@ -33,10 +34,12 @@
                                 <th style="width: 36px; text-align: center;">
                                     <input type="checkbox" id="output-select-all" title="Select all">
                                 </th>
-                                <th>Filename</th>
-                                <th>Size</th>
-                                <th>Job</th>
-                                <th>Modified</th>
+                                <th class="sortable" data-sort="filename">Filename<span class="sort-arrow"></span></th>
+                                <th class="sortable" data-sort="size">Size<span class="sort-arrow"></span></th>
+                                <th class="sortable" data-sort="cluster_id">Job ID<span class="sort-arrow"></span></th>
+                                <th class="sortable" data-sort="job_name">Job Name<span class="sort-arrow"></span></th>
+                                <th class="sortable" data-sort="command">Command<span class="sort-arrow"></span></th>
+                                <th class="sortable" data-sort="modified_at">Modified<span class="sort-arrow"></span></th>
                                 <th>Actions</th>
                             </tr>
                         </thead>

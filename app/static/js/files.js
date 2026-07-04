@@ -5,6 +5,8 @@ let renameTargetFilename = null;
 let deleteTargetFilename = null;
 let selectedFileFilenames = new Set();
 let uploadAbortControllers = []; // Track active uploads for cancel
+let fileSortField = 'original_name';
+let fileSortAsc = true;
 
 // Modal helpers
 function openModal(id) {
@@ -83,6 +85,17 @@ function updateSelectionUI() {
     }
 }
 
+// Get sortable value for a file
+function getFileSortValue(item, field) {
+    switch (field) {
+        case 'original_name': return (item.original_name || '').toLowerCase();
+        case 'size': return item.size || 0;
+        case 'uploaded_at': return item.uploaded_at || 0;
+        case 'location': return item.osdf_path ? 'osdf' : 'local';
+        default: return 0;
+    }
+}
+
 // Render file list
 function renderFiles() {
     const tbody = $('#files-tbody');
@@ -91,18 +104,29 @@ function renderFiles() {
 
     if (!tbody) return;
 
+    // Apply search filter
+    const query = $('#file-search') ? $('#file-search').value : '';
+    let filtered = filterData(currentFiles, query, [
+        item => item.original_name,
+        item => item.osdf_path ? 'OSDF' : 'Local',
+    ]);
+
+    // Apply sort
+    filtered = sortData(filtered, fileSortField, fileSortAsc, getFileSortValue);
+
     tbody.innerHTML = '';
 
-    if (currentFiles.length === 0) {
+    if (filtered.length === 0) {
         table.style.display = 'none';
         empty.style.display = 'block';
+        updateSelectionUI();
         return;
     }
 
     table.style.display = '';
     empty.style.display = 'none';
 
-    currentFiles.forEach(f => {
+    filtered.forEach(f => {
         const isOsdf = !!f.osdf_path;
         const locationLabel = isOsdf ? 'OSDF' : 'Local';
         const locationClass = isOsdf ? 'badge-osdf' : 'badge-local';
@@ -144,6 +168,7 @@ function renderFiles() {
         });
     });
 
+    updateSortArrows(table, fileSortField, fileSortAsc);
     updateSelectionUI();
 }
 
@@ -512,6 +537,29 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         updateSelectionUI();
     });
+
+    // Search input
+    const searchInput = $('#file-search');
+    if (searchInput) {
+        searchInput.addEventListener('input', renderFiles);
+    }
+
+    // Sortable column headers
+    const table = $('#files-table');
+    if (table) {
+        table.querySelectorAll('thead th.sortable').forEach(th => {
+            th.addEventListener('click', () => {
+                const field = th.dataset.sort;
+                if (field === fileSortField) {
+                    fileSortAsc = !fileSortAsc;
+                } else {
+                    fileSortField = field;
+                    fileSortAsc = true;
+                }
+                renderFiles();
+            });
+        });
+    }
 
     // Bulk action buttons
     $('#file-stage-btn').addEventListener('click', handleBulkStage);

@@ -47,6 +47,7 @@
                     </svg>
                     Delete
                 </button>
+                <input type="text" class="search-input" id="exec-search" placeholder="Search executables..." style="margin-left: auto;">
             </div>
             <div class="table-container" id="exec-table-container">
                 <table class="data-table" id="exec-table">
@@ -55,9 +56,9 @@
                             <th style="width: 36px; text-align: center;">
                                 <input type="checkbox" id="exec-select-all" title="Select all">
                             </th>
-                            <th>Name</th>
-                            <th>Size</th>
-                            <th>Uploaded</th>
+                            <th class="sortable" data-sort="filename">Name<span class="sort-arrow"></span></th>
+                            <th class="sortable" data-sort="size">Size<span class="sort-arrow"></span></th>
+                            <th class="sortable" data-sort="uploaded_at">Uploaded<span class="sort-arrow"></span></th>
                         </tr>
                     </thead>
                     <tbody id="exec-tbody">

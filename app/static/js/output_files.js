@@ -2,6 +2,8 @@
 
 let currentOutputFiles = [];
 let selectedFiles = new Map(); // filename -> {cluster_id, filename}
+let outputSortField = 'filename';
+let outputSortAsc = true;
 
 // formatFileSize and formatDate are now defined in common.js
 // These duplicates have been removed; use the shared versions instead.
@@ -37,6 +39,19 @@ function updateSelectionUI() {
     }
 }
 
+// Get sortable value for an output file
+function getOutputSortValue(item, field) {
+    switch (field) {
+        case 'filename': return (item.filename || '').toLowerCase();
+        case 'size': return item.size || 0;
+        case 'cluster_id': return item.cluster_id || 0;
+        case 'job_name': return (item.job_name || '').toLowerCase();
+        case 'command': return (item.command || '').toLowerCase();
+        case 'modified_at': return item.modified_at || 0;
+        default: return 0;
+    }
+}
+
 // Render output file list
 function renderOutputFiles() {
     const tbody = $('#output-files-tbody');
@@ -45,18 +60,31 @@ function renderOutputFiles() {
 
     if (!tbody) return;
 
+    // Apply search filter
+    const query = $('#output-search') ? $('#output-search').value : '';
+    let filtered = filterData(currentOutputFiles, query, [
+        item => item.filename,
+        item => item.job_name,
+        item => String(item.cluster_id || ''),
+        item => item.command,
+    ]);
+
+    // Apply sort
+    filtered = sortData(filtered, outputSortField, outputSortAsc, getOutputSortValue);
+
     tbody.innerHTML = '';
 
-    if (currentOutputFiles.length === 0) {
+    if (filtered.length === 0) {
         table.style.display = 'none';
         empty.style.display = 'block';
+        updateSelectionUI();
         return;
     }
 
     table.style.display = '';
     empty.style.display = 'none';
 
-    currentOutputFiles.forEach(f => {
+    filtered.forEach(f => {
         const isChecked = selectedFiles.has(f.filename);
         const tr = document.createElement('tr');
         tr.innerHTML = `
@@ -66,8 +94,12 @@ function renderOutputFiles() {
             <td class="monospace">${escHtml(f.filename)}</td>
             <td>${formatFileSize(f.size)}</td>
             <td>
+                <a href="/job/${f.cluster_id}" style="color: var(--accent-cyan);">${f.cluster_id}</a>
+            </td>
+            <td>
                 <a href="/job/${f.cluster_id}" style="color: var(--accent-cyan);">${escHtml(f.job_name || 'Job #' + f.cluster_id)}</a>
             </td>
+            <td class="monospace" style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escHtml(f.command || '')}">${escHtml(f.command || '—')}</td>
             <td>${formatDate(f.modified_at)}</td>
             <td>
                 <a href="/api/output-files/download/${f.cluster_id}/${encodeURIComponent(f.filename)}" class="btn btn-ghost btn-sm" style="padding: 4px 8px;">
@@ -108,6 +140,7 @@ function renderOutputFiles() {
         });
     });
 
+    updateSortArrows(table, outputSortField, outputSortAsc);
     updateSelectionUI();
 }
 
@@ -167,6 +200,29 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         updateSelectionUI();
     });
+
+    // Search input
+    const searchInput = $('#output-search');
+    if (searchInput) {
+        searchInput.addEventListener('input', renderOutputFiles);
+    }
+
+    // Sortable column headers
+    const table = $('#output-files-table');
+    if (table) {
+        table.querySelectorAll('thead th.sortable').forEach(th => {
+            th.addEventListener('click', () => {
+                const field = th.dataset.sort;
+                if (field === outputSortField) {
+                    outputSortAsc = !outputSortAsc;
+                } else {
+                    outputSortField = field;
+                    outputSortAsc = true;
+                }
+                renderOutputFiles();
+            });
+        });
+    }
 
     // Bulk delete
     $('#output-delete-btn').addEventListener('click', handleBulkDelete);

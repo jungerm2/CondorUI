@@ -79,6 +79,71 @@ function closeModal(id) {
     document.getElementById(id).classList.remove('active');
 }
 
+// ---------------------------------------------------------------------------
+// Shared Sort & Search Utilities (DRY for table-based pages)
+// ---------------------------------------------------------------------------
+
+/**
+ * Sort a copy of the data array by the given field, using a getter function.
+ *
+ * @param {Array} data - The data to sort.
+ * @param {string} field - The field name (used by getValueFn).
+ * @param {boolean} asc - Whether to sort ascending.
+ * @param {Function} getValueFn - Function(item, field) => sortable value.
+ * @returns {Array} A new sorted array.
+ */
+function sortData(data, field, asc, getValueFn) {
+    const sorted = [...data];
+    sorted.sort((a, b) => {
+        const va = getValueFn(a, field);
+        const vb = getValueFn(b, field);
+        if (va < vb) return asc ? -1 : 1;
+        if (va > vb) return asc ? 1 : -1;
+        return 0;
+    });
+    return sorted;
+}
+
+/**
+ * Filter data array by a text query, checking against an array of getter functions.
+ *
+ * @param {Array} data - The data to filter.
+ * @param {string} query - The user's search query.
+ * @param {Array<Function>} getterFns - Array of (item) => string getters to search across.
+ * @returns {Array} Filtered array.
+ */
+function filterData(data, query, getterFns) {
+    if (!query || !query.trim()) return data;
+    const q = query.toLowerCase().trim();
+    return data.filter(item => {
+        return getterFns.some(fn => {
+            const val = fn(item);
+            return val != null && String(val).toLowerCase().includes(q);
+        });
+    });
+}
+
+/**
+ * Update sort arrow indicators (▲/▼) on sortable table headers.
+ *
+ * @param {HTMLElement} table - The <table> element.
+ * @param {string} sortField - The currently active sort field.
+ * @param {boolean} sortAsc - Whether currently sorting ascending.
+ */
+function updateSortArrows(table, sortField, sortAsc) {
+    if (!table) return;
+    table.querySelectorAll('thead th.sortable').forEach(th => {
+        const arrow = th.querySelector('.sort-arrow');
+        if (!arrow) return;
+        const field = th.dataset.sort;
+        if (field === sortField) {
+            arrow.textContent = sortAsc ? ' ▲' : ' ▼';
+        } else {
+            arrow.textContent = '';
+        }
+    });
+}
+
 // Common Formatting Helpers
 function formatDate(timestamp) {
     if (!timestamp) return '—';

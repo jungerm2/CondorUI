@@ -4,6 +4,8 @@ let currentContainers = [];
 let renameTargetFilename = null;
 let deleteTargetFilename = null;
 let osdfConfigured = false;
+let containerSortField = 'name';
+let containerSortAsc = true;
 
 // Modal helpers
 function openModal(id) {
@@ -103,6 +105,17 @@ function showOsdfWarning() {
     }
 }
 
+// Get sortable value for a container
+function getContainerSortValue(item, field) {
+    switch (field) {
+        case 'name': return (item.name || '').toLowerCase();
+        case 'source': return (item.source || '').toLowerCase();
+        case 'size': return item.size || 0;
+        case 'created_at': return item.created_at || '';
+        default: return 0;
+    }
+}
+
 // Render container list
 function renderContainers() {
     const tbody = $('#containers-tbody');
@@ -111,9 +124,19 @@ function renderContainers() {
 
     if (!tbody) return;
 
+    // Apply search filter
+    const query = $('#container-search') ? $('#container-search').value : '';
+    let filtered = filterData(currentContainers, query, [
+        item => item.name,
+        item => item.source,
+    ]);
+
+    // Apply sort
+    filtered = sortData(filtered, containerSortField, containerSortAsc, getContainerSortValue);
+
     tbody.innerHTML = '';
 
-    if (currentContainers.length === 0) {
+    if (filtered.length === 0) {
         table.style.display = 'none';
         empty.style.display = 'block';
         return;
@@ -122,7 +145,7 @@ function renderContainers() {
     table.style.display = '';
     empty.style.display = 'none';
 
-    currentContainers.forEach(c => {
+    filtered.forEach(c => {
         const tr = document.createElement('tr');
         const sourceLabel = c.source && c.source.startsWith('uploaded:')
             ? `Uploaded: ${c.source.replace('uploaded:', '')}`
@@ -163,6 +186,8 @@ function renderContainers() {
     tbody.querySelectorAll('.delete-container-btn').forEach(btn => {
         btn.addEventListener('click', () => openDeleteModal(btn.dataset.filename, btn.dataset.name));
     });
+
+    updateSortArrows(table, containerSortField, containerSortAsc);
 }
 
 // ---------------------------------------------------------------------------
@@ -494,6 +519,29 @@ document.addEventListener('DOMContentLoaded', () => {
     initPullForm();
     initSifUpload();
     loadContainers();
+
+    // Search input
+    const searchInput = $('#container-search');
+    if (searchInput) {
+        searchInput.addEventListener('input', renderContainers);
+    }
+
+    // Sortable column headers
+    const table = $('#containers-table');
+    if (table) {
+        table.querySelectorAll('thead th.sortable').forEach(th => {
+            th.addEventListener('click', () => {
+                const field = th.dataset.sort;
+                if (field === containerSortField) {
+                    containerSortAsc = !containerSortAsc;
+                } else {
+                    containerSortField = field;
+                    containerSortAsc = true;
+                }
+                renderContainers();
+            });
+        });
+    }
 
     // Rename confirm
     $('#rename-confirm-btn').addEventListener('click', handleRename);

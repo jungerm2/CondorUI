@@ -5,6 +5,8 @@ let currentExecs = [];
 let deleteTargetFilename = null;
 let selectedExecFilenames = new Set();
 let uploadAbortControllers = []; // Track active uploads for cancel
+let execSortField = 'filename';
+let execSortAsc = true;
 
 // Modal helpers (same as files.js)
 function openModal(id) {
@@ -67,6 +69,16 @@ function updateSelectionUI() {
     }
 }
 
+// Get sortable value for an executable
+function getExecSortValue(item, field) {
+    switch (field) {
+        case 'filename': return (item.filename || '').toLowerCase();
+        case 'size': return item.size || 0;
+        case 'uploaded_at': return item.uploaded_at || 0;
+        default: return 0;
+    }
+}
+
 // Render executable list
 function renderExecutables() {
     const tbody = $('#exec-tbody');
@@ -75,18 +87,28 @@ function renderExecutables() {
 
     if (!tbody) return;
 
+    // Apply search filter
+    const query = $('#exec-search') ? $('#exec-search').value : '';
+    let filtered = filterData(currentExecs, query, [
+        item => item.filename,
+    ]);
+
+    // Apply sort
+    filtered = sortData(filtered, execSortField, execSortAsc, getExecSortValue);
+
     tbody.innerHTML = '';
 
-    if (currentExecs.length === 0) {
+    if (filtered.length === 0) {
         table.style.display = 'none';
         empty.style.display = 'block';
+        updateSelectionUI();
         return;
     }
 
     table.style.display = '';
     empty.style.display = 'none';
 
-    currentExecs.forEach(f => {
+    filtered.forEach(f => {
         const isChecked = selectedExecFilenames.has(f.filename);
 
         const tr = document.createElement('tr');
@@ -124,6 +146,7 @@ function renderExecutables() {
         });
     });
 
+    updateSortArrows(table, execSortField, execSortAsc);
     updateSelectionUI();
 }
 
@@ -377,6 +400,29 @@ document.addEventListener('DOMContentLoaded', () => {
                 cb.checked = checked;
             });
             updateSelectionUI();
+        });
+    }
+
+    // Search input
+    const searchInput = $('#exec-search');
+    if (searchInput) {
+        searchInput.addEventListener('input', renderExecutables);
+    }
+
+    // Sortable column headers
+    const table = $('#exec-table');
+    if (table) {
+        table.querySelectorAll('thead th.sortable').forEach(th => {
+            th.addEventListener('click', () => {
+                const field = th.dataset.sort;
+                if (field === execSortField) {
+                    execSortAsc = !execSortAsc;
+                } else {
+                    execSortField = field;
+                    execSortAsc = true;
+                }
+                renderExecutables();
+            });
         });
     }
 
