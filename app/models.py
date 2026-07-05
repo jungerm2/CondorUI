@@ -20,6 +20,8 @@ class JobSubmission(db.Model):
     )
     log_dir = db.Column(db.String(512), nullable=True)
     output_dir = db.Column(db.String(512), nullable=True)
+    owner = db.Column(db.String(128), nullable=True)
+    cmd = db.Column(db.Text, nullable=True)
 
     def to_dict(self) -> dict:
         return {
@@ -31,34 +33,8 @@ class JobSubmission(db.Model):
             "submitted_at": self.submitted_at.isoformat() + "Z",
             "log_dir": self.log_dir,
             "output_dir": self.output_dir,
+            "owner": self.owner,
+            "cmd": self.cmd,
         }
 
 
-class SubmitTemplate(db.Model):
-    """A saved submit description that can be reused."""
-
-    __tablename__ = "submit_templates"
-
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(255), nullable=False, unique=True)
-    description = db.Column(db.Text, nullable=True)
-    submit_data = db.Column(db.Text, nullable=False)  # JSON string
-    created_at = db.Column(
-        db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
-    )
-    updated_at = db.Column(
-        db.DateTime,
-        nullable=False,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
-    )
-
-    def to_dict(self) -> dict:
-        return {
-            "id": self.id,
-            "name": self.name,
-            "description": self.description,
-            "submit_data": self.submit_data,
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
-        }

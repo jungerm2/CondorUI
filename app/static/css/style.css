@@ -478,6 +478,7 @@ body {
 .job-id { font-family: var(--font-mono); font-weight: 500; color: var(--accent-cyan); cursor: pointer; }
 .job-id:hover { text-decoration: underline; }
 .job-cmd { font-family: var(--font-mono); font-size: 0.82rem; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.data-table .cmd-cell { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
 .job-host { font-family: var(--font-mono); font-size: 0.82rem; color: var(--text-secondary); max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
 .job-resources { font-size: 0.8rem; color: var(--text-secondary); }
 

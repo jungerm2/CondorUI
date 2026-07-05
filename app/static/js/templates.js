@@ -32,8 +32,8 @@ function renderTemplatesGrid(templates) {
         card.style.flexDirection = 'column';
         card.style.justifyContent = 'space-between';
 
-        // Build description preview from submit_data (or description as fallback)
-        const submitStr = tmpl.submit_data || tmpl.description || '';
+        // Build description preview from submit_data
+        const submitStr = tmpl.submit_data || '';
         let descPreview = '';
         try {
             if (submitStr.trim().startsWith('{')) {
@@ -55,10 +55,16 @@ function renderTemplatesGrid(templates) {
             </div>
             <div class="card-body" style="flex-grow: 1; padding: 12px 16px;">
                 <pre class="monospace" style="background: var(--bg-secondary); padding: 8px; border-radius: 4px; font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: pre-wrap; max-height: 100px;">${escHtml(descLines)}</pre>
-                <span style="font-size: 0.75rem; color: var(--text-muted);">Saved: ${formatDate(new Date(tmpl.created_at).getTime()/1000)}</span>
+                <span style="font-size: 0.75rem; color: var(--text-muted);">Modified: ${formatDateIso(tmpl.updated_at)}</span>
             </div>
             <div class="card-footer" style="display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border-color); padding: 12px 16px; background: var(--bg-secondary);">
-                <button class="btn btn-danger btn-sm delete-tmpl-btn" data-id="${tmpl.id}">
+                <button class="btn btn-ghost btn-sm rename-tmpl-btn" data-name="${escHtml(tmpl.name)}" title="Rename template">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                        <path d="M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
+                    </svg>
+                    Rename
+                </button>
+                <button class="btn btn-danger btn-sm delete-tmpl-btn" data-name="${escHtml(tmpl.name)}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                         <polyline points="3,6 5,6 21,6"></polyline>
                         <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"></path>
@@ -87,10 +93,10 @@ function renderTemplatesGrid(templates) {
 
     $$('.delete-tmpl-btn').forEach(btn => {
         btn.addEventListener('click', async (e) => {
-            const id = e.currentTarget.dataset.id;
-            if (!confirm('Are you sure you want to delete this template?')) return;
+            const name = e.currentTarget.dataset.name;
+            if (!confirm(`Are you sure you want to delete template "${name}"?`)) return;
             try {
-                await api(`/templates/${id}`, { method: 'DELETE' });
+                await api(`/templates/${encodeURIComponent(name)}`, { method: 'DELETE' });
                 toast('Template deleted successfully');
                 loadTemplates();
             } catch (err) {
@@ -98,14 +104,63 @@ function renderTemplatesGrid(templates) {
             }
         });
     });
+
+    $$('.rename-tmpl-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const name = e.currentTarget.dataset.name;
+            $('#rename-template-name').value = name;
+            $('#rename-template-old-name').value = name;
+            openModal('rename-template-modal');
+            $('#rename-template-name').focus();
+            $('#rename-template-name').select();
+        });
+    });
+}
+
+async function confirmRenameTemplate() {
+    const oldName = $('#rename-template-old-name').value.trim();
+    const newName = $('#rename-template-name').value.trim();
+    if (!newName) {
+        toast('Please enter a template name', 'warning');
+        return;
+    }
+    if (oldName === newName) {
+        closeModal('rename-template-modal');
+        return;
+    }
+    try {
+        await api(`/templates/${encodeURIComponent(oldName)}`, {
+            method: 'PUT',
+            body: JSON.stringify({ name: newName })
+        });
+        toast('Template renamed successfully');
+        closeModal('rename-template-modal');
+        loadTemplates();
+    } catch (err) {
+        toast(`Failed to rename template: ${err.message}`, 'error');
+    }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
     loadTemplates();
 
     $('#save-template-btn').addEventListener('click', () => {
-        if (confirm('Templates are configured and saved on the Submit Job page. Go there now?')) {
+        if (confirm('Templates are configured and saved on the Submit job page. Go there now?')) {
             window.location.href = '/submit';
         }
     });
+
+    // Rename template modal
+    const renameConfirmBtn = $('#rename-template-confirm-btn');
+    if (renameConfirmBtn) {
+        renameConfirmBtn.addEventListener('click', confirmRenameTemplate);
+    }
+    const renameInput = $('#rename-template-name');
+    if (renameInput) {
+        renameInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                confirmRenameTemplate();
+            }
+        });
+    }
 });

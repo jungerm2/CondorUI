@@ -8,7 +8,8 @@ from __future__ import annotations
 import getpass
 import json
 import logging
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
+import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -368,6 +369,8 @@ def submit_job(
     from app import db
     from app.models import JobSubmission
 
+    cmd = submit_dict.get("executable", submit_dict.get("shell", ""))
+
     submission = JobSubmission(
         cluster_id=cluster_id,
         name=name,
@@ -377,6 +380,8 @@ def submit_job(
         num_procs=num_procs,
         log_dir=str(log_dir),
         output_dir=str(output_dir),
+        owner=getpass.getuser(),
+        cmd=cmd,
     )
     db.session.add(submission)
     db.session.commit()
@@ -422,6 +427,14 @@ def submit_from_file(
     from app import db
     from app.models import JobSubmission
 
+    # Extract cmd from file content (simple line-by-line parse)
+    cmd = ""
+    for line in file_content.splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith("executable") and "=" in stripped:
+            cmd = stripped.split("=", 1)[1].strip()
+            break
+
     submission = JobSubmission(
         cluster_id=cluster_id,
         name=name,
@@ -429,6 +442,8 @@ def submit_from_file(
         num_procs=num_procs,
         log_dir=str(log_dir),
         output_dir=str(output_dir),
+        owner=getpass.getuser(),
+        cmd=cmd,
     )
     db.session.add(submission)
     db.session.commit()

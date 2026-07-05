@@ -644,9 +644,12 @@ function updateStagedRequirements() {
             container.appendChild(row);
         }
     } else {
-        // No staged files selected — remove the Requirements row if it was auto-added
+        // No staged files selected — remove the Requirements row only if it was auto-added (readonly)
         if (existingReqRow) {
-            existingReqRow.remove();
+            const keyInput = existingReqRow.querySelector('.attr-key');
+            if (keyInput && keyInput.hasAttribute('readonly')) {
+                existingReqRow.remove();
+            }
         }
     }
 }
@@ -678,8 +681,26 @@ function checkSelectedTemplate() {
                     $('#job-universe').value = submit.universe;
                     $('#job-universe').dispatchEvent(new Event('change'));
                 }
-                if (submit.container_image) $('#job-container-image').value = submit.container_image;
-                if (submit.executable) $('#job-executable').value = submit.executable;
+                if (submit.container_image) {
+                    $('#job-container-image').value = submit.container_image;
+                    // Sync container dropdown
+                    if (serverContainers.length > 0) {
+                        const matched = serverContainers.find(c => c.uri === submit.container_image);
+                        if (matched) {
+                            $('#job-container-select').value = matched.uri;
+                        }
+                    }
+                }
+                if (submit.executable) {
+                    $('#job-executable').value = submit.executable;
+                    // Sync executable picker
+                    const execName = submit.executable.replace(/^executables\//, '');
+                    const matched = serverExecutables.find(ex => ex.filename === execName);
+                    if (matched) {
+                        selectedExecutableName = matched.filename;
+                    }
+                    renderExecPicker();
+                }
                 if (submit.arguments) $('#job-arguments').value = submit.arguments;
                 if (submit.request_cpus) $('#job-cpus').value = submit.request_cpus;
                 if (submit.request_memory) $('#job-memory').value = submit.request_memory;
@@ -687,6 +708,19 @@ function checkSelectedTemplate() {
                 if (submit.output) $('#job-output').value = submit.output;
                 if (submit.error) $('#job-error').value = submit.error;
                 if (submit.log) $('#job-log').value = submit.log;
+                if (submit.transfer_output_files) $('#job-transfer-output').value = submit.transfer_output_files;
+                if (submit.output_directory) $('#job-output-directory').value = submit.output_directory;
+                if (submit.transfer_output_remaps) {
+                    // Convert semicolon-separated to newline-separated for the textarea
+                    const remapLines = submit.transfer_output_remaps.split(';').map(s => s.trim()).filter(s => s);
+                    $('#job-output-remaps').value = remapLines.join('\n');
+                }
+                if (submit.request_gpus) $('#job-gpus').value = submit.request_gpus;
+                if (submit.gpus_minimum_capability) $('#job-gpu-min-capability').value = submit.gpus_minimum_capability;
+                if (submit.gpus_minimum_memory) $('#job-gpu-min-memory').value = submit.gpus_minimum_memory;
+                if (submit.gpus_minimum_runtime) $('#job-gpu-min-runtime').value = submit.gpus_minimum_runtime;
+                if (submit.cuda_version) $('#job-cuda-version').value = submit.cuda_version;
+                if (submit.transfer_executable) $('#job-transfer-executable').checked = true;
 
                 if (submit.transfer_input_files) {
                     const files = submit.transfer_input_files.split(',').map(f => f.trim());
@@ -700,9 +734,20 @@ function checkSelectedTemplate() {
                     const matchedUris = new Set(serverFiles.map(sf => sf.uri));
                     const nonMatched = files.filter(f => !matchedUris.has(f));
                     $('#job-transfer-input').value = nonMatched.join(', ');
+                    // Update the text field to include both manual entries and selected file URIs
+                    updateTransferInputField();
                 }
 
-                const standardKeys = ['universe', 'container_image', 'executable', 'arguments', 'shell', 'request_cpus', 'request_memory', 'request_disk', 'output', 'error', 'log', 'transfer_input_files'];
+                const standardKeys = [
+                    'universe', 'container_image', 'executable', 'arguments', 'shell',
+                    'request_cpus', 'request_memory', 'request_disk',
+                    'output', 'error', 'log',
+                    'transfer_input_files',
+                    'transfer_output_files', 'output_directory', 'transfer_output_remaps',
+                    'request_gpus', 'gpus_minimum_capability', 'gpus_minimum_memory',
+                    'gpus_minimum_runtime', 'cuda_version', 'transfer_executable',
+                    'requirements',
+                ];
                 const container = $('#extra-attrs');
                 container.innerHTML = '';
                 for (const [key, val] of Object.entries(submit)) {

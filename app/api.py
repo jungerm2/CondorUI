@@ -29,7 +29,7 @@ from app.condor import (
     submit_from_file,
     submit_job,
 )
-from app.models import JobSubmission, SubmitTemplate
+from app.models import JobSubmission
 from app.utils import (
     resolve_commands,
     save_uploaded_stream,
@@ -180,6 +180,105 @@ def get_cluster(cluster_id):
 # ---------------------------------------------------------------------------
 
 
+def _build_job_entry(
+    sub: JobSubmission, proc_id: int, schedd_job: dict | None = None
+) -> dict:
+    """Build a job dict from a DB submission record, optionally overlaying schedd data.
+
+    When *schedd_job* is provided, real-time status and metadata from the schedd
+    are used.  Otherwise the job is marked as Completed with fields synthesized
+    from the DB record.
+
+    Static attributes (Owner, Cmd, JobBatchName) are sourced from the DB record
+    first (saved at submit time), falling back to schedd data if the DB values
+    are null.
+    """
+    from app.condor import JOB_STATUS_MAP
+
+    # Static attributes from DB (saved at submit time)
+    owner = sub.owner or (schedd_job.get("Owner", "—") if schedd_job else "—")
+    cmd = sub.cmd or (schedd_job.get("Cmd", "") if schedd_job else "")
+    batch_name = sub.name
+
+    if schedd_job:
+        status = schedd_job.get("JobStatus", 4)
+        return {
+            "ClusterId": sub.cluster_id,
+            "ProcId": schedd_job.get("ProcId", proc_id),
+            "JobStatus": status,
+            "JobStatusName": JOB_STATUS_MAP.get(status, "Unknown"),
+            "Owner": owner,
+            "Cmd": cmd,
+            "Args": schedd_job.get("Args", ""),
+            "RequestCpus": schedd_job.get("RequestCpus", "—"),
+            "RequestMemory": schedd_job.get("RequestMemory", "—"),
+            "RequestDisk": schedd_job.get("RequestDisk", "—"),
+            "QDate": schedd_job.get("QDate", 0),
+            "JobStartDate": schedd_job.get("JobStartDate"),
+            "CompletionDate": schedd_job.get("CompletionDate"),
+            "HoldReason": schedd_job.get("HoldReason", ""),
+            "RemoteHost": schedd_job.get("RemoteHost", ""),
+            "ImageSize": schedd_job.get("ImageSize", 0),
+            "DiskUsage": schedd_job.get("DiskUsage", 0),
+            "ExitCode": schedd_job.get("ExitCode", 0),
+            "ExitBySignal": schedd_job.get("ExitBySignal", False),
+            "JobCurrentStartDate": schedd_job.get("JobCurrentStartDate"),
+            "NumJobStarts": schedd_job.get("NumJobStarts", 1),
+            "NumShadowStarts": schedd_job.get("NumShadowStarts", 1),
+            "JobBatchName": schedd_job.get("JobBatchName", batch_name),
+            "RemoteWallClockTime": schedd_job.get("RemoteWallClockTime", 0),
+            "CumulativeRemoteSysCpu": schedd_job.get("CumulativeRemoteSysCpu", 0),
+            "CumulativeRemoteUserCpu": schedd_job.get("CumulativeRemoteUserCpu", 0),
+        }
+
+    # Synthesize from DB record (job completed / no schedd data)
+    request_cpus = "—"
+    request_memory = "—"
+    request_disk = "—"
+    try:
+        if sub.submit_description.strip().startswith("{"):
+            desc = json.loads(sub.submit_description)
+            if "request_cpus" in desc:
+                request_cpus = desc["request_cpus"]
+            if "request_memory" in desc:
+                request_memory = desc["request_memory"]
+            if "request_disk" in desc:
+                request_disk = desc["request_disk"]
+    except (json.JSONDecodeError, AttributeError):
+        pass
+
+    qdate = int(sub.submitted_at.timestamp()) if sub.submitted_at else 0
+
+    return {
+        "ClusterId": sub.cluster_id,
+        "ProcId": proc_id,
+        "JobStatus": 4,
+        "JobStatusName": "Completed",
+        "Owner": owner,
+        "Cmd": cmd,
+        "Args": "",
+        "RequestCpus": request_cpus,
+        "RequestMemory": request_memory,
+        "RequestDisk": request_disk,
+        "QDate": qdate,
+        "JobStartDate": None,
+        "CompletionDate": None,
+        "HoldReason": "",
+        "RemoteHost": "",
+        "ImageSize": 0,
+        "DiskUsage": 0,
+        "ExitCode": 0,
+        "ExitBySignal": False,
+        "JobCurrentStartDate": None,
+        "NumJobStarts": 1,
+        "NumShadowStarts": 1,
+        "JobBatchName": batch_name,
+        "RemoteWallClockTime": 0,
+        "CumulativeRemoteSysCpu": 0,
+        "CumulativeRemoteUserCpu": 0,
+    }
+
+
 @api_bp.route("/history")
 def list_history():
     """List all known submissions with real-time status from the schedd.
@@ -188,7 +287,16 @@ def list_history():
     with the schedd to show the actual status of each cluster.  Clusters
     still in the schedd (idle / running / held) show their real status;
     clusters no longer in the schedd are marked Completed.
+
+    Query parameters:
+        source (str): One of "merged" (default), "schedd", or "db".
+            - merged: return ALL procs per cluster; active ones from schedd,
+              completed ones from DB.
+            - schedd: return only what's currently in the schedd (one proc
+              per cluster).
+            - db: return all procs from the local DB only (all Completed).
     """
+    source = request.args.get("source", "merged")
     limit = request.args.get(
         "limit", current_app.config["MAX_HISTORY_RESULTS"], type=int
     )
@@ -199,9 +307,9 @@ def list_history():
             .all()
         )
 
-        # Build a cluster_id → status lookup from the schedd (fast, cached)
-        schedd_statuses: dict[int, dict] = {}
-        if daemon_available():
+        # Build a per-proc lookup from the schedd: { cluster_id: { proc_id: job } }
+        schedd_procs: dict[int, dict[int, dict]] = {}
+        if daemon_available() and source != "db":
             try:
                 cluster_ids = sorted({s.cluster_id for s in submissions})
                 if cluster_ids:
@@ -231,116 +339,41 @@ def list_history():
                             "RequestDisk",
                         ],
                     )
-                    # Only keep the first proc per cluster (ProcId == 0 prefered)
                     for job in active_jobs:
                         cid = job.get("ClusterId")
+                        pid = job.get("ProcId", 0)
                         if cid is not None:
-                            # Keep proc 0 if available, otherwise overwrite
-                            if cid not in schedd_statuses or job.get("ProcId") == 0:
-                                schedd_statuses[cid] = job
+                            schedd_procs.setdefault(cid, {})[pid] = job
             except Exception:
                 logger.warning(
                     "Could not query schedd for history statuses", exc_info=True
                 )
 
-        from app.condor import JOB_STATUS_MAP
-
-        # Transform local DB records into the job-like format expected by the frontend
-        jobs = []
+        jobs: list[dict] = []
         for sub in submissions:
-            schedd_job = schedd_statuses.get(sub.cluster_id)
+            cluster_schedd = schedd_procs.get(sub.cluster_id, {})
 
-            if schedd_job:
-                # Use the real status from the schedd
-                real_status = schedd_job.get("JobStatus", 4)
-
-                jobs.append(
-                    {
-                        "ClusterId": sub.cluster_id,
-                        "ProcId": schedd_job.get("ProcId", 0),
-                        "JobStatus": real_status,
-                        "JobStatusName": JOB_STATUS_MAP.get(real_status, "Unknown"),
-                        "Owner": schedd_job.get("Owner", "—"),
-                        "Cmd": schedd_job.get("Cmd", ""),
-                        "Args": schedd_job.get("Args", ""),
-                        "RequestCpus": schedd_job.get("RequestCpus", "—"),
-                        "RequestMemory": schedd_job.get("RequestMemory", "—"),
-                        "RequestDisk": schedd_job.get("RequestDisk", "—"),
-                        "QDate": schedd_job.get("QDate", 0),
-                        "JobStartDate": schedd_job.get("JobStartDate"),
-                        "CompletionDate": schedd_job.get("CompletionDate"),
-                        "HoldReason": schedd_job.get("HoldReason", ""),
-                        "RemoteHost": schedd_job.get("RemoteHost", ""),
-                        "ImageSize": schedd_job.get("ImageSize", 0),
-                        "DiskUsage": schedd_job.get("DiskUsage", 0),
-                        "ExitCode": schedd_job.get("ExitCode", 0),
-                        "ExitBySignal": schedd_job.get("ExitBySignal", False),
-                        "JobCurrentStartDate": schedd_job.get("JobCurrentStartDate"),
-                        "NumJobStarts": schedd_job.get("NumJobStarts", 1),
-                        "NumShadowStarts": schedd_job.get("NumShadowStarts", 1),
-                        "JobBatchName": schedd_job.get("JobBatchName", sub.name),
-                        "RemoteWallClockTime": schedd_job.get("RemoteWallClockTime", 0),
-                        "CumulativeRemoteSysCpu": schedd_job.get(
-                            "CumulativeRemoteSysCpu", 0
-                        ),
-                        "CumulativeRemoteUserCpu": schedd_job.get(
-                            "CumulativeRemoteUserCpu", 0
-                        ),
-                    }
-                )
-            else:
-                # Job is no longer in the schedd — mark as Completed
-                cmd = ""
-                request_cpus = "—"
-                request_memory = "—"
-                request_disk = "—"
-                try:
-                    if sub.submit_description.strip().startswith("{"):
-                        desc = json.loads(sub.submit_description)
-                        cmd = desc.get("executable", desc.get("shell", ""))
-                        # Extract resource requests from submit description
-                        if "request_cpus" in desc:
-                            request_cpus = desc["request_cpus"]
-                        if "request_memory" in desc:
-                            request_memory = desc["request_memory"]
-                        if "request_disk" in desc:
-                            request_disk = desc["request_disk"]
-                except json.JSONDecodeError, AttributeError:
-                    cmd = ""
-
-                qdate = int(sub.submitted_at.timestamp()) if sub.submitted_at else 0
-
-                for proc_id in range(sub.num_procs):
-                    jobs.append(
-                        {
-                            "ClusterId": sub.cluster_id,
-                            "ProcId": proc_id,
-                            "JobStatus": 4,
-                            "JobStatusName": "Completed",
-                            "Owner": "—",
-                            "Cmd": cmd,
-                            "Args": "",
-                            "RequestCpus": request_cpus,
-                            "RequestMemory": request_memory,
-                            "RequestDisk": request_disk,
-                            "QDate": qdate,
-                            "JobStartDate": None,
-                            "CompletionDate": None,
-                            "HoldReason": "",
-                            "RemoteHost": "",
-                            "ImageSize": 0,
-                            "DiskUsage": 0,
-                            "ExitCode": 0,
-                            "ExitBySignal": False,
-                            "JobCurrentStartDate": None,
-                            "NumJobStarts": 1,
-                            "NumShadowStarts": 1,
-                            "JobBatchName": sub.name,
-                            "RemoteWallClockTime": 0,
-                            "CumulativeRemoteSysCpu": 0,
-                            "CumulativeRemoteUserCpu": 0,
-                        }
+            if source == "schedd":
+                # Only return what's in the schedd (one proc per cluster)
+                if cluster_schedd:
+                    schedd_job = cluster_schedd.get(0) or next(
+                        iter(cluster_schedd.values())
                     )
+                    jobs.append(
+                        _build_job_entry(
+                            sub, schedd_job.get("ProcId", 0), schedd_job
+                        )
+                    )
+            elif source == "db":
+                # Return all procs from DB only (all Completed)
+                for proc_id in range(sub.num_procs):
+                    jobs.append(_build_job_entry(sub, proc_id))
+            else:
+                # "merged" (default): return ALL procs — active from schedd,
+                # completed from DB
+                for proc_id in range(sub.num_procs):
+                    schedd_job = cluster_schedd.get(proc_id)
+                    jobs.append(_build_job_entry(sub, proc_id, schedd_job))
 
         return jsonify({"jobs": jobs, "count": len(jobs)})
     except Exception as e:
@@ -1464,65 +1497,140 @@ def job_details(cluster_id: int):
 
 
 # ---------------------------------------------------------------------------
-# Submit templates
+# Submit templates (stored as .json files on the filesystem)
 # ---------------------------------------------------------------------------
+
+
+def _slugify(name: str) -> str:
+    """Convert a template name to a safe filename slug."""
+    slug = name.lower().strip()
+    slug = re.sub(r"[^a-z0-9\s-]", "", slug)
+    slug = re.sub(r"\s+", "-", slug)
+    slug = re.sub(r"-+", "-", slug)
+    return slug.strip("-") or "untitled"
+
+
+def _template_path(templates_dir: str, name: str) -> Path:
+    """Get the filesystem path for a template by name."""
+    return Path(templates_dir) / f"{_slugify(name)}.json"
+
+
+def _read_template(file_path: Path) -> dict | None:
+    """Read a template from a .json file and return its metadata dict."""
+    if not file_path.exists():
+        return None
+    try:
+        content = file_path.read_text(encoding="utf-8")
+        stat = file_path.stat()
+        # Derive the display name from the filename (slug → Title Case)
+        name = file_path.stem.replace("-", " ").title()
+        return {
+            "name": name,
+            "submit_data": content,
+            "updated_at": stat.st_mtime,
+        }
+    except Exception:
+        return None
+
+
+def _template_to_dict(file_path: Path) -> dict | None:
+    """Convert a .json file to the API response dict."""
+    tmpl = _read_template(file_path)
+    if tmpl is None:
+        return None
+    from datetime import datetime, timezone
+
+    return {
+        "name": tmpl["name"],
+        "submit_data": tmpl["submit_data"],
+        "updated_at": datetime.fromtimestamp(
+            tmpl["updated_at"], tz=timezone.utc
+        ).isoformat()
+        + "Z",
+    }
 
 
 @api_bp.route("/templates")
 def list_templates():
-    """List all saved submit templates."""
-    templates = SubmitTemplate.query.order_by(SubmitTemplate.updated_at.desc()).all()
-    return jsonify({"templates": [t.to_dict() for t in templates]})
+    """List all saved submit templates (from .json files on disk)."""
+    templates_dir = current_app.config["TEMPLATES_DIR"]
+    templates = []
+    for f in sorted(Path(templates_dir).iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+        if f.suffix == ".json":
+            d = _template_to_dict(f)
+            if d:
+                templates.append(d)
+    return jsonify({"templates": templates})
 
 
 @api_bp.route("/templates", methods=["POST"])
 def create_template():
-    """Save a new submit template."""
+    """Save a new submit template as a .json file."""
     data = request.get_json()
     if not data or "name" not in data or "submit_data" not in data:
         return jsonify({"error": "Missing 'name' or 'submit_data'"}), 400
 
-    template = SubmitTemplate(
-        name=data["name"],
-        description=data.get("description", ""),
-        submit_data=json.dumps(data["submit_data"])
+    templates_dir = current_app.config["TEMPLATES_DIR"]
+    file_path = _template_path(templates_dir, data["name"])
+
+    if file_path.exists():
+        return jsonify({"error": f"Template '{data['name']}' already exists"}), 409
+
+    # Store submit_data as-is (raw text for raw mode, JSON string for form mode)
+    content = (
+        json.dumps(data["submit_data"], indent=2)
         if isinstance(data["submit_data"], dict)
-        else data["submit_data"],
+        else data["submit_data"]
     )
-    db.session.add(template)
-    db.session.commit()
+    file_path.write_text(content, encoding="utf-8")
 
-    return jsonify(template.to_dict()), 201
+    return jsonify(_template_to_dict(file_path)), 201
 
 
-@api_bp.route("/templates/<int:template_id>", methods=["PUT"])
-def update_template(template_id: int):
-    """Update an existing template."""
-    template = SubmitTemplate.query.get_or_404(template_id)
+@api_bp.route("/templates/<name>", methods=["PUT"])
+def update_template(name: str):
+    """Update an existing template (.json file)."""
+    templates_dir = current_app.config["TEMPLATES_DIR"]
+    file_path = _template_path(templates_dir, name)
+
+    if not file_path.exists():
+        return jsonify({"error": f"Template '{name}' not found"}), 404
+
     data = request.get_json()
+    if not data:
+        return jsonify({"error": "Missing request body"}), 400
 
-    if "name" in data:
-        template.name = data["name"]
-    if "description" in data:
-        template.description = data["description"]
+    # If name changed, rename the file
+    if "name" in data and data["name"] != name:
+        new_path = _template_path(templates_dir, data["name"])
+        if new_path.exists():
+            return jsonify({"error": f"Template '{data['name']}' already exists"}), 409
+        file_path.rename(new_path)
+        file_path = new_path
+
+    # If submit_data changed, rewrite the file
     if "submit_data" in data:
-        template.submit_data = (
-            json.dumps(data["submit_data"])
+        content = (
+            json.dumps(data["submit_data"], indent=2)
             if isinstance(data["submit_data"], dict)
             else data["submit_data"]
         )
+        file_path.write_text(content, encoding="utf-8")
 
-    db.session.commit()
-    return jsonify(template.to_dict())
+    return jsonify(_template_to_dict(file_path))
 
 
-@api_bp.route("/templates/<int:template_id>", methods=["DELETE"])
-def delete_template(template_id: int):
-    """Delete a template."""
-    template = SubmitTemplate.query.get_or_404(template_id)
-    db.session.delete(template)
-    db.session.commit()
-    return jsonify({"message": f"Template '{template.name}' deleted"})
+@api_bp.route("/templates/<name>", methods=["DELETE"])
+def delete_template(name: str):
+    """Delete a template (.json file)."""
+    templates_dir = current_app.config["TEMPLATES_DIR"]
+    file_path = _template_path(templates_dir, name)
+
+    if not file_path.exists():
+        return jsonify({"error": f"Template '{name}' not found"}), 404
+
+    file_path.unlink()
+    return jsonify({"message": f"Template '{name}' deleted"})
 
 
 # ---------------------------------------------------------------------------
@@ -1569,7 +1677,8 @@ def delete_history():
 
     Request JSON:
     {
-        "cluster_ids": [123, 456, ...]
+        "cluster_ids": [123, 456, ...],
+        "delete_outputs": false  (optional, default false)
     }
     """
     data = request.get_json()
@@ -1579,6 +1688,8 @@ def delete_history():
     cluster_ids = data["cluster_ids"]
     if not isinstance(cluster_ids, list) or not cluster_ids:
         return jsonify({"error": "'cluster_ids' must be a non-empty list"}), 400
+
+    delete_outputs = data.get("delete_outputs", False)
 
     results = []
     for cid in cluster_ids:
@@ -1596,6 +1707,9 @@ def delete_history():
                 # 3. Remove log directory from disk
                 if submission.log_dir and Path(submission.log_dir).exists():
                     shutil.rmtree(submission.log_dir, ignore_errors=True)
+                # 4. Optionally remove output directory from disk
+                if delete_outputs and submission.output_dir and Path(submission.output_dir).exists():
+                    shutil.rmtree(submission.output_dir, ignore_errors=True)
                 db.session.delete(submission)
 
             results.append({"cluster_id": cid, "success": True})

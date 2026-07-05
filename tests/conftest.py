@@ -22,6 +22,7 @@ def app():
                 "UPLOAD_DIR": str(Path(tmpdir) / "uploads"),
                 "JOB_LOGS_DIR": str(Path(tmpdir) / "logs"),
                 "OUTPUT_DIR": str(Path(tmpdir) / "outputs"),
+                "TEMPLATES_DIR": str(Path(tmpdir) / "templates"),
                 "WTF_CSRF_ENABLED": False,
                 "SERVER_NAME": "localhost",
             }

@@ -43,5 +43,8 @@ class Config:
     # Directory for uploaded executables (flat, no UUID paths)
     EXECUTABLES_DIR = os.environ.get("EXECUTABLES_DIR", str(BASE_DIR / "executables"))
 
+    # Directory for submit templates (stored as .sub files)
+    TEMPLATES_DIR = os.environ.get("TEMPLATES_DIR", str(BASE_DIR / "templates"))
+
     # Maximum upload size (10 GB) — containers can be very large
     MAX_CONTENT_LENGTH = 10 * 1024 * 1024 * 1024

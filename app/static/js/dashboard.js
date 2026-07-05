@@ -9,7 +9,7 @@ let refreshInProgress = false;
 let countdown = 30;
 const REFRESH_RATE = 30; // seconds
 let selectedIds = new Set(); // Set of "clusterId.procId" strings
-let groupByCluster = false; // Group by ClusterId toggle
+let groupByCluster = true; // Group by ClusterId toggle (default on)
 let expandedClusters = new Set(); // Set of clusterIds that are expanded in grouped view
 
 async function loadJobs() {
@@ -194,7 +194,7 @@ function renderStatusBar(jobs) {
     if (total === 0) return '<span class="status-badge status-completed">—</span>';
 
     // Define status order and labels
-    const statusOrder = [1, 2, 5, 4, 3, 6]; // Idle, Running, Held, Completed, Removed, Transferring
+    const statusOrder = [4, 2, 6, 1, 5, 3]; // Completed, Running, Transferring, Idle, Held, Removed
     const statusLabels = {
         1: 'Idle', 2: 'Running', 3: 'Removed', 4: 'Completed', 5: 'Held', 6: 'Transferring'
     };
@@ -367,12 +367,11 @@ function renderGroupedTable() {
             </td>
             <td>
                 <span class="expand-chevron">▶</span>
-                <a href="/job/${cid}/${firstJob.ProcId || 0}" class="job-id-link">${cid}</a>
-                <span style="font-size: 0.75rem; color: var(--text-muted); margin-left: 4px;">(${group.jobs.length})</span>
+                <a href="/job/${cid}/${firstJob.ProcId || 0}" class="job-id-link">${cid}.0..${group.jobs.length - 1}</a>
             </td>
             <td style="max-width: 120px; overflow: hidden; text-overflow: ellipsis;" title="${escHtml(name)}">${escHtml(name)}</td>
             <td>${escHtml(owner)}</td>
-            <td class="monospace" title="${escHtml(cmd || args || '')}">${formatCommand(cmd, args)}</td>
+            <td class="monospace cmd-cell" title="${escHtml(cmd || args || '')}">${formatCommand(cmd, args)}</td>
             <td>${statusBarHtml}</td>
             <td class="monospace">${group.exitCode >= 0 ? group.exitCode : '—'}</td>
             <td>${qDate}</td>
@@ -422,7 +421,7 @@ function renderGroupedTable() {
                 <td><a href="/job/${job.ClusterId}/${job.ProcId}" class="job-id-link">${job.ClusterId}.${job.ProcId}</a></td>
                 <td style="max-width: 120px; overflow: hidden; text-overflow: ellipsis;" title="${escHtml(subName)}">${escHtml(subName)}</td>
                 <td>${escHtml(job.Owner || '—')}</td>
-                <td class="monospace" title="${escHtml(job.Cmd || job.Args || '')}">${formatCommand(job.Cmd, job.Args)}</td>
+                <td class="monospace cmd-cell" title="${escHtml(job.Cmd || job.Args || '')}">${formatCommand(job.Cmd, job.Args)}</td>
                 <td><span class="status-badge ${statusClass}">${statusName}</span></td>
                 <td class="monospace">${subExitCode}</td>
                 <td>${subQDate}</td>
@@ -569,7 +568,7 @@ function renderTable() {
             <td><a href="/job/${job.ClusterId}/${job.ProcId}" class="job-id-link">${job.ClusterId}.${job.ProcId}</a></td>
             <td style="max-width: 120px; overflow: hidden; text-overflow: ellipsis;" title="${escHtml(name)}">${escHtml(name)}</td>
             <td>${escHtml(job.Owner || '—')}</td>
-            <td class="monospace" title="${escHtml(job.Cmd || job.Args || '')}">${formatCommand(job.Cmd, job.Args)}</td>
+            <td class="monospace cmd-cell" title="${escHtml(job.Cmd || job.Args || '')}">${formatCommand(job.Cmd, job.Args)}</td>
             <td><span class="status-badge ${statusClass}">${statusName}</span></td>
             <td class="monospace">${exitCode}</td>
             <td>${qDate}</td>
@@ -623,16 +622,20 @@ async function deleteSelected() {
     if (clusterIds.length > 5) detail += `, and ${clusterIds.length - 5} more...`;
 
     showConfirmModal(
-        `Are you sure you want to delete <strong>${count}</strong> job(s)? This will remove them from the schedd, database, and logs.<br><br><code style="font-size: 0.82rem;">${escHtml(detail)}</code>`,
+        `Are you sure you want to delete <strong>${count}</strong> job(s)? This will remove them from the schedd, database, and logs.<br><br><code style="font-size: 0.82rem;">${escHtml(detail)}</code>` +
+        `<br><br><label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.85rem; color: var(--text-secondary);">` +
+        `<input type="checkbox" id="delete-outputs-checkbox" style="width: 16px; height: 16px; cursor: pointer;">` +
+        `<span>Also delete output files</span></label>`,
         {
             title: 'Delete Jobs',
             confirmText: `Delete ${count} Job(s)`,
             confirmClass: 'btn-danger',
             onConfirm: async () => {
+                const deleteOutputs = $('#delete-outputs-checkbox')?.checked || false;
                 try {
                     const result = await api('/history/delete', {
                         method: 'POST',
-                        body: JSON.stringify({ cluster_ids: clusterIds }),
+                        body: JSON.stringify({ cluster_ids: clusterIds, delete_outputs: deleteOutputs }),
                     });
                     toast(`Deleted ${result.count} job(s) successfully`);
                     selectedIds.clear();

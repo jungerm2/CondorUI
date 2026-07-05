@@ -1,12 +1,13 @@
 """Tests for submit template CRUD operations and field preservation.
 
-Template loading and saving should preserve all submit fields exactly.
-These tests verify the backend API endpoints for templates: list, create,
-update, delete, and field-level round-trip integrity.
+Templates are stored as .sub files on the filesystem. These tests verify
+the backend API endpoints for templates: list, create, update, delete,
+and field-level round-trip integrity.
 """
 
 import json
-from datetime import datetime, timezone
+import os
+from pathlib import Path
 
 # =============================================================================
 # Sample submit descriptions for testing
@@ -84,14 +85,11 @@ queue 1"""
 # =============================================================================
 
 
-def _sorted_template_keys(t: dict) -> dict:
-    """Return template dict with keys sorted (for predictable comparison)."""
-    return {k: t[k] for k in sorted(t.keys())}
-
-
-def _datetime_from_iso(iso_str: str) -> datetime:
-    """Parse an ISO 8601 datetime string (with 'Z' suffix)."""
-    return datetime.fromisoformat(iso_str.rstrip("Z")).replace(tzinfo=timezone.utc)
+def _clean_templates_dir(app):
+    """Remove all .json files from the templates directory."""
+    templates_dir = Path(app.config["TEMPLATES_DIR"])
+    for f in templates_dir.glob("*.json"):
+        f.unlink()
 
 
 # =============================================================================
@@ -102,15 +100,17 @@ def _datetime_from_iso(iso_str: str) -> datetime:
 class TestTemplateCRUD:
     """Basic create, read, update, delete operations on templates."""
 
-    def test_list_templates_empty(self, client, db):
+    def test_list_templates_empty(self, client, app):
         """GET /api/templates returns an empty list initially."""
+        _clean_templates_dir(app)
         resp = client.get("/api/templates")
         assert resp.status_code == 200
         data = resp.get_json()
         assert data == {"templates": []}
 
-    def test_create_template_with_json_submit_data(self, client, db):
+    def test_create_template_with_json_submit_data(self, client, app):
         """POST /api/templates with JSON submit_data returns 201."""
+        _clean_templates_dir(app)
         resp = client.post(
             "/api/templates",
             json={
@@ -122,12 +122,11 @@ class TestTemplateCRUD:
         data = resp.get_json()
         assert data["name"] == "My Template"
         assert json.loads(data["submit_data"]) == SAMPLE_EXECUTABLE_SUBMIT
-        assert data["id"] > 0
-        assert "created_at" in data
         assert "updated_at" in data
 
-    def test_create_template_with_raw_text(self, client, db):
+    def test_create_template_with_raw_text(self, client, app):
         """POST /api/templates with raw text submit_data returns 201."""
+        _clean_templates_dir(app)
         resp = client.post(
             "/api/templates",
             json={"name": "Raw Template", "submit_data": SAMPLE_RAW_TEXT},
@@ -137,8 +136,9 @@ class TestTemplateCRUD:
         assert data["name"] == "Raw Template"
         assert data["submit_data"] == SAMPLE_RAW_TEXT
 
-    def test_create_template_missing_name(self, client, db):
+    def test_create_template_missing_name(self, client, app):
         """POST /api/templates without name returns 400."""
+        _clean_templates_dir(app)
         resp = client.post(
             "/api/templates",
             json={"submit_data": SAMPLE_EXECUTABLE_SUBMIT},
@@ -146,8 +146,9 @@ class TestTemplateCRUD:
         assert resp.status_code == 400
         assert "error" in resp.get_json()
 
-    def test_create_template_missing_submit_data(self, client, db):
+    def test_create_template_missing_submit_data(self, client, app):
         """POST /api/templates without submit_data returns 400."""
+        _clean_templates_dir(app)
         resp = client.post(
             "/api/templates",
             json={"name": "No Data Template"},
@@ -155,22 +156,9 @@ class TestTemplateCRUD:
         assert resp.status_code == 400
         assert "error" in resp.get_json()
 
-    def test_create_template_with_description(self, client, db):
-        """POST /api/templates includes optional description."""
-        resp = client.post(
-            "/api/templates",
-            json={
-                "name": "Described Template",
-                "description": "A useful description",
-                "submit_data": SAMPLE_EXECUTABLE_SUBMIT,
-            },
-        )
-        assert resp.status_code == 201
-        data = resp.get_json()
-        assert data["description"] == "A useful description"
-
-    def test_get_template_in_list_after_create(self, client, db):
+    def test_get_template_in_list_after_create(self, client, app):
         """Created template appears in the list response."""
+        _clean_templates_dir(app)
         client.post(
             "/api/templates",
             json={"name": "Listable", "submit_data": SAMPLE_EXECUTABLE_SUBMIT},
@@ -180,100 +168,87 @@ class TestTemplateCRUD:
         assert len(data["templates"]) == 1
         assert data["templates"][0]["name"] == "Listable"
 
-    def test_update_template_name(self, client, db):
-        """PUT /api/templates/<id> updates the name."""
-        create_resp = client.post(
+    def test_update_template_name(self, client, app):
+        """PUT /api/templates/<name> updates the name."""
+        _clean_templates_dir(app)
+        client.post(
             "/api/templates",
             json={"name": "Original", "submit_data": SAMPLE_EXECUTABLE_SUBMIT},
         )
-        tmpl_id = create_resp.get_json()["id"]
 
         update_resp = client.put(
-            f"/api/templates/{tmpl_id}",
+            "/api/templates/Original",
             json={"name": "Updated Name"},
         )
         assert update_resp.status_code == 200
         data = update_resp.get_json()
         assert data["name"] == "Updated Name"
 
-    def test_update_template_submit_data(self, client, db):
-        """PUT /api/templates/<id> updates submit_data (dict)."""
-        create_resp = client.post(
+    def test_update_template_submit_data(self, client, app):
+        """PUT /api/templates/<name> updates submit_data (dict)."""
+        _clean_templates_dir(app)
+        client.post(
             "/api/templates",
             json={"name": "Data Update", "submit_data": SAMPLE_SHELL_SUBMIT},
         )
-        tmpl_id = create_resp.get_json()["id"]
 
         update_resp = client.put(
-            f"/api/templates/{tmpl_id}",
+            "/api/templates/Data Update",
             json={"submit_data": SAMPLE_CONTAINER_SUBMIT},
         )
         assert update_resp.status_code == 200
         data = update_resp.get_json()
         assert json.loads(data["submit_data"]) == SAMPLE_CONTAINER_SUBMIT
 
-    def test_update_template_submit_data_as_string(self, client, db):
-        """PUT /api/templates/<id> updates submit_data (raw string)."""
-        create_resp = client.post(
+    def test_update_template_submit_data_as_string(self, client, app):
+        """PUT /api/templates/<name> updates submit_data (raw string)."""
+        _clean_templates_dir(app)
+        client.post(
             "/api/templates",
             json={"name": "String Data", "submit_data": SAMPLE_EXECUTABLE_SUBMIT},
         )
-        tmpl_id = create_resp.get_json()["id"]
 
         new_raw = "universe = vanilla\nexecutable = /bin/ls\nqueue 1"
         update_resp = client.put(
-            f"/api/templates/{tmpl_id}",
+            "/api/templates/String Data",
             json={"submit_data": new_raw},
         )
         assert update_resp.status_code == 200
         data = update_resp.get_json()
         assert data["submit_data"] == new_raw
 
-    def test_update_template_description(self, client, db):
-        """PUT /api/templates/<id> updates description."""
-        create_resp = client.post(
-            "/api/templates",
-            json={"name": "Desc Update", "submit_data": SAMPLE_EXECUTABLE_SUBMIT},
-        )
-        tmpl_id = create_resp.get_json()["id"]
-
-        update_resp = client.put(
-            f"/api/templates/{tmpl_id}",
-            json={"description": "New description"},
-        )
-        assert update_resp.status_code == 200
-        data = update_resp.get_json()
-        assert data["description"] == "New description"
-
-    def test_update_nonexistent_template(self, client, db):
-        """PUT /api/templates/<bad_id> returns 404."""
+    def test_update_nonexistent_template(self, client, app):
+        """PUT /api/templates/<bad_name> returns 404."""
+        _clean_templates_dir(app)
         resp = client.put(
-            "/api/templates/99999",
+            "/api/templates/Nonexistent",
             json={"name": "Ghost"},
         )
         assert resp.status_code == 404
 
-    def test_delete_template(self, client, db):
-        """DELETE /api/templates/<id> removes the template."""
-        create_resp = client.post(
+    def test_delete_template(self, client, app):
+        """DELETE /api/templates/<name> removes the template."""
+        _clean_templates_dir(app)
+        client.post(
             "/api/templates",
             json={"name": "Deletable", "submit_data": SAMPLE_EXECUTABLE_SUBMIT},
         )
-        tmpl_id = create_resp.get_json()["id"]
 
-        del_resp = client.delete(f"/api/templates/{tmpl_id}")
+        del_resp = client.delete("/api/templates/Deletable")
         assert del_resp.status_code == 200
 
         list_resp = client.get("/api/templates")
         assert len(list_resp.get_json()["templates"]) == 0
 
-    def test_delete_nonexistent_template(self, client, db):
-        """DELETE /api/templates/<bad_id> returns 404."""
-        resp = client.delete("/api/templates/99999")
+    def test_delete_nonexistent_template(self, client, app):
+        """DELETE /api/templates/<bad_name> returns 404."""
+        _clean_templates_dir(app)
+        resp = client.delete("/api/templates/Nonexistent")
         assert resp.status_code == 404
 
-    def test_template_name_unique_constraint(self, client, db):
-        """POST with a duplicate name returns 400 or 500 (integrity error)."""
+    def test_template_name_unique_constraint(self, client, app):
+        """POST with a duplicate name returns 409."""
+        _clean_templates_dir(app)
         client.post(
             "/api/templates",
             json={"name": "Unique", "submit_data": SAMPLE_EXECUTABLE_SUBMIT},
@@ -282,8 +257,7 @@ class TestTemplateCRUD:
             "/api/templates",
             json={"name": "Unique", "submit_data": SAMPLE_SHELL_SUBMIT},
         )
-        # SQLite unique constraint violation returns an error
-        assert resp.status_code in (400, 409, 500)
+        assert resp.status_code == 409
         assert "error" in resp.get_json()
 
 
@@ -295,7 +269,7 @@ class TestTemplateCRUD:
 class TestTemplateFieldPreservation:
     """Ensure all submit fields are preserved through save/retrieve cycles."""
 
-    def _create_and_retrieve(self, client, name: str, submit_data) -> dict:
+    def _create_and_retrieve(self, client, app, name: str, submit_data) -> dict:
         """Helper: create a template and retrieve it via GET list."""
         client.post(
             "/api/templates",
@@ -308,85 +282,101 @@ class TestTemplateFieldPreservation:
                 return t
         raise AssertionError(f"Template '{name}' not found in list")
 
-    def test_transfer_output_files_preserved(self, client, db):
+    def test_transfer_output_files_preserved(self, client, app):
         """transfer_output_files field round-trips correctly."""
         tmpl = self._create_and_retrieve(
-            client, "Output Files", SAMPLE_EXECUTABLE_SUBMIT
+            client, app, "Output Files", SAMPLE_EXECUTABLE_SUBMIT
         )
         data = json.loads(tmpl["submit_data"])
         assert data["transfer_output_files"] == "output.dat, results.tar.gz"
 
-    def test_output_directory_preserved(self, client, db):
+    def test_output_directory_preserved(self, client, app):
         """output_directory field round-trips correctly."""
-        tmpl = self._create_and_retrieve(client, "Output Dir", SAMPLE_EXECUTABLE_SUBMIT)
+        tmpl = self._create_and_retrieve(
+            client, app, "Output Dir", SAMPLE_EXECUTABLE_SUBMIT
+        )
         data = json.loads(tmpl["submit_data"])
         assert data["output_directory"] == "osdf:///chtc/staging/u/user/output"
 
-    def test_transfer_output_remaps_preserved(self, client, db):
+    def test_transfer_output_remaps_preserved(self, client, app):
         """transfer_output_remaps field round-trips correctly."""
         tmpl = self._create_and_retrieve(
-            client, "Output Remaps", SAMPLE_EXECUTABLE_SUBMIT
+            client, app, "Output Remaps", SAMPLE_EXECUTABLE_SUBMIT
         )
         data = json.loads(tmpl["submit_data"])
         assert "transfer_output_remaps" in data
         assert "output.dat" in data["transfer_output_remaps"]
         assert "results.tar.gz" in data["transfer_output_remaps"]
 
-    def test_transfer_input_files_preserved(self, client, db):
+    def test_transfer_input_files_preserved(self, client, app):
         """transfer_input_files field round-trips correctly."""
         tmpl = self._create_and_retrieve(
-            client, "Input Files", SAMPLE_EXECUTABLE_SUBMIT
+            client, app, "Input Files", SAMPLE_EXECUTABLE_SUBMIT
         )
         data = json.loads(tmpl["submit_data"])
         assert data["transfer_input_files"] == "input1.txt, input2.dat"
 
-    def test_executable_and_arguments_preserved(self, client, db):
+    def test_executable_and_arguments_preserved(self, client, app):
         """executable and arguments fields round-trip correctly."""
-        tmpl = self._create_and_retrieve(client, "Exec", SAMPLE_EXECUTABLE_SUBMIT)
+        tmpl = self._create_and_retrieve(
+            client, app, "Exec", SAMPLE_EXECUTABLE_SUBMIT
+        )
         data = json.loads(tmpl["submit_data"])
         assert data["executable"] == "/bin/sleep"
         assert data["arguments"] == "60"
 
-    def test_resource_requests_preserved(self, client, db):
+    def test_resource_requests_preserved(self, client, app):
         """request_cpus/memory/disk fields round-trip correctly."""
-        tmpl = self._create_and_retrieve(client, "Resources", SAMPLE_EXECUTABLE_SUBMIT)
+        tmpl = self._create_and_retrieve(
+            client, app, "Resources", SAMPLE_EXECUTABLE_SUBMIT
+        )
         data = json.loads(tmpl["submit_data"])
         assert data["request_cpus"] == "2"
         assert data["request_memory"] == "2 GB"
         assert data["request_disk"] == "4 GB"
 
-    def test_output_log_paths_preserved(self, client, db):
+    def test_output_log_paths_preserved(self, client, app):
         """output, error, log paths round-trip correctly."""
-        tmpl = self._create_and_retrieve(client, "Paths", SAMPLE_EXECUTABLE_SUBMIT)
+        tmpl = self._create_and_retrieve(
+            client, app, "Paths", SAMPLE_EXECUTABLE_SUBMIT
+        )
         data = json.loads(tmpl["submit_data"])
         assert data["output"] == "test.out"
         assert data["error"] == "test.err"
         assert data["log"] == "test.log"
 
-    def test_custom_classads_preserved(self, client, db):
+    def test_custom_classads_preserved(self, client, app):
         """Custom ClassAd attributes round-trip correctly."""
-        tmpl = self._create_and_retrieve(client, "Custom", SAMPLE_EXECUTABLE_SUBMIT)
+        tmpl = self._create_and_retrieve(
+            client, app, "Custom", SAMPLE_EXECUTABLE_SUBMIT
+        )
         data = json.loads(tmpl["submit_data"])
         assert data["MyCustomAttr"] == "custom_value"
         assert data["AnotherAttr"] == "another_value"
 
-    def test_shell_command_preserved(self, client, db):
+    def test_shell_command_preserved(self, client, app):
         """Shell-mode submit data round-trips correctly."""
-        tmpl = self._create_and_retrieve(client, "Shell", SAMPLE_SHELL_SUBMIT)
+        tmpl = self._create_and_retrieve(
+            client, app, "Shell", SAMPLE_SHELL_SUBMIT
+        )
         data = json.loads(tmpl["submit_data"])
         assert data["shell"] == "sleep 60"
         assert "executable" not in data
 
-    def test_container_universe_preserved(self, client, db):
+    def test_container_universe_preserved(self, client, app):
         """Container universe + container_image round-trip correctly."""
-        tmpl = self._create_and_retrieve(client, "Container", SAMPLE_CONTAINER_SUBMIT)
+        tmpl = self._create_and_retrieve(
+            client, app, "Container", SAMPLE_CONTAINER_SUBMIT
+        )
         data = json.loads(tmpl["submit_data"])
         assert data["universe"] == "container"
         assert data["container_image"] == "osdf:///path/to/image.sif"
 
-    def test_gpu_fields_preserved(self, client, db):
+    def test_gpu_fields_preserved(self, client, app):
         """All GPU/CUDA fields round-trip correctly."""
-        tmpl = self._create_and_retrieve(client, "GPU", SAMPLE_GPU_SUBMIT)
+        tmpl = self._create_and_retrieve(
+            client, app, "Gpu", SAMPLE_GPU_SUBMIT
+        )
         data = json.loads(tmpl["submit_data"])
         assert data["request_gpus"] == "2"
         assert data["gpus_minimum_capability"] == "8.5"
@@ -394,13 +384,16 @@ class TestTemplateFieldPreservation:
         assert data["gpus_minimum_runtime"] == "9.1"
         assert data["cuda_version"] == "11.0"
 
-    def test_raw_text_preserved(self, client, db):
+    def test_raw_text_preserved(self, client, app):
         """Raw text submit_data round-trips verbatim."""
-        tmpl = self._create_and_retrieve(client, "Raw Text", SAMPLE_RAW_TEXT)
+        tmpl = self._create_and_retrieve(
+            client, app, "Raw Text", SAMPLE_RAW_TEXT
+        )
         assert tmpl["submit_data"] == SAMPLE_RAW_TEXT
 
-    def test_full_submit_dict_round_trip(self, client, db):
+    def test_full_submit_dict_round_trip(self, client, app):
         """Every key in the submit dict survives save and retrieve."""
+        _clean_templates_dir(app)
         submit_data = {
             "executable": "/bin/echo",
             "arguments": "hello world",
@@ -423,16 +416,21 @@ class TestTemplateFieldPreservation:
             "AnotherCustom": "12345",
         }
 
-        tmpl = self._create_and_retrieve(client, "Full Dict", submit_data)
-        saved = json.loads(tmpl["submit_data"])
+        resp = client.post(
+            "/api/templates",
+            json={"name": "Full Dict", "submit_data": submit_data},
+        )
+        assert resp.status_code == 201
+        saved = json.loads(resp.get_json()["submit_data"])
 
         for key, value in submit_data.items():
             assert saved.get(key) == value, (
                 f"Key {key!r}: expected {value!r}, got {saved.get(key)!r}"
             )
 
-    def test_submit_data_is_valid_json(self, client, db):
+    def test_submit_data_is_valid_json(self, client, app):
         """submit_data stored by the API is always valid JSON when dict input given."""
+        _clean_templates_dir(app)
         resp = client.post(
             "/api/templates",
             json={
@@ -446,6 +444,64 @@ class TestTemplateFieldPreservation:
         assert isinstance(parsed, dict)
         assert parsed["executable"] == "/bin/sleep"
 
+    def test_all_form_fields_round_trip(self, client, app):
+        """Every form field in the submit UI survives save and retrieve.
+
+        This is the canonical list of all fields that the Form Builder mode
+        can produce.  If a new field is added to the form, it must be added
+        here AND in checkSelectedTemplate() in submit.js.
+        """
+        _clean_templates_dir(app)
+        all_fields = {
+            "executable": "/bin/echo",
+            "arguments": "hello world",
+            "universe": "vanilla",
+            "request_cpus": "4",
+            "request_memory": "8 GB",
+            "request_disk": "16 GB",
+            "output": "out.txt",
+            "error": "err.txt",
+            "log": "job.log",
+            "transfer_input_files": "a.dat, b.dat",
+            "transfer_output_files": "result.dat",
+            "output_directory": "osdf:///test/output",
+            "transfer_output_remaps": "result.dat = osdf:///test/output/result.dat",
+            "request_gpus": "2",
+            "gpus_minimum_capability": "8.5",
+            "gpus_minimum_memory": "4 GB",
+            "gpus_minimum_runtime": "9.1",
+            "cuda_version": "11.0",
+            "should_transfer_files": "YES",
+            "when_to_transfer_output": "ON_EXIT",
+            "notification": "Always",
+            "Requirements": "(Target.HasCHTCStaging == true)",
+            "MyCustom": "custom_val",
+            "AnotherCustom": "12345",
+        }
+
+        resp = client.post(
+            "/api/templates",
+            json={"name": "All Fields", "submit_data": all_fields},
+        )
+        assert resp.status_code == 201
+        saved = json.loads(resp.get_json()["submit_data"])
+
+        for key, value in all_fields.items():
+            assert saved.get(key) == value, (
+                f"Key {key!r}: expected {value!r}, got {saved.get(key)!r}"
+            )
+
+        # Also verify via GET list
+        list_resp = client.get("/api/templates")
+        tmpl = next(
+            t for t in list_resp.get_json()["templates"] if t["name"] == "All Fields"
+        )
+        retrieved = json.loads(tmpl["submit_data"])
+        for key, value in all_fields.items():
+            assert retrieved.get(key) == value, (
+                f"Key {key!r} via GET: expected {value!r}, got {retrieved.get(key)!r}"
+            )
+
 
 # =============================================================================
 # Tests: Timestamps and Ordering
@@ -453,59 +509,51 @@ class TestTemplateFieldPreservation:
 
 
 class TestTemplateTimestamps:
-    """Timestamp-related behavior for templates."""
+    """Timestamp-related behavior for templates (using filesystem mtime)."""
 
-    def test_created_at_set_on_create(self, client, db):
-        """created_at is set on template creation."""
+    def test_updated_at_set_on_create(self, client, app):
+        """updated_at is set on template creation."""
+        _clean_templates_dir(app)
         resp = client.post(
             "/api/templates",
             json={"name": "Timed", "submit_data": SAMPLE_EXECUTABLE_SUBMIT},
         )
         data = resp.get_json()
-        assert data["created_at"] is not None
+        assert data["updated_at"] is not None
         # Should be a valid ISO datetime
-        dt = _datetime_from_iso(data["created_at"])
-        assert dt.tzinfo is not None
+        from datetime import datetime, timezone
+
+        dt = datetime.fromisoformat(data["updated_at"].rstrip("Z")).replace(
+            tzinfo=timezone.utc
+        )
         # Should be recent (within last 10 seconds)
         now = datetime.now(timezone.utc)
         assert (now - dt).total_seconds() < 10
 
-    def test_updated_at_same_as_created_on_create(self, client, db):
-        """updated_at equals created_at on initial creation (within 1 second tolerance)."""
-        resp = client.post(
-            "/api/templates",
-            json={"name": "Same", "submit_data": SAMPLE_EXECUTABLE_SUBMIT},
-        )
-        data = resp.get_json()
-        created = _datetime_from_iso(data["created_at"])
-        updated = _datetime_from_iso(data["updated_at"])
-        # Allow up to 1 second difference (timestamps may differ by microseconds)
-        diff = abs((updated - created).total_seconds())
-        assert diff < 1.0, (
-            f"Timestamps differ by {diff}s: created={data['created_at']}, "
-            f"updated={data['updated_at']}"
-        )
+    def test_updated_at_changes_on_update(self, client, app):
+        """updated_at changes after a PUT that modifies content."""
+        _clean_templates_dir(app)
+        import time as _time
 
-    def test_updated_at_changes_on_update(self, client, db):
-        """updated_at changes after a PUT."""
         create_resp = client.post(
             "/api/templates",
             json={"name": "ChangeMe", "submit_data": SAMPLE_EXECUTABLE_SUBMIT},
         )
-        tmpl_id = create_resp.get_json()["id"]
         original_updated = create_resp.get_json()["updated_at"]
 
+        _time.sleep(0.1)  # Ensure mtime changes (filesystem granularity)
+        # Update submit_data (not just rename) to force mtime change
         update_resp = client.put(
-            f"/api/templates/{tmpl_id}",
-            json={"name": "Changed"},
+            "/api/templates/ChangeMe",
+            json={"submit_data": SAMPLE_SHELL_SUBMIT},
         )
         new_updated = update_resp.get_json()["updated_at"]
 
         assert new_updated != original_updated
 
-    def test_list_ordered_by_updated_at_desc(self, client, db):
+    def test_list_ordered_by_updated_at_desc(self, client, app):
         """Templates are listed in descending order of updated_at."""
-        # Create templates with delays to ensure distinct timestamps
+        _clean_templates_dir(app)
         import time as _time
 
         client.post(
@@ -528,21 +576,6 @@ class TestTemplateTimestamps:
         names = [t["name"] for t in templates]
         assert names == ["Third", "Second", "First"]
 
-    def test_create_template_with_empty_description(self, client, db):
-        """POST with empty description stores None or empty string."""
-        resp = client.post(
-            "/api/templates",
-            json={
-                "name": "No Desc",
-                "description": "",
-                "submit_data": SAMPLE_EXECUTABLE_SUBMIT,
-            },
-        )
-        assert resp.status_code == 201
-        data = resp.get_json()
-        # description is optional, may be None or empty string
-        assert data["description"] in (None, "")
-
 
 # =============================================================================
 # Tests: Update Behavior
@@ -552,49 +585,45 @@ class TestTemplateTimestamps:
 class TestTemplateUpdateBehavior:
     """Fine-grained update behavior tests."""
 
-    def test_partial_update_name_only(self, client, db):
-        """PUT only updating name preserves other fields."""
+    def test_partial_update_name_only(self, client, app):
+        """PUT only updating name preserves submit_data."""
+        _clean_templates_dir(app)
         original_submit = dict(SAMPLE_EXECUTABLE_SUBMIT)
-        create_resp = client.post(
+        client.post(
             "/api/templates",
             json={
                 "name": "Partial",
-                "description": "Original desc",
                 "submit_data": original_submit,
             },
         )
-        tmpl_id = create_resp.get_json()["id"]
 
         # Update only the name
-        client.put(f"/api/templates/{tmpl_id}", json={"name": "Renamed"})
+        client.put("/api/templates/Partial", json={"name": "Renamed"})
 
         resp = client.get("/api/templates")
-        tmpl = next(t for t in resp.get_json()["templates"] if t["id"] == tmpl_id)
+        tmpl = next(t for t in resp.get_json()["templates"] if t["name"] == "Renamed")
         assert tmpl["name"] == "Renamed"
-        assert tmpl["description"] == "Original desc"
         assert json.loads(tmpl["submit_data"]) == original_submit
 
-    def test_partial_update_submit_data_only(self, client, db):
-        """PUT only updating submit_data preserves name and description."""
-        create_resp = client.post(
+    def test_partial_update_submit_data_only(self, client, app):
+        """PUT only updating submit_data preserves name."""
+        _clean_templates_dir(app)
+        client.post(
             "/api/templates",
             json={
-                "name": "FixName",
-                "description": "Fix desc",
+                "name": "Fixname",
                 "submit_data": SAMPLE_SHELL_SUBMIT,
             },
         )
-        tmpl_id = create_resp.get_json()["id"]
 
         # Update only submit_data
         new_submit = {"executable": "/bin/ls", "universe": "vanilla"}
         client.put(
-            f"/api/templates/{tmpl_id}",
+            "/api/templates/Fixname",
             json={"submit_data": new_submit},
         )
 
         resp = client.get("/api/templates")
-        tmpl = next(t for t in resp.get_json()["templates"] if t["id"] == tmpl_id)
-        assert tmpl["name"] == "FixName"
-        assert tmpl["description"] == "Fix desc"
+        tmpl = next(t for t in resp.get_json()["templates"] if t["name"] == "Fixname")
+        assert tmpl["name"] == "Fixname"
         assert json.loads(tmpl["submit_data"]) == new_submit
