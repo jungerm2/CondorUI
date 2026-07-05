@@ -55,6 +55,30 @@
         </div>
     </div>
 </div>
+
+<!-- Delete Template Confirmation Modal -->
+<div class="modal-overlay" id="delete-template-modal">
+    <div class="modal" style="max-width: 420px;">
+        <div class="modal-header">
+            <h2 style="color: var(--accent-red);">Delete Template</h2>
+            <button class="btn btn-ghost btn-sm modal-close-btn" onclick="closeModal('delete-template-modal')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+            </button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="delete-template-name">
+            <p>Are you sure you want to delete template <strong id="delete-template-name-display"></strong>?</p>
+            <p style="font-size: 0.85rem; color: var(--text-muted);">This action cannot be undone.</p>
+            <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;">
+                <button class="btn btn-ghost modal-close-btn" onclick="closeModal('delete-template-modal')">Cancel</button>
+                <button class="btn btn-danger" id="delete-template-confirm-btn">Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}

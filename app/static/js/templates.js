@@ -55,7 +55,7 @@ function renderTemplatesGrid(templates) {
             </div>
             <div class="card-body" style="flex-grow: 1; padding: 12px 16px;">
                 <pre class="monospace" style="background: var(--bg-secondary); padding: 8px; border-radius: 4px; font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: pre-wrap; max-height: 100px;">${escHtml(descLines)}</pre>
-                <span style="font-size: 0.75rem; color: var(--text-muted);">Modified: ${formatDateIso(tmpl.updated_at)}</span>
+                <span style="font-size: 0.75rem; color: var(--text-muted);">Modified: ${tmpl.updated_at ? formatDateIso(tmpl.updated_at) : '—'}</span>
             </div>
             <div class="card-footer" style="display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border-color); padding: 12px 16px; background: var(--bg-secondary);">
                 <button class="btn btn-ghost btn-sm rename-tmpl-btn" data-name="${escHtml(tmpl.name)}" title="Rename template">
@@ -92,16 +92,11 @@ function renderTemplatesGrid(templates) {
     });
 
     $$('.delete-tmpl-btn').forEach(btn => {
-        btn.addEventListener('click', async (e) => {
+        btn.addEventListener('click', (e) => {
             const name = e.currentTarget.dataset.name;
-            if (!confirm(`Are you sure you want to delete template "${name}"?`)) return;
-            try {
-                await api(`/templates/${encodeURIComponent(name)}`, { method: 'DELETE' });
-                toast('Template deleted successfully');
-                loadTemplates();
-            } catch (err) {
-                toast(`Failed to delete template: ${err.message}`, 'error');
-            }
+            $('#delete-template-name').value = name;
+            $('#delete-template-name-display').textContent = name;
+            openModal('delete-template-modal');
         });
     });
 
@@ -115,6 +110,19 @@ function renderTemplatesGrid(templates) {
             $('#rename-template-name').select();
         });
     });
+}
+
+async function confirmDeleteTemplate() {
+    const name = $('#delete-template-name').value.trim();
+    if (!name) return;
+    try {
+        await api(`/templates/${encodeURIComponent(name)}`, { method: 'DELETE' });
+        toast('Template deleted successfully');
+        closeModal('delete-template-modal');
+        loadTemplates();
+    } catch (err) {
+        toast(`Failed to delete template: ${err.message}`, 'error');
+    }
 }
 
 async function confirmRenameTemplate() {
@@ -149,6 +157,12 @@ document.addEventListener('DOMContentLoaded', () => {
             window.location.href = '/submit';
         }
     });
+
+    // Delete template modal
+    const deleteConfirmBtn = $('#delete-template-confirm-btn');
+    if (deleteConfirmBtn) {
+        deleteConfirmBtn.addEventListener('click', confirmDeleteTemplate);
+    }
 
     // Rename template modal
     const renameConfirmBtn = $('#rename-template-confirm-btn');

@@ -292,6 +292,12 @@ function buildSubmitDict() {
         }
     }
 
+    // Job count
+    const count = parseInt($('#job-count').value) || 1;
+    if (count > 1) {
+        d.queue = count;
+    }
+
     $$('.attr-row').forEach(row => {
         const key = row.querySelector('.attr-key').value.trim();
         const val = row.querySelector('.attr-value').value.trim();
@@ -721,6 +727,7 @@ function checkSelectedTemplate() {
                 if (submit.gpus_minimum_runtime) $('#job-gpu-min-runtime').value = submit.gpus_minimum_runtime;
                 if (submit.cuda_version) $('#job-cuda-version').value = submit.cuda_version;
                 if (submit.transfer_executable) $('#job-transfer-executable').checked = true;
+                if (submit.queue) $('#job-count').value = submit.queue;
 
                 if (submit.transfer_input_files) {
                     const files = submit.transfer_input_files.split(',').map(f => f.trim());
@@ -746,7 +753,7 @@ function checkSelectedTemplate() {
                     'transfer_output_files', 'output_directory', 'transfer_output_remaps',
                     'request_gpus', 'gpus_minimum_capability', 'gpus_minimum_memory',
                     'gpus_minimum_runtime', 'cuda_version', 'transfer_executable',
-                    'requirements',
+                    'requirements', 'queue',
                 ];
                 const container = $('#extra-attrs');
                 container.innerHTML = '';
