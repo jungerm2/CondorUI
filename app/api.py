@@ -395,6 +395,12 @@ def submit():
     itemdata = data.get("itemdata")
     name = data.get("name", "Untitled Job")
 
+    # The "queue" key must NOT be in the submit dict — HTCondor's Python
+    # bindings reject it with: "the queue statement can not be specified
+    # in a dictionary".  Pop it out and pass as a separate queue_stmt
+    # argument to submit_job() instead.
+    queue_stmt = str(submit_dict.pop("queue", count)) if count else None
+
     try:
         if itemdata:
             cluster_id, num_procs = submit_job(
@@ -402,9 +408,12 @@ def submit():
                 count=len(itemdata),
                 itemdata=itemdata,
                 name=name,
+                queue_stmt=queue_stmt,
             )
         else:
-            cluster_id, num_procs = submit_job(submit_dict, count=count, name=name)
+            cluster_id, num_procs = submit_job(
+                submit_dict, count=count, name=name, queue_stmt=queue_stmt
+            )
 
         return jsonify(
             {

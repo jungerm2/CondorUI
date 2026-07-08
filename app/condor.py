@@ -328,6 +328,7 @@ def submit_job(
     count: int = 1,
     itemdata: list[dict[str, str]] | None = None,
     name: str = "Untitled Job",
+    queue_stmt: str | None = None,
 ) -> tuple[int, int]:
     """Submit a job to the local schedd.
 
@@ -341,6 +342,9 @@ def submit_job(
         itemdata: Optional list of dicts for queue-from-list (each dict
                   is a set of variable assignments for one proc).
         name: Display name for the submission record.
+        queue_stmt: Optional queue statement string (e.g., "1", "matching ...").
+                    If provided, passed as the ``queue`` parameter to
+                    ``htcondor.Submit()`` instead of being in the dict.
 
     Returns:
         Tuple of (cluster_id, num_procs).
@@ -353,14 +357,22 @@ def submit_job(
     sub_dict["LogsDir"] = str(log_dir)
     sub_dict["OutputsDir"] = str(output_dir)
 
-    sub = htcondor.Submit(sub_dict)
+    if queue_stmt is not None:
+        sub = htcondor.Submit(sub_dict, queue=queue_stmt)
+    else:
+        sub = htcondor.Submit(sub_dict)
     schedd = get_schedd()
     if itemdata:
         result = schedd.submit(sub, itemdata=iter(itemdata))
         num_procs = len(itemdata)
     else:
-        result = schedd.submit(sub, count=count)
-        num_procs = count
+        if queue_stmt is not None:
+            # queue statement already contains the count, don't pass it again
+            result = schedd.submit(sub)
+            num_procs = result.num_procs()
+        else:
+            result = schedd.submit(sub, count=count)
+            num_procs = count
     cluster_id = result.cluster()
     logger.info("Submitted cluster %d (%d procs)", cluster_id, num_procs)
 

@@ -292,12 +292,6 @@ function buildSubmitDict() {
         }
     }
 
-    // Job count
-    const count = parseInt($('#job-count').value) || 1;
-    if (count > 1) {
-        d.queue = count;
-    }
-
     $$('.attr-row').forEach(row => {
         const key = row.querySelector('.attr-key').value.trim();
         const val = row.querySelector('.attr-value').value.trim();
