@@ -6,7 +6,6 @@ and field-level round-trip integrity.
 """
 
 import json
-import os
 from pathlib import Path
 
 # =============================================================================
@@ -318,9 +317,7 @@ class TestTemplateFieldPreservation:
 
     def test_executable_and_arguments_preserved(self, client, app):
         """executable and arguments fields round-trip correctly."""
-        tmpl = self._create_and_retrieve(
-            client, app, "Exec", SAMPLE_EXECUTABLE_SUBMIT
-        )
+        tmpl = self._create_and_retrieve(client, app, "Exec", SAMPLE_EXECUTABLE_SUBMIT)
         data = json.loads(tmpl["submit_data"])
         assert data["executable"] == "/bin/sleep"
         assert data["arguments"] == "60"
@@ -337,9 +334,7 @@ class TestTemplateFieldPreservation:
 
     def test_output_log_paths_preserved(self, client, app):
         """output, error, log paths round-trip correctly."""
-        tmpl = self._create_and_retrieve(
-            client, app, "Paths", SAMPLE_EXECUTABLE_SUBMIT
-        )
+        tmpl = self._create_and_retrieve(client, app, "Paths", SAMPLE_EXECUTABLE_SUBMIT)
         data = json.loads(tmpl["submit_data"])
         assert data["output"] == "test.out"
         assert data["error"] == "test.err"
@@ -356,9 +351,7 @@ class TestTemplateFieldPreservation:
 
     def test_shell_command_preserved(self, client, app):
         """Shell-mode submit data round-trips correctly."""
-        tmpl = self._create_and_retrieve(
-            client, app, "Shell", SAMPLE_SHELL_SUBMIT
-        )
+        tmpl = self._create_and_retrieve(client, app, "Shell", SAMPLE_SHELL_SUBMIT)
         data = json.loads(tmpl["submit_data"])
         assert data["shell"] == "sleep 60"
         assert "executable" not in data
@@ -374,9 +367,7 @@ class TestTemplateFieldPreservation:
 
     def test_gpu_fields_preserved(self, client, app):
         """All GPU/CUDA fields round-trip correctly."""
-        tmpl = self._create_and_retrieve(
-            client, app, "Gpu", SAMPLE_GPU_SUBMIT
-        )
+        tmpl = self._create_and_retrieve(client, app, "Gpu", SAMPLE_GPU_SUBMIT)
         data = json.loads(tmpl["submit_data"])
         assert data["request_gpus"] == "2"
         assert data["gpus_minimum_capability"] == "8.5"
@@ -386,9 +377,7 @@ class TestTemplateFieldPreservation:
 
     def test_raw_text_preserved(self, client, app):
         """Raw text submit_data round-trips verbatim."""
-        tmpl = self._create_and_retrieve(
-            client, app, "Raw Text", SAMPLE_RAW_TEXT
-        )
+        tmpl = self._create_and_retrieve(client, app, "Raw Text", SAMPLE_RAW_TEXT)
         assert tmpl["submit_data"] == SAMPLE_RAW_TEXT
 
     def test_full_submit_dict_round_trip(self, client, app):

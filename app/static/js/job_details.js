@@ -40,9 +40,9 @@ async function loadJobDetails() {
         if (job.RemoteWallClockTime) {
             wallTime = formatDuration(Math.round(parseFloat(job.RemoteWallClockTime)));
         } else if (job.CompletionDate && job.QDate) {
-            wallTime = formatDuration(job.CompletionDate - job.QDate);
+            wallTime = formatDuration(Math.max(0, job.CompletionDate - job.QDate));
         } else if (job.QDate) {
-            wallTime = formatDuration(Math.floor(Date.now() / 1000) - job.QDate);
+            wallTime = formatDuration(Math.max(0, Math.floor(Date.now() / 1000) - job.QDate));
         }
         $('#quick-walltime').textContent = wallTime;
 

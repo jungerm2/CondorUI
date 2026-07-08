@@ -181,7 +181,7 @@ function formatFileSize(bytes) {
 
 function formatDuration(seconds) {
     if (!seconds && seconds !== 0) return '—';
-    if (seconds === 0) return '—';
+    if (seconds <= 0) return '—';
     if (seconds < 60) return `${seconds}s`;
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;

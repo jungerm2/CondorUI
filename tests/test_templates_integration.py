@@ -6,11 +6,7 @@ previously missing (transfer_output_files, output_directory,
 transfer_output_remaps, GPU fields, etc.).
 """
 
-import json
 import time
-
-import pytest
-
 
 # =============================================================================
 # Canonical list of all form-mapped fields
@@ -155,9 +151,7 @@ class TestTemplateIntegration:
         _set_form_field_value(
             page, "job-gpu-min-runtime", ALL_FORM_FIELDS["gpus_minimum_runtime"]
         )
-        _set_form_field_value(
-            page, "job-cuda-version", ALL_FORM_FIELDS["cuda_version"]
-        )
+        _set_form_field_value(page, "job-cuda-version", ALL_FORM_FIELDS["cuda_version"])
 
         # Output/log paths
         _set_form_field_value(page, "job-output", ALL_FORM_FIELDS["output"])
@@ -241,14 +235,14 @@ class TestTemplateIntegration:
         # 5. Verify ALL form fields are restored
         # ------------------------------------------------------------------
         # Job name
-        assert (
-            _get_form_field_value(page, "job-name") == "Integration Test Template"
-        ), "Job name not restored"
+        assert _get_form_field_value(page, "job-name") == "Integration Test Template", (
+            "Job name not restored"
+        )
 
         # Universe
-        assert (
-            _get_form_field_value(page, "job-universe") == "vanilla"
-        ), "Universe not restored"
+        assert _get_form_field_value(page, "job-universe") == "vanilla", (
+            "Universe not restored"
+        )
 
         # Executable
         assert (
@@ -258,8 +252,7 @@ class TestTemplateIntegration:
 
         # Arguments
         assert (
-            _get_form_field_value(page, "job-arguments")
-            == ALL_FORM_FIELDS["arguments"]
+            _get_form_field_value(page, "job-arguments") == ALL_FORM_FIELDS["arguments"]
         ), "Arguments not restored"
 
         # Resources
@@ -275,8 +268,8 @@ class TestTemplateIntegration:
         ), "Disk not restored"
 
         # GPU fields
-        assert (
-            _get_form_field_value(page, "job-gpus") == str(ALL_FORM_FIELDS["request_gpus"])
+        assert _get_form_field_value(page, "job-gpus") == str(
+            ALL_FORM_FIELDS["request_gpus"]
         ), "GPUs not restored"
         assert (
             _get_form_field_value(page, "job-gpu-min-capability")
@@ -296,15 +289,15 @@ class TestTemplateIntegration:
         ), "CUDA version not restored"
 
         # Output/log paths
-        assert (
-            _get_form_field_value(page, "job-output") == ALL_FORM_FIELDS["output"]
-        ), "Output not restored"
-        assert (
-            _get_form_field_value(page, "job-error") == ALL_FORM_FIELDS["error"]
-        ), "Error not restored"
-        assert (
-            _get_form_field_value(page, "job-log") == ALL_FORM_FIELDS["log"]
-        ), "Log not restored"
+        assert _get_form_field_value(page, "job-output") == ALL_FORM_FIELDS["output"], (
+            "Output not restored"
+        )
+        assert _get_form_field_value(page, "job-error") == ALL_FORM_FIELDS["error"], (
+            "Error not restored"
+        )
+        assert _get_form_field_value(page, "job-log") == ALL_FORM_FIELDS["log"], (
+            "Log not restored"
+        )
 
         # Transfer output files
         assert (

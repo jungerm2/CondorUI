@@ -36,5 +36,3 @@ class JobSubmission(db.Model):
             "owner": self.owner,
             "cmd": self.cmd,
         }
-
-

@@ -70,6 +70,18 @@
                 <span class="stat-label">Running</span>
             </div>
         </div>
+        <div class="stat-card stat-completed">
+            <div class="stat-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M22 11.08V12a10 10 0 11-5.93-9.14" />
+                    <polyline points="22 4 12 14.01 9 11.01" />
+                </svg>
+            </div>
+            <div class="stat-info">
+                <span class="stat-value" id="stat-completed">—</span>
+                <span class="stat-label">Completed</span>
+            </div>
+        </div>
         <div class="stat-card stat-held">
             <div class="stat-icon">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -154,6 +166,48 @@
             </table>
         </div>
     </div>
+
+    <!-- Status Legend (collapsible) -->
+    <details class="card status-legend-card">
+        <summary class="card-header">
+            <h2>Job Status Legend</h2>
+            <span class="hint">Status colors used throughout the interface</span>
+        </summary>
+        <div class="card-body">
+            <div class="status-legend">
+                <div class="legend-item">
+                    <span class="legend-swatch status-idle"></span>
+                    <span class="legend-label">Idle</span>
+                    <span class="legend-desc">Job is queued and waiting for resources</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-swatch status-running"></span>
+                    <span class="legend-label">Running</span>
+                    <span class="legend-desc">Job is currently executing</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-swatch status-completed"></span>
+                    <span class="legend-label">Completed</span>
+                    <span class="legend-desc">Job finished successfully</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-swatch status-transferring"></span>
+                    <span class="legend-label">Transferring</span>
+                    <span class="legend-desc">Job output is being transferred</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-swatch status-held"></span>
+                    <span class="legend-label">Held</span>
+                    <span class="legend-desc">Job encountered an error and is on hold</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-swatch status-removed"></span>
+                    <span class="legend-label">Removed</span>
+                    <span class="legend-desc">Job was removed by user or administrator</span>
+                </div>
+            </div>
+        </div>
+    </details>
 </section>
 {% endblock %}
 

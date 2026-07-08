@@ -244,7 +244,7 @@ def _build_job_entry(
                 request_memory = desc["request_memory"]
             if "request_disk" in desc:
                 request_disk = desc["request_disk"]
-    except (json.JSONDecodeError, AttributeError):
+    except json.JSONDecodeError, AttributeError:
         pass
 
     qdate = int(sub.submitted_at.timestamp()) if sub.submitted_at else 0
@@ -360,9 +360,7 @@ def list_history():
                         iter(cluster_schedd.values())
                     )
                     jobs.append(
-                        _build_job_entry(
-                            sub, schedd_job.get("ProcId", 0), schedd_job
-                        )
+                        _build_job_entry(sub, schedd_job.get("ProcId", 0), schedd_job)
                     )
             elif source == "db":
                 # Return all procs from DB only (all Completed)
@@ -1545,8 +1543,7 @@ def _template_to_dict(file_path: Path) -> dict | None:
         "submit_data": tmpl["submit_data"],
         "updated_at": datetime.fromtimestamp(
             tmpl["updated_at"], tz=timezone.utc
-        ).isoformat()
-        + "Z",
+        ).isoformat(),
     }
 
 
@@ -1555,7 +1552,9 @@ def list_templates():
     """List all saved submit templates (from .json files on disk)."""
     templates_dir = current_app.config["TEMPLATES_DIR"]
     templates = []
-    for f in sorted(Path(templates_dir).iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+    for f in sorted(
+        Path(templates_dir).iterdir(), key=lambda p: p.stat().st_mtime, reverse=True
+    ):
         if f.suffix == ".json":
             d = _template_to_dict(f)
             if d:
@@ -1708,7 +1707,11 @@ def delete_history():
                 if submission.log_dir and Path(submission.log_dir).exists():
                     shutil.rmtree(submission.log_dir, ignore_errors=True)
                 # 4. Optionally remove output directory from disk
-                if delete_outputs and submission.output_dir and Path(submission.output_dir).exists():
+                if (
+                    delete_outputs
+                    and submission.output_dir
+                    and Path(submission.output_dir).exists()
+                ):
                     shutil.rmtree(submission.output_dir, ignore_errors=True)
                 db.session.delete(submission)
 
@@ -1784,9 +1787,7 @@ def list_output_files():
         return jsonify({"output_files": [], "count": 0})
 
     # Single query: load all submissions with output_dir set
-    submissions = JobSubmission.query.filter(
-        JobSubmission.output_dir.isnot(None)
-    ).all()
+    submissions = JobSubmission.query.filter(JobSubmission.output_dir.isnot(None)).all()
 
     # Build cluster_id → metadata lookup (in-memory, no extra queries)
     cluster_meta: dict[int, dict[str, str]] = {}
@@ -1797,7 +1798,7 @@ def list_output_files():
             if desc_text.strip().startswith("{"):
                 desc = json.loads(desc_text)
                 command = desc.get("shell") or desc.get("executable", "")
-        except (json.JSONDecodeError, AttributeError):
+        except json.JSONDecodeError, AttributeError:
             pass
         cluster_meta[sub.cluster_id] = {
             "name": sub.name,

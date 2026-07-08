@@ -64,18 +64,20 @@ async function loadJobs() {
 }
 
 function renderStats(activeJobs) {
-    const stats = { total: 0, idle: 0, running: 0, held: 0 };
+    const stats = { total: 0, idle: 0, running: 0, completed: 0, held: 0 };
     activeJobs.forEach(job => {
         stats.total++;
         const status = parseInt(job.JobStatus);
         if (status === 1) stats.idle++;
         else if (status === 2) stats.running++;
+        else if (status === 4) stats.completed++;
         else if (status === 5) stats.held++;
     });
 
     $('#stat-total').textContent = stats.total;
     $('#stat-idle').textContent = stats.idle;
     $('#stat-running').textContent = stats.running;
+    $('#stat-completed').textContent = stats.completed;
     $('#stat-held').textContent = stats.held;
 }
 
@@ -340,7 +342,7 @@ function renderGroupedTable() {
         if (group.wallTime) {
             wallTime = formatDuration(Math.round(group.wallTime));
         } else if (group.completionDate && group.qDate) {
-            wallTime = formatDuration(group.completionDate - group.qDate);
+            wallTime = formatDuration(Math.max(0, group.completionDate - group.qDate));
         }
         // Use the same formatting as individual jobs for consistency.
         // Take the display values from the first job's formatted output.
@@ -399,7 +401,7 @@ function renderGroupedTable() {
             if (job.RemoteWallClockTime) {
                 subWallTime = formatDuration(Math.round(parseFloat(job.RemoteWallClockTime)));
             } else if (job.CompletionDate && job.QDate) {
-                subWallTime = formatDuration(job.CompletionDate - job.QDate);
+                subWallTime = formatDuration(Math.max(0, job.CompletionDate - job.QDate));
             }
 
             const subExitCode = job.ExitCode !== undefined ? job.ExitCode : '—';
@@ -550,7 +552,7 @@ function renderTable() {
         if (job.RemoteWallClockTime) {
             wallTime = formatDuration(Math.round(parseFloat(job.RemoteWallClockTime)));
         } else if (job.CompletionDate && job.QDate) {
-            wallTime = formatDuration(job.CompletionDate - job.QDate);
+            wallTime = formatDuration(Math.max(0, job.CompletionDate - job.QDate));
         }
 
         const exitCode = job.ExitCode !== undefined ? job.ExitCode : '—';

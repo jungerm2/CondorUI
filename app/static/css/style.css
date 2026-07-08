@@ -425,6 +425,7 @@ body {
 .stat-total::before { background: var(--accent-gradient); }
 .stat-idle::before { background: var(--status-idle); }
 .stat-running::before { background: var(--status-running); }
+.stat-completed::before { background: var(--status-completed); }
 .stat-held::before { background: var(--status-held); }
 
 .stat-icon { width: 42px; height: 42px; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; }
@@ -432,11 +433,50 @@ body {
 .stat-total .stat-icon { background: rgba(34,211,238,0.1); color: var(--accent-cyan); }
 .stat-idle .stat-icon { background: rgba(251,191,36,0.1); color: var(--status-idle); }
 .stat-running .stat-icon { background: rgba(52,211,153,0.1); color: var(--status-running); }
+.stat-completed .stat-icon { background: rgba(96,165,250,0.1); color: var(--status-completed); }
 .stat-held .stat-icon { background: rgba(248,113,113,0.1); color: var(--status-held); }
 
 .stat-info { display: flex; flex-direction: column; }
 .stat-value { font-size: 1.7rem; font-weight: 700; line-height: 1; letter-spacing: -0.02em; }
 .stat-label { font-size: 0.8rem; color: var(--text-secondary); margin-top: 4px; font-weight: 500; }
+
+/* ===== Status Legend ===== */
+.status-legend-card {
+    margin-bottom: 24px;
+}
+.status-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px 32px;
+}
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 200px;
+}
+.legend-swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.legend-swatch.status-idle { background: var(--status-idle); }
+.legend-swatch.status-running { background: var(--status-running); }
+.legend-swatch.status-completed { background: var(--status-completed); }
+.legend-swatch.status-transferring { background: var(--status-transferring); }
+.legend-swatch.status-held { background: var(--status-held); }
+.legend-swatch.status-removed { background: var(--status-removed); }
+.legend-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    min-width: 100px;
+}
+.legend-desc {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
 
 /* ===== Cards ===== */
 .card {
