@@ -10,7 +10,9 @@ let countdown = 30;
 const REFRESH_RATE = 30; // seconds
 let selectedIds = new Set(); // Set of "clusterId.procId" strings
 let groupByCluster = true; // Group by ClusterId toggle (default on)
-let expandedClusters = new Set(); // Set of clusterIds that are expanded in grouped view
+let clusterFilter = null; // Cluster ID filter from URL (?cluster_id=X), null if not set
+
+let lastActiveJobs = []; // Track last active jobs for stats
 
 async function loadJobs() {
     // Prevent concurrent refresh calls
@@ -20,16 +22,29 @@ async function loadJobs() {
     try {
         const limit = $('#history-limit').value;
 
+        // Build active jobs URL with optional cluster filter
+        let activeUrl = '/jobs';
+        if (clusterFilter) {
+            activeUrl += `?cluster_id=${clusterFilter}`;
+        }
+
         // Fetch both active jobs and history in parallel
         const [activeData, historyData] = await Promise.all([
-            api('/jobs'),
+            api(activeUrl),
             api(`/history?limit=${limit}`),
         ]);
 
         const activeJobs = (activeData.jobs || []).filter(j => !activeData.daemon_unavailable);
-        const historyJobs = historyData.jobs || [];
+        let historyJobs = historyData.jobs || [];
 
-        // Merge: active jobs take precedence by ClusterId
+        // If cluster filter is active, also filter history client-side
+        if (clusterFilter) {
+            historyJobs = historyJobs.filter(j => String(j.ClusterId) === String(clusterFilter));
+        }
+
+        lastActiveJobs = activeJobs;
+
+        // Merge: active jobs take precedence by ClusterId.ProcId
         const seen = new Set();
         const merged = [];
 
@@ -56,7 +71,7 @@ async function loadJobs() {
         toast('Failed to load jobs: ' + e.message, 'error');
         const tbody = $('#jobs-tbody');
         if (tbody) {
-            tbody.innerHTML = `<tr class="empty-row"><td colspan="11">Unable to load jobs. ${e.message}</td></tr>`;
+            tbody.innerHTML = `<tr class="empty-row"><td colspan="12">Unable to load jobs. ${e.message}</td></tr>`;
         }
     } finally {
         refreshInProgress = false;
@@ -65,13 +80,21 @@ async function loadJobs() {
 
 function renderStats(activeJobs) {
     const stats = { total: 0, idle: 0, running: 0, completed: 0, held: 0 };
+
+    // Total = all merged jobs (active + completed history)
+    stats.total = currentJobs.length;
+
+    // Idle, Running, Held = from active schedd jobs only
     activeJobs.forEach(job => {
-        stats.total++;
         const status = parseInt(job.JobStatus);
         if (status === 1) stats.idle++;
         else if (status === 2) stats.running++;
-        else if (status === 4) stats.completed++;
         else if (status === 5) stats.held++;
+    });
+
+    // Completed = count of status 4 across ALL merged jobs
+    currentJobs.forEach(job => {
+        if (parseInt(job.JobStatus) === 4) stats.completed++;
     });
 
     $('#stat-total').textContent = stats.total;
@@ -120,7 +143,8 @@ function getSortValue(job, field) {
             const cpus = parseInt(job.RequestCpus) || 0;
             const mem = parseInt(job.RequestMemory) || 0;
             const disk = parseInt(job.RequestDisk) || 0;
-            return cpus * 1000000 + mem * 1000 + disk;
+            const gpus = parseInt(job.RequestGPUs) || 0;
+            return cpus * 1000000 + mem * 1000 + disk * 10 + gpus;
         }
         default: return 0;
     }
@@ -226,6 +250,80 @@ function renderStatusBar(jobs) {
 }
 
 // ---------------------------------------------------------------------------
+// Filter Badge — shows when a cluster filter is active
+// ---------------------------------------------------------------------------
+
+function renderFilterBadge() {
+    const container = $('#filter-badge-container');
+    if (!container) return;
+
+    if (!clusterFilter) {
+        container.innerHTML = '';
+        return;
+    }
+
+    container.innerHTML = `
+        <span class="filter-badge">
+            🔍 Cluster: ${clusterFilter}
+            <button class="filter-badge-clear" id="clear-filter-btn" title="Clear filter">✕</button>
+        </span>
+    `;
+
+    $('#clear-filter-btn').addEventListener('click', () => {
+        clusterFilter = null;
+        // Update URL without reloading
+        const url = new URL(window.location);
+        url.searchParams.delete('cluster_id');
+        window.history.replaceState({}, '', url);
+        // Re-enable group toggle
+        $('#group-toggle').disabled = false;
+        renderFilterBadge();
+        loadJobs();
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Update table header column labels based on current view mode
+// ---------------------------------------------------------------------------
+
+function updateTableHeaders() {
+    const isGrouped = groupByCluster && !clusterFilter;
+    const headers = $$('#jobs-table thead th.sortable');
+    // Headers in order: 0=ClusterId, 1=JobBatchName, 2=Owner, 3=Cmd, 4=JobStatus, 5=ExitCode, 6=Procs, 7=QDate, 8=CompletionDate, 9=RemoteWallClockTime, 10=Resources
+    if (headers.length >= 11) {
+        // Exit code column: hide in grouped view
+        const exitCodeTh = headers[5];
+        if (exitCodeTh) {
+            exitCodeTh.style.display = isGrouped ? 'none' : '';
+        }
+
+        // Procs column: show in grouped view, hide in flat view
+        const procsTh = headers[6];
+        if (procsTh) {
+            procsTh.style.display = isGrouped ? '' : 'none';
+        }
+
+        // Wall Time -> Total Wall Time in grouped view
+        const wallTimeTh = headers[9];
+        if (wallTimeTh) {
+            const text = wallTimeTh.childNodes[0];
+            if (text) {
+                text.textContent = isGrouped ? 'Total Wall Time' : 'Wall Time';
+            }
+        }
+
+        // Resources -> Total Resources in grouped view
+        const resourcesTh = headers[10];
+        if (resourcesTh) {
+            const text = resourcesTh.childNodes[0];
+            if (text) {
+                text.textContent = isGrouped ? 'Total Resources' : 'Resources';
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Grouped Table Rendering
 // ---------------------------------------------------------------------------
 
@@ -259,7 +357,8 @@ function getGroupSortValue(group, field) {
             const cpus = group.totalCpus || 0;
             const mem = group.maxMemory || 0;
             const disk = group.maxDisk || 0;
-            return cpus * 1000000 + mem * 1000 + disk;
+            const gpus = group.totalGpus || 0;
+            return cpus * 1000000 + mem * 1000 + disk * 10 + gpus;
         }
         default: return 0;
     }
@@ -273,7 +372,7 @@ function groupJobs(jobs) {
             groups[cid] = {
                 clusterId: cid,
                 jobs: [],
-                name: job.JobBatchName || '—',
+                name: '—',
                 owner: job.Owner || '—',
                 cmd: job.Cmd || '',
                 args: job.Args || '',
@@ -284,14 +383,20 @@ function groupJobs(jobs) {
                 totalCpus: 0,
                 maxMemory: 0,
                 maxDisk: 0,
+                totalGpus: 0,
             };
         }
         const g = groups[cid];
         g.jobs.push(job);
+        // Use first non-empty name
+        if (g.name === '—' && job.JobBatchName) {
+            g.name = job.JobBatchName;
+        }
         // Aggregate resources
         g.totalCpus += parseInt(job.RequestCpus) || 0;
         g.maxMemory = Math.max(g.maxMemory, parseInt(job.RequestMemory) || 0);
         g.maxDisk = Math.max(g.maxDisk, parseInt(job.RequestDisk) || 0);
+        g.totalGpus += parseInt(job.RequestGPUs) || 0;
         // Use earliest QDate
         if (job.QDate && job.QDate < g.qDate) g.qDate = job.QDate;
         // Use latest completion date
@@ -307,9 +412,39 @@ function groupJobs(jobs) {
     return Object.values(groups);
 }
 
+// Pre-compute per-cluster resource totals from ALL currentJobs (unfiltered)
+// so the Resources column stays constant regardless of status/search filter.
+let clusterResources = {}; // { clusterId: { totalCpus, maxMemory, maxDisk, totalGpus } }
+
+function buildClusterResources() {
+    const map = {};
+    currentJobs.forEach(job => {
+        const cid = job.ClusterId;
+        if (!map[cid]) {
+            map[cid] = { totalCpus: 0, maxMemory: 0, maxDisk: 0, totalGpus: 0, hasAny: false };
+        }
+        const r = map[cid];
+        const cpus = parseInt(job.RequestCpus);
+        const mem = parseInt(job.RequestMemory);
+        const disk = parseInt(job.RequestDisk);
+        const gpus = parseInt(job.RequestGPUs);
+        if (!isNaN(cpus)) { r.totalCpus += cpus; r.hasAny = true; }
+        if (!isNaN(mem)) { r.maxMemory = Math.max(r.maxMemory, mem); r.hasAny = true; }
+        if (!isNaN(disk)) { r.maxDisk = Math.max(r.maxDisk, disk); r.hasAny = true; }
+        if (!isNaN(gpus)) { r.totalGpus += gpus; r.hasAny = true; }
+    });
+    clusterResources = map;
+}
+
 function renderGroupedTable() {
     const tbody = $('#jobs-tbody');
     tbody.innerHTML = '';
+
+    // Update column headers for grouped mode
+    updateTableHeaders();
+
+    // Rebuild cluster resources from unfiltered data
+    buildClusterResources();
 
     let filtered = getFilteredJobs();
     let groups = groupJobs(filtered);
@@ -324,14 +459,13 @@ function renderGroupedTable() {
     });
 
     if (groups.length === 0) {
-        tbody.innerHTML = `<tr class="empty-row"><td colspan="11">No jobs found</td></tr>`;
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="12">No jobs found</td></tr>`;
         updateSelectionUI();
         return;
     }
 
     groups.forEach(group => {
         const cid = group.clusterId;
-        const firstJob = group.jobs[0];
         const name = group.name;
         const owner = group.owner;
         const cmd = group.cmd;
@@ -344,22 +478,20 @@ function renderGroupedTable() {
         } else if (group.completionDate && group.qDate) {
             wallTime = formatDuration(Math.max(0, group.completionDate - group.qDate));
         }
-        // Use the same formatting as individual jobs for consistency.
-        // Take the display values from the first job's formatted output.
-        const firstCpus = firstJob.RequestCpus || '—';
-        const firstMem = formatMemory(firstJob.RequestMemory);
-        const firstDisk = formatDisk(firstJob.RequestDisk);
-        // For CPU, show total across all jobs; for memory/disk, show max with unit from first job
-        const cpus = group.totalCpus || '—';
-        const mem = firstMem;
-        const disk = firstDisk;
+        // Use unfiltered cluster resources for constant display
+        const cr = clusterResources[cid] || {};
+        const hasRes = cr.hasAny;
+        const cpus = hasRes ? cr.totalCpus : '—';
+        const mem = hasRes ? formatMemory(cr.maxMemory) : '—';
+        const disk = hasRes ? formatDisk(cr.maxDisk) : '—';
+        const gpus = hasRes ? cr.totalGpus : '—';
         const statusBarHtml = renderStatusBar(group.jobs);
 
         // Check if all jobs in this group are selected
         const allSelected = group.jobs.every(j => selectedIds.has(`${j.ClusterId}.${j.ProcId}`));
         const someSelected = group.jobs.some(j => selectedIds.has(`${j.ClusterId}.${j.ProcId}`));
 
-        // Group header row
+        // Group header row — clicking navigates to filtered view
         const headerTr = document.createElement('tr');
         headerTr.className = 'group-header';
         headerTr.dataset.clusterId = cid;
@@ -367,111 +499,26 @@ function renderGroupedTable() {
             <td style="text-align: center;">
                 <input type="checkbox" class="group-checkbox" data-cluster-id="${cid}" ${allSelected ? 'checked' : ''}>
             </td>
-            <td>
-                <span class="expand-chevron">▶</span>
-                <a href="/job/${cid}/${firstJob.ProcId || 0}" class="job-id-link">${cid}.0..${group.jobs.length - 1}</a>
-            </td>
+            <td><a href="/?cluster_id=${cid}" class="job-id-link">${cid}</a></td>
             <td style="max-width: 120px; overflow: hidden; text-overflow: ellipsis;" title="${escHtml(name)}">${escHtml(name)}</td>
             <td>${escHtml(owner)}</td>
             <td class="monospace cmd-cell" title="${escHtml(cmd || args || '')}">${formatCommand(cmd, args)}</td>
             <td>${statusBarHtml}</td>
-            <td class="monospace">${group.exitCode >= 0 ? group.exitCode : '—'}</td>
+            <td class="monospace" style="display: none;">—</td>
+            <td style="text-align: center; font-weight: 500;">${group.jobs.length}</td>
             <td>${qDate}</td>
-            <td>${compDate}</td>
+            <td>—</td>
             <td>${wallTime}</td>
-            <td style="font-size: 0.85rem;">${cpus} CPU, ${mem}, ${disk}</td>
+            <td style="font-size: 0.85rem;">${cpus} CPU, ${mem}, ${disk}${gpus !== '—' ? `, ${gpus} GPU` : ''}</td>
         `;
 
-        // Sort sub-jobs by ProcId
-        const sortedJobs = [...group.jobs].sort((a, b) => (a.ProcId || 0) - (b.ProcId || 0));
-
-        // Create sub-rows as direct <tr> elements in the main tbody (not nested table)
-        // so columns align with the parent table
-        const subRows = [];
-
-        sortedJobs.forEach(job => {
-            const statusClass = getStatusClass(job.JobStatus);
-            const statusName = getStatusName(job.JobStatus);
-            const jobKey = `${job.ClusterId}.${job.ProcId}`;
-
-            const subQDate = formatDate(job.QDate);
-            const subCompDate = formatDate(job.CompletionDate);
-
-            let subWallTime = '—';
-            if (job.RemoteWallClockTime) {
-                subWallTime = formatDuration(Math.round(parseFloat(job.RemoteWallClockTime)));
-            } else if (job.CompletionDate && job.QDate) {
-                subWallTime = formatDuration(Math.max(0, job.CompletionDate - job.QDate));
-            }
-
-            const subExitCode = job.ExitCode !== undefined ? job.ExitCode : '—';
-            const subCpus = job.RequestCpus || '—';
-            const subMem = formatMemory(job.RequestMemory);
-            const subDisk = formatDisk(job.RequestDisk);
-            const subName = job.JobBatchName || '—';
-
-            const isChecked = selectedIds.has(jobKey);
-
-            const subRow = document.createElement('tr');
-            subRow.className = 'group-subrow';
-            subRow.dataset.clusterId = cid;
-            subRow.style.display = 'none';
-            subRow.innerHTML = `
-                <td style="text-align: center;">
-                    <input type="checkbox" class="row-checkbox" data-job-key="${escHtml(jobKey)}" ${isChecked ? 'checked' : ''}>
-                </td>
-                <td><a href="/job/${job.ClusterId}/${job.ProcId}" class="job-id-link">${job.ClusterId}.${job.ProcId}</a></td>
-                <td style="max-width: 120px; overflow: hidden; text-overflow: ellipsis;" title="${escHtml(subName)}">${escHtml(subName)}</td>
-                <td>${escHtml(job.Owner || '—')}</td>
-                <td class="monospace cmd-cell" title="${escHtml(job.Cmd || job.Args || '')}">${formatCommand(job.Cmd, job.Args)}</td>
-                <td><span class="status-badge ${statusClass}">${statusName}</span></td>
-                <td class="monospace">${subExitCode}</td>
-                <td>${subQDate}</td>
-                <td>${subCompDate}</td>
-                <td>${subWallTime}</td>
-                <td style="font-size: 0.85rem;">${subCpus} CPU, ${subMem}, ${subDisk}</td>
-            `;
-
-            // Row click toggles checkbox
-            subRow.addEventListener('click', (e) => {
-                if (e.target.closest('a') || e.target.closest('input[type="checkbox"]')) return;
-                const cb = subRow.querySelector('.row-checkbox');
-                if (cb) {
-                    cb.checked = !cb.checked;
-                    cb.dispatchEvent(new Event('change'));
-                }
-            });
-
-            subRows.push(subRow);
+        // Click on the row (but not on the link or checkbox) navigates to filtered view
+        headerTr.addEventListener('click', (e) => {
+            if (e.target.closest('a') || e.target.closest('input[type="checkbox"]')) return;
+            window.location.href = `/?cluster_id=${cid}`;
         });
 
         tbody.appendChild(headerTr);
-        subRows.forEach(tr => tbody.appendChild(tr));
-
-        // --- Event handlers ---
-
-        // Restore expanded state from previous render
-        const wasExpanded = expandedClusters.has(cid);
-        if (wasExpanded) {
-            subRows.forEach(tr => { tr.style.display = ''; });
-            headerTr.querySelector('.expand-chevron').classList.add('expanded');
-        }
-
-        // Group header click: expand/collapse
-        headerTr.addEventListener('click', (e) => {
-            if (e.target.closest('a') || e.target.closest('input[type="checkbox"]')) return;
-            const chevron = headerTr.querySelector('.expand-chevron');
-            const isExpanded = chevron.classList.contains('expanded');
-            if (isExpanded) {
-                subRows.forEach(tr => { tr.style.display = 'none'; });
-                chevron.classList.remove('expanded');
-                expandedClusters.delete(cid);
-            } else {
-                subRows.forEach(tr => { tr.style.display = ''; });
-                chevron.classList.add('expanded');
-                expandedClusters.add(cid);
-            }
-        });
 
         // Group checkbox: select/deselect all jobs in group
         const groupCheckbox = headerTr.querySelector('.group-checkbox');
@@ -485,32 +532,24 @@ function renderGroupedTable() {
                     selectedIds.delete(key);
                 }
             });
-            // Update sub-row checkboxes
-            subRows.forEach(tr => {
-                const cb = tr.querySelector('.row-checkbox');
-                if (cb) cb.checked = checked;
-            });
             updateSelectionUI();
         });
 
-        // Sub-row checkbox: update group checkbox state
-        subRows.forEach(tr => {
-            const cb = tr.querySelector('.row-checkbox');
-            cb.addEventListener('change', () => {
-                const key = cb.dataset.jobKey;
-                if (cb.checked) {
-                    selectedIds.add(key);
-                } else {
-                    selectedIds.delete(key);
-                }
-                // Update group checkbox
-                const allSel = group.jobs.every(j => selectedIds.has(`${j.ClusterId}.${j.ProcId}`));
-                const someSel = group.jobs.some(j => selectedIds.has(`${j.ClusterId}.${j.ProcId}`));
-                groupCheckbox.checked = allSel;
-                groupCheckbox.indeterminate = !allSel && someSel;
-                updateSelectionUI();
-            });
-        });
+        // Also update the group checkbox state when individual selections change
+        // (e.g. from select-all)
+        // This is handled by the proxy observer below
+    });
+
+    // Proxy for group checkbox state: after rendering, sync group checkboxes
+    // with current selection state
+    $$('.group-checkbox').forEach(cb => {
+        const cid = parseInt(cb.dataset.clusterId);
+        const group = groups.find(g => g.clusterId === cid);
+        if (!group) return;
+        const allSel = group.jobs.every(j => selectedIds.has(`${j.ClusterId}.${j.ProcId}`));
+        const someSel = group.jobs.some(j => selectedIds.has(`${j.ClusterId}.${j.ProcId}`));
+        cb.checked = allSel;
+        cb.indeterminate = !allSel && someSel;
     });
 
     updateSortArrows();
@@ -522,19 +561,56 @@ function renderGroupedTable() {
 // ---------------------------------------------------------------------------
 
 function renderTable() {
+    // Show/hide filter badge
+    renderFilterBadge();
+
+    // Update column headers for current mode
+    updateTableHeaders();
+
+    // If cluster filter is active, always render flat (non-grouped) table
+    if (clusterFilter) {
+        renderFlatTable();
+        return;
+    }
+
     if (groupByCluster) {
         renderGroupedTable();
         return;
     }
 
+    renderFlatTable();
+}
+
+function renderFlatTable() {
     const tbody = $('#jobs-tbody');
     tbody.innerHTML = '';
+
+    // Ensure exit code column is visible in flat mode
+    const exitCodeHeaders = $$('#jobs-table thead th.sortable[data-sort="ExitCode"]');
+    exitCodeHeaders.forEach(th => {
+        th.style.display = '';
+    });
+
+    // Reset column header text
+    const headers = $$('#jobs-table thead th.sortable');
+    if (headers.length >= 10) {
+        const wallTimeTh = headers[8];
+        if (wallTimeTh) {
+            const text = wallTimeTh.childNodes[0];
+            if (text) text.textContent = 'Wall Time';
+        }
+        const resourcesTh = headers[9];
+        if (resourcesTh) {
+            const text = resourcesTh.childNodes[0];
+            if (text) text.textContent = 'Resources';
+        }
+    }
 
     let filtered = getFilteredJobs();
     filtered = sortJobs(filtered);
 
     if (filtered.length === 0) {
-        tbody.innerHTML = `<tr class="empty-row"><td colspan="11">No jobs found</td></tr>`;
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="12">No jobs found</td></tr>`;
         updateSelectionUI();
         return;
     }
@@ -559,6 +635,7 @@ function renderTable() {
         const cpus = job.RequestCpus || '—';
         const mem = formatMemory(job.RequestMemory);
         const disk = formatDisk(job.RequestDisk);
+        const gpus = job.RequestGPUs || '—';
         const name = job.JobBatchName || '—';
 
         const isChecked = selectedIds.has(jobKey);
@@ -576,7 +653,7 @@ function renderTable() {
             <td>${qDate}</td>
             <td>${compDate}</td>
             <td>${wallTime}</td>
-            <td style="font-size: 0.85rem;">${cpus} CPU, ${mem}, ${disk}</td>
+            <td style="font-size: 0.85rem;">${cpus} CPU, ${mem}, ${disk}${gpus !== '—' ? `, ${gpus} GPU` : ''}</td>
         `;
 
         // Row click toggles checkbox
@@ -634,52 +711,201 @@ async function deleteSelected() {
             confirmClass: 'btn-danger',
             onConfirm: async () => {
                 const deleteOutputs = $('#delete-outputs-checkbox')?.checked || false;
-                try {
-                    const result = await api('/history/delete', {
-                        method: 'POST',
-                        body: JSON.stringify({ cluster_ids: clusterIds, delete_outputs: deleteOutputs }),
-                    });
-                    toast(`Deleted ${result.count} job(s) successfully`);
-                    selectedIds.clear();
-                    await loadJobs();
-                } catch (err) {
-                    toast(`Failed to delete: ${err.message}`, 'error');
-                }
+                await executeDelete(clusterIds, deleteOutputs);
             },
         }
     );
 }
 
+/**
+ * Execute deletion with progress tracking, cancel support, and navigation guard.
+ *
+ * @param {number[]} clusterIds - Array of cluster IDs to delete.
+ * @param {boolean} deleteOutputs - Whether to also delete output files.
+ */
+async function executeDelete(clusterIds, deleteOutputs) {
+    const total = clusterIds.length;
+    let completed = 0;
+    let succeeded = 0;
+    let failed = 0;
+    let cancelled = false;
+    const errors = [];
+
+    // --- Stop auto-refresh while deletion is in progress ---
+    if (countdownInterval) {
+        clearInterval(countdownInterval);
+        countdownInterval = null;
+    }
+
+    // --- Add navigation guard ---
+    const beforeUnloadHandler = (e) => {
+        e.preventDefault();
+        e.returnValue = 'Job deletion is in progress. Are you sure you want to leave?';
+    };
+    window.addEventListener('beforeunload', beforeUnloadHandler);
+
+    // --- Create progress modal (non-dismissable) ---
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay active';
+    overlay.id = 'delete-progress-modal';
+    overlay.style.zIndex = '10000';
+    overlay.innerHTML = `
+        <div class="modal" style="max-width: 480px;">
+            <div class="modal-header">
+                <h2>Deleting Jobs</h2>
+            </div>
+            <div class="modal-body">
+                <div id="delete-progress-text" style="margin-bottom: 16px; color: var(--text-secondary);">
+                    Deleting 0 of ${total} jobs...
+                </div>
+                <div class="progress-bar-container" style="height: 24px;">
+                    <div class="progress-bar-fill" id="delete-progress-fill" style="width: 0%; height: 100%; background: var(--status-running); border-radius: 4px; transition: width 0.2s ease;"></div>
+                </div>
+                <div id="delete-progress-detail" style="margin-top: 8px; font-size: 0.8rem; color: var(--text-muted);"></div>
+                <div id="delete-progress-errors" style="margin-top: 8px; font-size: 0.8rem; color: var(--status-held); max-height: 120px; overflow-y: auto; display: none;"></div>
+                <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;">
+                    <button class="btn btn-ghost" id="delete-cancel-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const progressText = overlay.querySelector('#delete-progress-text');
+    const progressFill = overlay.querySelector('#delete-progress-fill');
+    const progressDetail = overlay.querySelector('#delete-progress-detail');
+    const progressErrors = overlay.querySelector('#delete-progress-errors');
+    const cancelBtn = overlay.querySelector('#delete-cancel-btn');
+
+    // --- Create AbortController for cancellation ---
+    const abortController = new AbortController();
+
+    cancelBtn.addEventListener('click', () => {
+        cancelled = true;
+        abortController.abort();
+        cancelBtn.disabled = true;
+        cancelBtn.textContent = 'Cancelling...';
+    });
+
+    // --- Sequential deletion with progress ---
+    for (let i = 0; i < total; i++) {
+        if (cancelled) break;
+
+        const cid = clusterIds[i];
+        const current = i + 1;
+        const pct = Math.round((current / total) * 100);
+
+        progressText.textContent = `Deleting job ${current} of ${total} (Cluster #${cid})...`;
+        progressFill.style.width = pct + '%';
+        progressDetail.textContent = `${succeeded} succeeded, ${failed} failed`;
+
+        try {
+            const result = await api('/history/delete', {
+                method: 'POST',
+                body: JSON.stringify({ cluster_ids: [cid], delete_outputs: deleteOutputs }),
+                signal: abortController.signal,
+            });
+            if (result.results && result.results[0] && result.results[0].success) {
+                succeeded++;
+            } else {
+                failed++;
+                const errMsg = result.results?.[0]?.error || 'Unknown error';
+                errors.push(`Cluster #${cid}: ${errMsg}`);
+            }
+        } catch (err) {
+            if (err.name === 'AbortError') {
+                // Cancelled by user
+                break;
+            }
+            failed++;
+            errors.push(`Cluster #${cid}: ${err.message}`);
+        }
+        completed++;
+    }
+
+    // --- Cleanup ---
+    window.removeEventListener('beforeunload', beforeUnloadHandler);
+
+    // --- Update modal to show final result ---
+    cancelBtn.remove(); // Remove cancel button
+
+    if (cancelled) {
+        progressText.textContent = `Deletion cancelled. ${succeeded} jobs deleted, ${failed} failed.`;
+        progressFill.style.width = Math.round((completed / total) * 100) + '%';
+        progressFill.style.background = 'var(--text-muted)';
+    } else {
+        progressText.textContent = `Deleted ${succeeded} of ${total} jobs successfully.`;
+        progressFill.style.width = '100%';
+        if (failed > 0) {
+            progressFill.style.background = 'var(--status-held)';
+        } else {
+            progressFill.style.background = 'var(--status-running)';
+        }
+    }
+
+    progressDetail.textContent = `${succeeded} succeeded, ${failed} failed`;
+
+    if (errors.length > 0) {
+        progressErrors.style.display = 'block';
+        progressErrors.innerHTML = errors.map(e => `<div>${escHtml(e)}</div>`).join('');
+    }
+
+    // Add close button
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'btn btn-primary';
+    closeBtn.textContent = 'Close';
+    closeBtn.addEventListener('click', () => {
+        overlay.remove();
+    });
+    overlay.querySelector('.modal-body').appendChild(closeBtn);
+
+    // --- Clear selection and reload ---
+    selectedIds.clear();
+    await loadJobs();
+
+    // --- Restart auto-refresh ---
+    startAutoRefresh();
+
+    // Show summary toast
+    if (failed > 0) {
+        toast(`Deleted ${succeeded}/${total} jobs — ${failed} failed`, 'error');
+    } else {
+        toast(`Deleted ${succeeded} job(s) successfully`);
+    }
+}
+
 async function holdSelected() {
     if (selectedIds.size === 0) return;
 
-    const clusterIds = [...selectedIds].map(key => parseInt(key.split('.')[0]));
+    // Deduplicate: get unique cluster IDs from selected procs
+    const clusterIds = [...new Set([...selectedIds].map(key => parseInt(key.split('.')[0])))];
 
-    let heldCount = 0;
-    for (const cid of clusterIds) {
-        try {
-            await api(`/jobs/${cid}.0/hold`, { method: 'POST' });
-            heldCount++;
-        } catch {
-            // Job may already be held or not in schedd; skip
-        }
+    try {
+        const result = await api('/clusters/hold', {
+            method: 'POST',
+            body: JSON.stringify({ cluster_ids: clusterIds }),
+        });
+        const successCount = result.results.filter(r => r.success).length;
+        toast(`Held ${successCount} cluster(s)`);
+        await loadJobs();
+    } catch (err) {
+        toast(`Failed to hold: ${err.message}`, 'error');
     }
-    toast(`Held ${heldCount} job(s)`);
-    await loadJobs();
 }
 
 async function releaseSelected() {
     if (selectedIds.size === 0) return;
 
-    const clusterIds = [...selectedIds].map(key => parseInt(key.split('.')[0]));
+    // Deduplicate: get unique cluster IDs from selected procs
+    const clusterIds = [...new Set([...selectedIds].map(key => parseInt(key.split('.')[0])))];
 
     try {
-        const result = await api('/history/release', {
+        const result = await api('/clusters/release', {
             method: 'POST',
             body: JSON.stringify({ cluster_ids: clusterIds }),
         });
         const successCount = result.results.filter(r => r.success).length;
-        toast(`Released ${successCount} job(s)`);
+        toast(`Released ${successCount} cluster(s)`);
         await loadJobs();
     } catch (err) {
         toast(`Failed to release: ${err.message}`, 'error');
@@ -780,6 +1006,16 @@ function startAutoRefresh() {
 // ---------------------------------------------------------------------------
 
 document.addEventListener('DOMContentLoaded', () => {
+    // Parse cluster filter from URL
+    const params = new URLSearchParams(window.location.search);
+    const cid = params.get('cluster_id');
+    if (cid && cid.match(/^\d+$/)) {
+        clusterFilter = cid;
+        // Disable group toggle when filtered
+        $('#group-toggle').disabled = true;
+        $('#group-toggle-label').style.opacity = '0.5';
+    }
+
     loadJobs();
     loadQuotas();
     startAutoRefresh();

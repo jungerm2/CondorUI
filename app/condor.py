@@ -61,6 +61,7 @@ DEFAULT_PROJECTION: list[str] = [
     "RequestCpus",
     "RequestMemory",
     "RequestDisk",
+    "RequestGPUs",
     "QDate",
     "JobStartDate",
     "CompletionDate",

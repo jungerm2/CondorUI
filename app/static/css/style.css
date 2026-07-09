@@ -346,6 +346,12 @@ body {
 .tab-panel.active { display: block; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 
+/* Spinner animation for pull progress indicator */
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
 /* ===== Stats Grid ===== */
 .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
 
@@ -1192,6 +1198,41 @@ details.card[open] .card-body {
 .status-bar-segment.status-removed { background: var(--status-removed); }
 .status-bar-segment.status-transferring { background: var(--status-transferring); }
 
+/* ===== Filter Badge ===== */
+.filter-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    background: rgba(34, 211, 238, 0.12);
+    color: var(--accent-cyan);
+    border: 1px solid rgba(34, 211, 238, 0.2);
+    white-space: nowrap;
+}
+.filter-badge .filter-badge-clear {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: rgba(34, 211, 238, 0.2);
+    border: none;
+    color: var(--accent-cyan);
+    cursor: pointer;
+    font-size: 0.7rem;
+    font-weight: 700;
+    line-height: 1;
+    padding: 0;
+    transition: background 0.15s ease;
+}
+.filter-badge .filter-badge-clear:hover {
+    background: rgba(34, 211, 238, 0.35);
+}
+
 /* ===== Grouped Row Styles ===== */
 .group-header {
     cursor: pointer;
@@ -1236,7 +1277,7 @@ details.card[open] .card-body {
 }
 
 /* ===== Toast Notifications ===== */
-.toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 2000; display: flex; flex-direction: column-reverse; gap: 8px; }
+.toast-container { position: fixed; top: 24px; right: 24px; z-index: 2000; display: flex; flex-direction: column; gap: 8px; }
 
 .toast {
     padding: 12px 20px; border-radius: var(--radius-sm);
@@ -1244,11 +1285,12 @@ details.card[open] .card-body {
     display: flex; align-items: center; gap: 10px;
     animation: toastIn 0.3s ease; min-width: 280px;
     box-shadow: var(--shadow-md);
+    backdrop-filter: blur(12px);
 }
-.toast.success { background: rgba(52,211,153,0.15); border: 1px solid rgba(52,211,153,0.3); color: var(--status-running); }
-.toast.error { background: rgba(248,113,113,0.15); border: 1px solid rgba(248,113,113,0.3); color: var(--status-held); }
-.toast.info { background: rgba(96,165,250,0.15); border: 1px solid rgba(96,165,250,0.3); color: var(--status-completed); }
-.toast.warning { background: rgba(251,191,36,0.15); border: 1px solid rgba(251,191,36,0.3); color: var(--status-idle); }
+.toast-success { background: rgba(52,211,153,0.25); border: 1px solid rgba(52,211,153,0.35); color: var(--status-running); }
+.toast-error { background: rgba(248,113,113,0.25); border: 1px solid rgba(248,113,113,0.35); color: var(--status-held); }
+.toast-info { background: rgba(96,165,250,0.25); border: 1px solid rgba(96,165,250,0.35); color: var(--status-completed); }
+.toast-warning { background: rgba(251,191,36,0.25); border: 1px solid rgba(251,191,36,0.35); color: var(--status-idle); }
 .toast.removing { animation: toastOut 0.3s ease forwards; }
 
 @keyframes toastIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }

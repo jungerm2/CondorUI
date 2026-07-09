@@ -243,7 +243,7 @@
                             </div>
                             <div class="form-group">
                                 <label for="job-log">Log File</label>
-                                <input type="text" id="job-log" value="$(LogsDir)/job_$(ClusterId).log"
+                                <input type="text" id="job-log" value="$(LogsDir)/job_$(ClusterId)_$(ProcId).log"
                                     class="form-input">
                             </div>
                             <div class="form-group">
@@ -392,7 +392,7 @@ arguments = 60
 
 output = $(LogsDir)/job_$(ClusterId)_$(ProcId).out
 error = $(LogsDir)/job_$(ClusterId)_$(ProcId).err
-log = $(LogsDir)/job_$(ClusterId).log
+log = $(LogsDir)/job_$(ClusterId)_$(ProcId).log
 
 request_cpus = 1
 request_memory = 1 GB

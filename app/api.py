@@ -213,6 +213,7 @@ def _build_job_entry(
             "RequestCpus": schedd_job.get("RequestCpus", "—"),
             "RequestMemory": schedd_job.get("RequestMemory", "—"),
             "RequestDisk": schedd_job.get("RequestDisk", "—"),
+            "RequestGPUs": schedd_job.get("RequestGPUs", "—"),
             "QDate": schedd_job.get("QDate", 0),
             "JobStartDate": schedd_job.get("JobStartDate"),
             "CompletionDate": schedd_job.get("CompletionDate"),
@@ -235,6 +236,7 @@ def _build_job_entry(
     request_cpus = "—"
     request_memory = "—"
     request_disk = "—"
+    request_gpus = "—"
     try:
         if sub.submit_description.strip().startswith("{"):
             desc = json.loads(sub.submit_description)
@@ -244,6 +246,8 @@ def _build_job_entry(
                 request_memory = desc["request_memory"]
             if "request_disk" in desc:
                 request_disk = desc["request_disk"]
+            if "request_gpus" in desc:
+                request_gpus = desc["request_gpus"]
     except json.JSONDecodeError, AttributeError:
         pass
 
@@ -260,6 +264,7 @@ def _build_job_entry(
         "RequestCpus": request_cpus,
         "RequestMemory": request_memory,
         "RequestDisk": request_disk,
+        "RequestGPUs": request_gpus,
         "QDate": qdate,
         "JobStartDate": None,
         "CompletionDate": None,
@@ -337,6 +342,7 @@ def list_history():
                             "RequestCpus",
                             "RequestMemory",
                             "RequestDisk",
+                            "RequestGPUs",
                         ],
                     )
                     for job in active_jobs:
@@ -1313,6 +1319,68 @@ def release_job(job_id):
         return jsonify({"error": str(e)}), 500
 
 
+@api_bp.route("/clusters/hold", methods=["POST"])
+def hold_clusters():
+    """Hold all jobs in one or more clusters.
+
+    Request JSON:
+    {
+        "cluster_ids": [123, 456, ...]
+    }
+    Uses a single schedd.act() call per cluster (constraint-based) to hold all
+    procs in the cluster at once, rather than one API call per proc.
+    """
+    data = request.get_json()
+    if not data or "cluster_ids" not in data:
+        return jsonify({"error": "Missing 'cluster_ids' in request body"}), 400
+
+    cluster_ids = data["cluster_ids"]
+    if not isinstance(cluster_ids, list) or not cluster_ids:
+        return jsonify({"error": "'cluster_ids' must be a non-empty list"}), 400
+
+    results = []
+    for cid in cluster_ids:
+        try:
+            result = act_on_job("hold", f"ClusterId == {cid}")
+            results.append({"cluster_id": cid, "success": True, "result": str(result)})
+        except Exception as e:
+            logger.error("Failed to hold cluster %d: %s", cid, e)
+            results.append({"cluster_id": cid, "success": False, "error": str(e)})
+
+    return jsonify({"results": results, "count": len(results)})
+
+
+@api_bp.route("/clusters/release", methods=["POST"])
+def release_clusters():
+    """Release all held jobs in one or more clusters.
+
+    Request JSON:
+    {
+        "cluster_ids": [123, 456, ...]
+    }
+    Uses a single schedd.act() call per cluster (constraint-based) to release all
+    procs in the cluster at once, rather than one API call per proc.
+    """
+    data = request.get_json()
+    if not data or "cluster_ids" not in data:
+        return jsonify({"error": "Missing 'cluster_ids' in request body"}), 400
+
+    cluster_ids = data["cluster_ids"]
+    if not isinstance(cluster_ids, list) or not cluster_ids:
+        return jsonify({"error": "'cluster_ids' must be a non-empty list"}), 400
+
+    results = []
+    for cid in cluster_ids:
+        try:
+            result = act_on_job("release", f"ClusterId == {cid}")
+            results.append({"cluster_id": cid, "success": True, "result": str(result)})
+        except Exception as e:
+            logger.error("Failed to release cluster %d: %s", cid, e)
+            results.append({"cluster_id": cid, "success": False, "error": str(e)})
+
+    return jsonify({"results": results, "count": len(results)})
+
+
 @api_bp.route("/jobs/<job_id>", methods=["DELETE"])
 def remove_job(job_id):
     """Remove a job."""
@@ -1699,36 +1767,43 @@ def delete_history():
 
     delete_outputs = data.get("delete_outputs", False)
 
+    # Ensure a clean session state to avoid "rolled back" errors
+    db.session.rollback()
+
     results = []
     for cid in cluster_ids:
         try:
-            # 1. Remove from schedd if still active
-            if daemon_available():
-                try:
-                    act_on_job("remove", str(cid))
-                except Exception:
-                    pass  # Job may already be gone from schedd
+            # Use a savepoint so one failure doesn't poison the outer transaction
+            with db.session.begin_nested():
+                # 1. Remove from schedd if still active
+                if daemon_available():
+                    try:
+                        act_on_job("remove", str(cid))
+                    except Exception:
+                        pass  # Job may already be gone from schedd
 
-            # 2. Delete from local DB
-            submission = JobSubmission.query.filter_by(cluster_id=cid).first()
-            if submission:
-                # 3. Remove log directory from disk
-                if submission.log_dir and Path(submission.log_dir).exists():
-                    shutil.rmtree(submission.log_dir, ignore_errors=True)
-                # 4. Optionally remove output directory from disk
-                if (
-                    delete_outputs
-                    and submission.output_dir
-                    and Path(submission.output_dir).exists()
-                ):
-                    shutil.rmtree(submission.output_dir, ignore_errors=True)
-                db.session.delete(submission)
+                # 2. Delete from local DB
+                submission = JobSubmission.query.filter_by(cluster_id=cid).first()
+                if submission:
+                    # 3. Remove log directory from disk
+                    if submission.log_dir and Path(submission.log_dir).exists():
+                        shutil.rmtree(submission.log_dir, ignore_errors=True)
+                    # 4. Optionally remove output directory from disk
+                    if (
+                        delete_outputs
+                        and submission.output_dir
+                        and Path(submission.output_dir).exists()
+                    ):
+                        shutil.rmtree(submission.output_dir, ignore_errors=True)
+                    db.session.delete(submission)
 
             results.append({"cluster_id": cid, "success": True})
         except Exception as e:
             logger.error("Failed to delete cluster %d: %s", cid, e)
+            db.session.rollback()  # Rollback the failed nested transaction
             results.append({"cluster_id": cid, "success": False, "error": str(e)})
 
+    # Commit the outer transaction — only successful savepoints will be persisted
     db.session.commit()
     return jsonify({"results": results, "count": len(results)})
 

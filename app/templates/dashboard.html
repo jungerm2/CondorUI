@@ -133,7 +133,8 @@
                 </svg>
                 Release
             </button>
-            <label class="toggle-label" id="group-toggle-label" style="margin-left: auto; display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.8rem; color: var(--text-secondary); user-select: none;">
+            <span id="filter-badge-container" style="margin-left: auto; display: flex; align-items: center;"></span>
+            <label class="toggle-label" id="group-toggle-label" style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.8rem; color: var(--text-secondary); user-select: none;">
                 <input type="checkbox" id="group-toggle" checked>
                 <span class="toggle-switch"></span>
                 Group by ClusterID
@@ -151,7 +152,8 @@
                         <th class="sortable" data-sort="Owner">Owner <span class="sort-arrow"></span></th>
                         <th class="sortable" data-sort="Cmd">Command <span class="sort-arrow"></span></th>
                         <th class="sortable" data-sort="JobStatus">Status <span class="sort-arrow"></span></th>
-                        <th class="sortable" data-sort="ExitCode">Exit Code <span class="sort-arrow"></span></th>
+                        <th class="sortable" data-sort="ExitCode" id="th-exit-code">Exit Code <span class="sort-arrow"></span></th>
+                        <th class="sortable" data-sort="Procs" id="th-procs" style="display: none;">Procs <span class="sort-arrow"></span></th>
                         <th class="sortable" data-sort="QDate">Submitted <span class="sort-arrow"></span></th>
                         <th class="sortable" data-sort="CompletionDate">Completed <span class="sort-arrow"></span></th>
                         <th class="sortable" data-sort="RemoteWallClockTime">Wall Time <span class="sort-arrow"></span></th>
