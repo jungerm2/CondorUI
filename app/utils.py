@@ -17,22 +17,29 @@ logger = logging.getLogger(__name__)
 
 
 def resolve_commands(jobs: list[dict]) -> None:
-    """Resolve Cmd attributes to their original values from the DB.
+    """Resolve Cmd attributes and JobBatchName to their original values from the DB.
 
-    Handles two cases:
+    Handles two cases for Cmd:
     1. Shell jobs (Cmd == "/bin/sh"): Replace Cmd with the original shell
        command (e.g., "ls -al") stored in the submit_description.
     2. Executable jobs (Cmd is an absolute path): Replace Cmd with the
        original relative executable path from the submit description.
 
+    Also resolves JobBatchName from the DB submission name when the ClassAd
+    value is empty/null, since the web UI stores the submission name in the
+    DB but does not set +JobBatchName in the submit description.
+
     Modifies the list in-place.
     """
     from app.models import JobSubmission
 
+    # Collect all cluster IDs that need resolution
     cluster_ids = [
         j.get("ClusterId")
         for j in jobs
-        if j.get("Cmd") == "/bin/sh" or Path(j.get("Cmd", "")).is_absolute()
+        if j.get("Cmd") == "/bin/sh"
+        or Path(j.get("Cmd", "")).is_absolute()
+        or not j.get("JobBatchName")
     ]
     if not cluster_ids:
         return
@@ -46,6 +53,12 @@ def resolve_commands(jobs: list[dict]) -> None:
         sub = sub_map.get(job.get("ClusterId"))
         if not sub:
             continue
+
+        # Resolve JobBatchName from DB submission name
+        if not job.get("JobBatchName") and sub.name:
+            job["JobBatchName"] = sub.name
+
+        # Resolve Cmd from submit_description
         try:
             desc = sub.submit_description
             if not desc or not desc.strip().startswith("{"):

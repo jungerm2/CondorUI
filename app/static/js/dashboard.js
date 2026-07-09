@@ -597,13 +597,14 @@ function renderFlatTable() {
 
     // Reset column header text
     const headers = $$('#jobs-table thead th.sortable');
-    if (headers.length >= 10) {
-        const wallTimeTh = headers[8];
+    // Headers in order: 0=ClusterId, 1=JobBatchName, 2=Owner, 3=Cmd, 4=JobStatus, 5=ExitCode, 6=Procs, 7=QDate, 8=CompletionDate, 9=RemoteWallClockTime, 10=Resources
+    if (headers.length >= 11) {
+        const wallTimeTh = headers[9];
         if (wallTimeTh) {
             const text = wallTimeTh.childNodes[0];
             if (text) text.textContent = 'Wall Time';
         }
-        const resourcesTh = headers[9];
+        const resourcesTh = headers[10];
         if (resourcesTh) {
             const text = resourcesTh.childNodes[0];
             if (text) text.textContent = 'Resources';
