@@ -233,17 +233,17 @@
                         <div class="submit-form-row">
                             <div class="form-group">
                                 <label for="job-output">Output File</label>
-                                <input type="text" id="job-output" value="$(LogsDir)/job_$(ClusterId)_$(ProcId).out"
+                                <input type="text" id="job-output" value="$(LogsDir)/$INT(ClusterId,%08d)/$INT(ProcId,%05d).out"
                                     class="form-input">
                             </div>
                             <div class="form-group">
                                 <label for="job-error">Error File</label>
-                                <input type="text" id="job-error" value="$(LogsDir)/job_$(ClusterId)_$(ProcId).err"
+                                <input type="text" id="job-error" value="$(LogsDir)/$INT(ClusterId,%08d)/$INT(ProcId,%05d).err"
                                     class="form-input">
                             </div>
                             <div class="form-group">
                                 <label for="job-log">Log File</label>
-                                <input type="text" id="job-log" value="$(LogsDir)/job_$(ClusterId)_$(ProcId).log"
+                                <input type="text" id="job-log" value="$(LogsDir)/$INT(ClusterId,%08d)/$INT(ProcId,%05d).log"
                                     class="form-input">
                             </div>
                             <div class="form-group">
@@ -258,7 +258,7 @@
                                     Output Directory
                                     <span class="info-icon" data-tip="All output files from 'Transfer Output Files' go to this directory (not logs/stdout/stderr). Use $(OutputsDir) (per-job dir), osdf:///, or file:///staging/ for large outputs.">?</span>
                                 </label>
-                                <input type="text" id="job-output-directory" value="$(OutputsDir)" class="form-input">
+                                <input type="text" id="job-output-directory" value="$(OutputsDir)/$INT(ClusterId,%08d)" class="form-input">
                             </div>
                             <div class="form-group">
                                 <label for="job-count">Number of Jobs</label>
@@ -390,9 +390,9 @@
 executable = /bin/sleep
 arguments = 60
 
-output = $(LogsDir)/job_$(ClusterId)_$(ProcId).out
-error = $(LogsDir)/job_$(ClusterId)_$(ProcId).err
-log = $(LogsDir)/job_$(ClusterId)_$(ProcId).log
+output = $(LogsDir)/$INT(ClusterId,%08d)/$INT(ProcId,%05d).out
+error = $(LogsDir)/$INT(ClusterId,%08d)/$INT(ProcId,%05d).err
+log = $(LogsDir)/$INT(ClusterId,%08d)/$INT(ProcId,%05d).log
 
 request_cpus = 1
 request_memory = 1 GB

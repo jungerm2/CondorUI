@@ -8,50 +8,7 @@ import shutil
 import uuid
 from pathlib import Path
 
-from flask import current_app
-
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Job directory helpers
-# ---------------------------------------------------------------------------
-
-
-def generate_job_uuid() -> str:
-    """Generate a unique job UUID string like 'job_<hex>'."""
-    return f"job_{uuid.uuid4().hex}"
-
-
-def create_job_directories(
-    log_dir_base: str | None = None,
-    output_dir_base: str | None = None,
-) -> tuple[Path, Path]:
-    """Create per-job log and output directories.
-
-    Creates directories under JOB_LOGS_DIR and OUTPUT_DIR with a unique
-    job UUID.  Returns the (log_dir, output_dir) paths as resolved
-    ``Path`` objects.
-
-    Args:
-        log_dir_base: Override for JOB_LOGS_DIR (defaults to config).
-        output_dir_base: Override for OUTPUT_DIR (defaults to config).
-
-    Returns:
-        Tuple of (log_dir_path, output_dir_path) resolved Path objects.
-    """
-
-    job_uuid = generate_job_uuid()
-    log_dir_base = log_dir_base or str(current_app.config["JOB_LOGS_DIR"])
-    output_dir_base = output_dir_base or str(current_app.config["OUTPUT_DIR"])
-
-    log_dir_path = Path(log_dir_base) / job_uuid
-    log_dir_path.mkdir(parents=True, exist_ok=True)
-
-    output_dir_path = Path(output_dir_base) / job_uuid
-    output_dir_path.mkdir(parents=True, exist_ok=True)
-
-    return log_dir_path.resolve(), output_dir_path.resolve()
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +230,8 @@ def build_history_job(
             "NumShadowStarts": schedd_job.get("NumShadowStarts", 1),
             "JobBatchName": schedd_job.get("JobBatchName", submission.name),
             "RemoteWallClockTime": schedd_job.get("RemoteWallClockTime", 0),
+            "LastRemoteWallClockTime": schedd_job.get("LastRemoteWallClockTime", 0),
+            "CumulativeSuspensionTime": schedd_job.get("CumulativeSuspensionTime", 0),
             "CumulativeRemoteSysCpu": schedd_job.get("CumulativeRemoteSysCpu", 0),
             "CumulativeRemoteUserCpu": schedd_job.get("CumulativeRemoteUserCpu", 0),
         }

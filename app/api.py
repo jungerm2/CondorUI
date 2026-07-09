@@ -228,6 +228,8 @@ def _build_job_entry(
             "NumShadowStarts": schedd_job.get("NumShadowStarts", 1),
             "JobBatchName": schedd_job.get("JobBatchName", batch_name),
             "RemoteWallClockTime": schedd_job.get("RemoteWallClockTime", 0),
+            "LastRemoteWallClockTime": schedd_job.get("LastRemoteWallClockTime", 0),
+            "CumulativeSuspensionTime": schedd_job.get("CumulativeSuspensionTime", 0),
             "CumulativeRemoteSysCpu": schedd_job.get("CumulativeRemoteSysCpu", 0),
             "CumulativeRemoteUserCpu": schedd_job.get("CumulativeRemoteUserCpu", 0),
         }
@@ -279,6 +281,8 @@ def _build_job_entry(
         "NumShadowStarts": 1,
         "JobBatchName": batch_name,
         "RemoteWallClockTime": 0,
+        "LastRemoteWallClockTime": 0,
+        "CumulativeSuspensionTime": 0,
         "CumulativeRemoteSysCpu": 0,
         "CumulativeRemoteUserCpu": 0,
     }
@@ -1512,6 +1516,8 @@ def job_details(cluster_id: int):
                     "NumShadowStarts": 1,
                     "JobBatchName": submission.name,
                     "RemoteWallClockTime": 0,
+                    "LastRemoteWallClockTime": 0,
+                    "CumulativeSuspensionTime": 0,
                     "CumulativeRemoteSysCpu": 0,
                     "CumulativeRemoteUserCpu": 0,
                 }
@@ -1531,25 +1537,9 @@ def job_details(cluster_id: int):
         if job and submission:
             resolve_commands([job])
 
-        # 4. Resolve log file paths — prefer DB paths, avoid redundant schedd queries
-        #    by extracting UserLog/Out/Err from the job data if available.
-        paths = {"log": "", "out": "", "err": ""}
-        if submission and submission.log_dir:
-            log_dir = submission.log_dir
-            paths["log"] = str(Path(log_dir) / f"job_{cluster_id}.log")
-            paths["out"] = str(Path(log_dir) / f"job_{cluster_id}_{proc_id}.out")
-            paths["err"] = str(Path(log_dir) / f"job_{cluster_id}_{proc_id}.err")
-            # If the DB paths don't exist on disk, fall through to check job ClassAds
-            if not Path(paths["log"]).exists():
-                paths = {"log": "", "out": "", "err": ""}
-        # Fallback: extract log paths from the job ClassAd data we already have
-        if not paths.get("log") and job:
-            if "UserLog" in job:
-                paths["log"] = job["UserLog"]
-            if "Out" in job:
-                paths["out"] = job["Out"]
-            if "Err" in job:
-                paths["err"] = job["Err"]
+        # 4. Resolve log file paths using get_job_log_file_paths()
+        #    (DB stored paths → ClassAd query → empty)
+        paths = get_job_log_file_paths(cluster_id, proc_id)
 
         log_content = get_job_file_content(paths.get("log", ""), tail=tail)
         stdout_content = get_job_file_content(paths.get("out", ""), tail=tail)
@@ -1785,16 +1775,16 @@ def delete_history():
                 # 2. Delete from local DB
                 submission = JobSubmission.query.filter_by(cluster_id=cid).first()
                 if submission:
-                    # 3. Remove log directory from disk
-                    if submission.log_dir and Path(submission.log_dir).exists():
-                        shutil.rmtree(submission.log_dir, ignore_errors=True)
+                    # 3. Remove individual log/out/err files from disk
+                    for path_attr in ("log_path", "out_path", "err_path"):
+                        file_path = getattr(submission, path_attr, None)
+                        if file_path and Path(file_path).exists():
+                            Path(file_path).unlink()
                     # 4. Optionally remove output directory from disk
-                    if (
-                        delete_outputs
-                        and submission.output_dir
-                        and Path(submission.output_dir).exists()
-                    ):
-                        shutil.rmtree(submission.output_dir, ignore_errors=True)
+                    if delete_outputs and submission.output_destination:
+                        output_path = Path(submission.output_destination)
+                        if output_path.exists():
+                            shutil.rmtree(output_path, ignore_errors=True)
                     db.session.delete(submission)
 
             results.append({"cluster_id": cid, "success": True})
@@ -1858,20 +1848,19 @@ def list_submissions():
 def list_output_files():
     """List all output files from completed jobs.
 
-    Scans the OUTPUT_DIR directory for files and cross-references
-    with JobSubmission records to show which job produced each file.
+    Uses ``output_destination`` and ``transfer_output_remaps`` stored in the
+    JobSubmission record to locate output files.  For jobs with
+    ``output_destination`` set, scans that directory.  For jobs with
+    ``transfer_output_remaps``, parses the remap rules and lists the
+    destination files.
 
     Builds a cluster_id → {name, command} lookup in a single query
     to avoid N+1 queries when enriching each output file entry.
     """
-    output_dir = current_app.config["OUTPUT_DIR"]
-    output_path = Path(output_dir)
-
-    if not output_path.exists():
-        return jsonify({"output_files": [], "count": 0})
-
-    # Single query: load all submissions with output_dir set
-    submissions = JobSubmission.query.filter(JobSubmission.output_dir.isnot(None)).all()
+    # Single query: load all submissions with output_destination set
+    submissions = JobSubmission.query.filter(
+        JobSubmission.output_destination.isnot(None)
+    ).all()
 
     # Build cluster_id → metadata lookup (in-memory, no extra queries)
     cluster_meta: dict[int, dict[str, str]] = {}
@@ -1891,30 +1880,51 @@ def list_output_files():
 
     output_files = []
     try:
-        # Scan each job's output directory
         for sub in submissions:
-            if not sub.output_dir:
-                continue
-            job_output_path = Path(sub.output_dir)
-            if not job_output_path.exists():
-                continue
-
             meta = cluster_meta.get(sub.cluster_id, {"name": sub.name, "command": ""})
 
-            for f in job_output_path.iterdir():
-                if f.is_file():
-                    stat = f.stat()
-                    output_files.append(
-                        {
-                            "filename": f.name,
-                            "path": str(f),
-                            "size": stat.st_size,
-                            "modified_at": stat.st_mtime,
-                            "cluster_id": sub.cluster_id,
-                            "job_name": meta["name"],
-                            "command": meta["command"],
-                        }
-                    )
+            # 1. Scan output_destination directory
+            if sub.output_destination:
+                dest_path = Path(sub.output_destination)
+                if dest_path.exists():
+                    for f in dest_path.iterdir():
+                        if f.is_file():
+                            stat = f.stat()
+                            output_files.append(
+                                {
+                                    "filename": f.name,
+                                    "path": str(f),
+                                    "size": stat.st_size,
+                                    "modified_at": stat.st_mtime,
+                                    "cluster_id": sub.cluster_id,
+                                    "job_name": meta["name"],
+                                    "command": meta["command"],
+                                }
+                            )
+
+            # 2. Parse transfer_output_remaps for additional files
+            if sub.transfer_output_remaps:
+                # Format: "src1 = dest1; src2 = dest2"
+                remaps = sub.transfer_output_remaps
+                for part in remaps.split(";"):
+                    part = part.strip()
+                    if "=" in part:
+                        _src, dest = part.split("=", 1)
+                        dest = dest.strip()
+                        if dest and Path(dest).exists():
+                            f = Path(dest)
+                            stat = f.stat()
+                            output_files.append(
+                                {
+                                    "filename": f.name,
+                                    "path": str(f),
+                                    "size": stat.st_size,
+                                    "modified_at": stat.st_mtime,
+                                    "cluster_id": sub.cluster_id,
+                                    "job_name": meta["name"],
+                                    "command": meta["command"],
+                                }
+                            )
 
         # Sort by modified_at descending
         output_files.sort(key=lambda x: x.get("modified_at", 0), reverse=True)
@@ -1929,16 +1939,16 @@ def list_output_files():
 def download_output_file(cluster_id: int, filename: str):
     """Download a specific output file for a given job.
 
-    Looks up the job's output directory from the JobSubmission record
-    and resolves the file path from there.
+    Uses ``output_destination`` from the JobSubmission record to resolve
+    the file path.
     """
     submission = JobSubmission.query.filter_by(cluster_id=cluster_id).first()
-    if not submission or not submission.output_dir:
+    if not submission or not submission.output_destination:
         return jsonify(
-            {"error": f"Output directory not found for cluster {cluster_id}"}
+            {"error": f"Output destination not found for cluster {cluster_id}"}
         ), 404
 
-    file_path = Path(submission.output_dir) / filename
+    file_path = Path(submission.output_destination) / filename
 
     if not file_path.exists():
         return jsonify({"error": f"Output file not found: {filename}"}), 404
@@ -1959,12 +1969,12 @@ def download_output_file(cluster_id: int, filename: str):
 def delete_output_file(cluster_id: int, filename: str):
     """Delete an output file for a given job."""
     submission = JobSubmission.query.filter_by(cluster_id=cluster_id).first()
-    if not submission or not submission.output_dir:
+    if not submission or not submission.output_destination:
         return jsonify(
-            {"error": f"Output directory not found for cluster {cluster_id}"}
+            {"error": f"Output destination not found for cluster {cluster_id}"}
         ), 404
 
-    file_path = Path(submission.output_dir) / filename
+    file_path = Path(submission.output_destination) / filename
 
     if not file_path.exists():
         return jsonify({"error": f"Output file not found: {filename}"}), 404

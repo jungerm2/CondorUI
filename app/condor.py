@@ -76,6 +76,8 @@ DEFAULT_PROJECTION: list[str] = [
     "NumShadowStarts",
     "JobBatchName",
     "RemoteWallClockTime",
+    "LastRemoteWallClockTime",
+    "CumulativeSuspensionTime",
     "CumulativeRemoteSysCpu",
     "CumulativeRemoteUserCpu",
 ]
@@ -333,9 +335,10 @@ def submit_job(
 ) -> tuple[int, int]:
     """Submit a job to the local schedd.
 
-    Creates per-job log/output directories (via :func:`create_job_directories`)
-    and sets ``LogsDir`` / ``OutputsDir`` on the submit description.  Also
-    creates a :class:`JobSubmission` record in the local database.
+    Sets ``LogsDir`` / ``OutputsDir`` on the submit description to the
+    configured base directories.  HTCondor will create per-cluster
+    subdirectories automatically when writing log/out/err files.
+    Also creates a :class:`JobSubmission` record in the local database.
 
     Args:
         submit_dict: Dictionary of submit description key-value pairs.
@@ -350,13 +353,14 @@ def submit_job(
     Returns:
         Tuple of (cluster_id, num_procs).
     """
-    from app.utils import create_job_directories
+    from flask import current_app
 
-    log_dir, output_dir = create_job_directories()
+    log_dir_base = str(current_app.config["JOB_LOGS_DIR"])
+    output_dir_base = str(current_app.config["OUTPUT_DIR"])
 
     sub_dict = dict(submit_dict)
-    sub_dict["LogsDir"] = str(log_dir)
-    sub_dict["OutputsDir"] = str(output_dir)
+    sub_dict["LogsDir"] = log_dir_base
+    sub_dict["OutputsDir"] = output_dir_base
 
     if queue_stmt is not None:
         sub = htcondor.Submit(sub_dict, queue=queue_stmt)
@@ -377,7 +381,36 @@ def submit_job(
     cluster_id = result.cluster()
     logger.info("Submitted cluster %d (%d procs)", cluster_id, num_procs)
 
-    # Create the database record with the actual paths
+    # Query the schedd for resolved log/out/err/output_destination paths
+    log_path = None
+    out_path = None
+    err_path = None
+    output_destination = None
+    transfer_output_remaps = None
+    try:
+        jobs = query_jobs(
+            constraint=f"ClusterId == {cluster_id} && ProcId == 0",
+            projection=[
+                "UserLog",
+                "Out",
+                "Err",
+                "output_destination",
+                "transfer_output_remaps",
+            ],
+        )
+        if jobs:
+            job = jobs[0]
+            log_path = job.get("UserLog")
+            out_path = job.get("Out")
+            err_path = job.get("Err")
+            output_destination = job.get("output_destination")
+            transfer_output_remaps = job.get("transfer_output_remaps")
+    except Exception:
+        logger.warning(
+            "Failed to query ClassAd for cluster %d after submit", cluster_id
+        )
+
+    # Create the database record
     from app import db
     from app.models import JobSubmission
 
@@ -390,8 +423,11 @@ def submit_job(
         if isinstance(submit_dict, dict)
         else submit_dict,
         num_procs=num_procs,
-        log_dir=str(log_dir),
-        output_dir=str(output_dir),
+        log_path=log_path,
+        out_path=out_path,
+        err_path=err_path,
+        output_destination=output_destination,
+        transfer_output_remaps=transfer_output_remaps,
         owner=getpass.getuser(),
         cmd=cmd,
     )
@@ -410,9 +446,10 @@ def submit_from_file(
 ) -> tuple[int, int]:
     """Submit a job from raw submit file content.
 
-    Creates per-job log/output directories (via :func:`create_job_directories`)
-    and sets ``LogsDir`` / ``OutputsDir`` on the submit description.  Also
-    creates a :class:`JobSubmission` record in the local database.
+    Sets ``LogsDir`` / ``OutputsDir`` on the submit description to the
+    configured base directories.  HTCondor will create per-cluster
+    subdirectories automatically when writing log/out/err files.
+    Also creates a :class:`JobSubmission` record in the local database.
 
     Args:
         file_content: The text content of a .sub file.
@@ -421,13 +458,14 @@ def submit_from_file(
     Returns:
         Tuple of (cluster_id, num_procs).
     """
-    from app.utils import create_job_directories
+    from flask import current_app
 
-    log_dir, output_dir = create_job_directories()
+    log_dir_base = str(current_app.config["JOB_LOGS_DIR"])
+    output_dir_base = str(current_app.config["OUTPUT_DIR"])
 
     sub = htcondor.Submit(file_content)
-    sub["LogsDir"] = str(log_dir)
-    sub["OutputsDir"] = str(output_dir)
+    sub["LogsDir"] = log_dir_base
+    sub["OutputsDir"] = output_dir_base
 
     schedd = get_schedd()
     result = schedd.submit(sub)
@@ -435,7 +473,36 @@ def submit_from_file(
     num_procs = result.num_procs()
     logger.info("Submitted cluster %d (%d procs) from file", cluster_id, num_procs)
 
-    # Create the database record with the actual paths
+    # Query the schedd for resolved log/out/err/output_destination paths
+    log_path = None
+    out_path = None
+    err_path = None
+    output_destination = None
+    transfer_output_remaps = None
+    try:
+        jobs = query_jobs(
+            constraint=f"ClusterId == {cluster_id} && ProcId == 0",
+            projection=[
+                "UserLog",
+                "Out",
+                "Err",
+                "output_destination",
+                "transfer_output_remaps",
+            ],
+        )
+        if jobs:
+            job = jobs[0]
+            log_path = job.get("UserLog")
+            out_path = job.get("Out")
+            err_path = job.get("Err")
+            output_destination = job.get("output_destination")
+            transfer_output_remaps = job.get("transfer_output_remaps")
+    except Exception:
+        logger.warning(
+            "Failed to query ClassAd for cluster %d after submit", cluster_id
+        )
+
+    # Create the database record
     from app import db
     from app.models import JobSubmission
 
@@ -452,8 +519,11 @@ def submit_from_file(
         name=name,
         submit_description=file_content,
         num_procs=num_procs,
-        log_dir=str(log_dir),
-        output_dir=str(output_dir),
+        log_path=log_path,
+        out_path=out_path,
+        err_path=err_path,
+        output_destination=output_destination,
+        transfer_output_remaps=transfer_output_remaps,
         owner=getpass.getuser(),
         cmd=cmd,
     )
@@ -556,19 +626,28 @@ def get_job_file_content(file_path: str, tail: int = 500) -> str:
 
 
 def get_job_log_file_paths(cluster_id: int, proc_id: int = 0) -> dict[str, str]:
-    """Retrieve log, stdout, and stderr file paths for a job."""
+    """Retrieve log, stdout, and stderr file paths for a job.
+
+    Priority:
+    1. DB stored paths (``log_path``, ``out_path``, ``err_path``) — for jobs
+       submitted through the web UI after the schema change.
+    2. ClassAd query — for jobs not in the DB or old records without stored paths.
+    3. Return empty — no default fallback.
+    """
     paths = {"log": "", "out": "", "err": ""}
     # Try database first — lazy import to avoid circular dependency at module level
     try:
         from app.models import JobSubmission as _JobSubmission
 
         submission = _JobSubmission.query.filter_by(cluster_id=cluster_id).first()
-        if submission and submission.log_dir:
-            log_dir = submission.log_dir
-            paths["log"] = str(Path(log_dir) / f"job_{cluster_id}.log")
-            paths["out"] = str(Path(log_dir) / f"job_{cluster_id}_{proc_id}.out")
-            paths["err"] = str(Path(log_dir) / f"job_{cluster_id}_{proc_id}.err")
-            if Path(paths["log"]).exists():
+        if submission:
+            if submission.log_path:
+                paths["log"] = submission.log_path
+            if submission.out_path:
+                paths["out"] = submission.out_path
+            if submission.err_path:
+                paths["err"] = submission.err_path
+            if paths["log"] and Path(paths["log"]).exists():
                 return paths
     except Exception as e:
         logger.error("Error querying JobSubmission DB: %s", e)

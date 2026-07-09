@@ -303,12 +303,18 @@ function updateTableHeaders() {
             procsTh.style.display = isGrouped ? '' : 'none';
         }
 
-        // Wall Time -> Total Wall Time in grouped view
+        // Completed column: hide in grouped view
+        const completedTh = headers[8];
+        if (completedTh) {
+            completedTh.style.display = isGrouped ? 'none' : '';
+        }
+
+        // Wall Time -> Time Since Submitted in grouped view
         const wallTimeTh = headers[9];
         if (wallTimeTh) {
             const text = wallTimeTh.childNodes[0];
             if (text) {
-                text.textContent = isGrouped ? 'Total Wall Time' : 'Wall Time';
+                text.textContent = isGrouped ? 'Time Since Submitted' : 'Wall Time';
             }
         }
 
@@ -471,12 +477,10 @@ function renderGroupedTable() {
         const cmd = group.cmd;
         const args = group.args;
         const qDate = formatDate(group.qDate);
-        const compDate = formatDate(group.completionDate);
-        let wallTime = '—';
-        if (group.wallTime) {
-            wallTime = formatDuration(Math.round(group.wallTime));
-        } else if (group.completionDate && group.qDate) {
-            wallTime = formatDuration(Math.max(0, group.completionDate - group.qDate));
+        // Time since submitted = now - earliest QDate in the cluster
+        let timeSinceSubmitted = '—';
+        if (group.qDate) {
+            timeSinceSubmitted = formatDuration(Math.max(0, Math.floor(Date.now() / 1000) - group.qDate));
         }
         // Use unfiltered cluster resources for constant display
         const cr = clusterResources[cid] || {};
@@ -507,8 +511,8 @@ function renderGroupedTable() {
             <td class="monospace" style="display: none;">—</td>
             <td style="text-align: center; font-weight: 500;">${group.jobs.length}</td>
             <td>${qDate}</td>
-            <td>—</td>
-            <td>${wallTime}</td>
+            <td style="display: none;">—</td>
+            <td>${timeSinceSubmitted}</td>
             <td style="font-size: 0.85rem;">${cpus} CPU, ${mem}, ${disk}${gpus !== '—' ? `, ${gpus} GPU` : ''}</td>
         `;
 
@@ -624,11 +628,14 @@ function renderFlatTable() {
         const qDate = formatDate(job.QDate);
         const compDate = formatDate(job.CompletionDate);
 
+        // Wall Time = LastRemoteWallClockTime - CumulativeSuspensionTime, only for completed jobs
         let wallTime = '—';
-        if (job.RemoteWallClockTime) {
-            wallTime = formatDuration(Math.round(parseFloat(job.RemoteWallClockTime)));
-        } else if (job.CompletionDate && job.QDate) {
-            wallTime = formatDuration(Math.max(0, job.CompletionDate - job.QDate));
+        if (parseInt(job.JobStatus) === 4) {
+            const lastRemote = parseFloat(job.LastRemoteWallClockTime);
+            const suspension = parseFloat(job.CumulativeSuspensionTime);
+            if (lastRemote > 0) {
+                wallTime = formatDuration(Math.round(lastRemote - (suspension || 0)));
+            }
         }
 
         const exitCode = job.ExitCode !== undefined ? job.ExitCode : '—';
@@ -694,7 +701,7 @@ async function deleteSelected() {
     if (selectedIds.size === 0) return;
 
     const count = selectedIds.size;
-    const clusterIds = [...selectedIds].map(key => parseInt(key.split('.')[0]));
+    const clusterIds = [...new Set([...selectedIds].map(key => parseInt(key.split('.')[0])))];
 
     const names = clusterIds.slice(0, 5).map(cid => `#${cid}`);
     let detail = names.join(', ');

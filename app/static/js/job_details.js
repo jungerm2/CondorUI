@@ -36,13 +36,14 @@ async function loadJobDetails() {
         $('#quick-executable').textContent = formatCommand(job.Cmd, job.Args);
         $('#quick-host').textContent = job.RemoteHost ? basename(job.RemoteHost) : (job.LastRemoteHost ? basename(job.LastRemoteHost) : '—');
         
+        // Wall Time = LastRemoteWallClockTime - CumulativeSuspensionTime, only for completed jobs
         let wallTime = '—';
-        if (job.RemoteWallClockTime) {
-            wallTime = formatDuration(Math.round(parseFloat(job.RemoteWallClockTime)));
-        } else if (job.CompletionDate && job.QDate) {
-            wallTime = formatDuration(Math.max(0, job.CompletionDate - job.QDate));
-        } else if (job.QDate) {
-            wallTime = formatDuration(Math.max(0, Math.floor(Date.now() / 1000) - job.QDate));
+        if (parseInt(job.JobStatus) === 4) {
+            const lastRemote = parseFloat(job.LastRemoteWallClockTime);
+            const suspension = parseFloat(job.CumulativeSuspensionTime);
+            if (lastRemote > 0) {
+                wallTime = formatDuration(Math.round(lastRemote - (suspension || 0)));
+            }
         }
         $('#quick-walltime').textContent = wallTime;
 

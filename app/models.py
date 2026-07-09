@@ -18,8 +18,15 @@ class JobSubmission(db.Model):
     submitted_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
-    log_dir = db.Column(db.String(512), nullable=True)
-    output_dir = db.Column(db.String(512), nullable=True)
+    log_path = db.Column(db.String(1024), nullable=True)  # Resolved UserLog path
+    out_path = db.Column(db.String(1024), nullable=True)  # Resolved Out (stdout) path
+    err_path = db.Column(db.String(1024), nullable=True)  # Resolved Err (stderr) path
+    output_destination = db.Column(
+        db.String(1024), nullable=True
+    )  # Resolved output_destination
+    transfer_output_remaps = db.Column(
+        db.Text, nullable=True
+    )  # Resolved transfer_output_remaps
     owner = db.Column(db.String(128), nullable=True)
     cmd = db.Column(db.Text, nullable=True)
 
@@ -31,8 +38,11 @@ class JobSubmission(db.Model):
             "submit_description": self.submit_description,
             "num_procs": self.num_procs,
             "submitted_at": self.submitted_at.isoformat() + "Z",
-            "log_dir": self.log_dir,
-            "output_dir": self.output_dir,
+            "log_path": self.log_path,
+            "out_path": self.out_path,
+            "err_path": self.err_path,
+            "output_destination": self.output_destination,
+            "transfer_output_remaps": self.transfer_output_remaps,
             "owner": self.owner,
             "cmd": self.cmd,
         }
