@@ -50,8 +50,16 @@ function renderTemplatesGrid(templates) {
         const descLines = descPreview.split('\n').slice(0, 3).join('\n');
 
         card.innerHTML = `
-            <div class="card-header" style="border-bottom: none; padding-bottom: 0;">
+            <div class="card-header" style="border-bottom: none; padding-bottom: 0; display: flex; justify-content: space-between; align-items: flex-start;">
                 <h3 style="margin: 0; font-size: 1.1rem; color: var(--text-primary);">${name}</h3>
+                <button class="btn btn-ghost btn-sm download-tmpl-btn" data-name="${escHtml(tmpl.name)}" title="Download .sub file" style="flex-shrink: 0;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                        <polyline points="7,10 12,15 17,10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                    Download
+                </button>
             </div>
             <div class="card-body" style="flex-grow: 1; padding: 12px 16px;">
                 <pre class="monospace" style="background: var(--bg-secondary); padding: 8px; border-radius: 4px; font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: pre-wrap; max-height: 100px;">${escHtml(descLines)}</pre>
@@ -108,6 +116,14 @@ function renderTemplatesGrid(templates) {
             openModal('rename-template-modal');
             $('#rename-template-name').focus();
             $('#rename-template-name').select();
+        });
+    });
+
+    $$('.download-tmpl-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const name = e.currentTarget.dataset.name;
+            const url = `/api/templates/${encodeURIComponent(name)}/download`;
+            window.location.href = url;
         });
     });
 }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
@@ -1697,6 +1698,68 @@ def delete_template(name: str):
 
     file_path.unlink()
     return jsonify({"message": f"Template '{name}' deleted"})
+
+
+@api_bp.route("/templates/<name>/download")
+def download_template(name: str):
+    """Download a template as a .sub file.
+
+    If the template's submit_data is a JSON object (form mode), it is converted
+    to standard .sub syntax.  If it is already raw .sub text, it is returned as-is.
+    """
+    templates_dir = current_app.config["TEMPLATES_DIR"]
+    file_path = _template_path(templates_dir, name)
+
+    tmpl = _read_template(file_path)
+    if tmpl is None:
+        return jsonify({"error": f"Template '{name}' not found"}), 404
+
+    submit_data = tmpl.get("submit_data", "")
+
+    # If submit_data is a JSON string representing an object, convert to .sub format
+    content = submit_data
+    try:
+        if submit_data.strip().startswith("{"):
+            parsed = json.loads(submit_data)
+            lines = []
+            # Build .sub file content from JSON dict
+            key_order = [
+                "universe", "container_image", "executable", "shell",
+                "arguments", "transfer_input_files", "transfer_executable",
+                "request_cpus", "request_memory", "request_disk",
+                "request_gpus", "gpus_minimum_capability", "gpus_minimum_memory",
+                "gpus_minimum_runtime", "cuda_version",
+                "output", "error", "log",
+                "transfer_output_files", "output_directory", "transfer_output_remaps",
+            ]
+            # Standard keys in order
+            for key in key_order:
+                val = parsed.get(key)
+                if val is not None and val != "" and val != 0 and val is not False:
+                    lines.append(f"{key} = {val}")
+            # Extra keys (not in standard list)
+            standard_set = set(key_order) | {"queue"}
+            for key, val in parsed.items():
+                if key not in standard_set and val is not None and val != "":
+                    lines.append(f"{key} = {val}")
+            # Queue directive
+            queue_val = parsed.get("queue", 1)
+            lines.append(f"\nqueue {queue_val}")
+            content = "\n".join(lines)
+    except (json.JSONDecodeError, TypeError):
+        # If parsing fails, use raw content as-is
+        pass
+
+    # Sanitize filename for .sub download
+    safe_name = _slugify(name)
+    download_name = f"{safe_name}.sub"
+
+    return send_file(
+        io.BytesIO(content.encode("utf-8")),
+        as_attachment=True,
+        download_name=download_name,
+        mimetype="text/plain",
+    )
 
 
 # ---------------------------------------------------------------------------
