@@ -33,7 +33,15 @@ async function loadJobDetails() {
 
         // Populate quick metrics
         $('#quick-owner').textContent = job.Owner || '—';
-        $('#quick-executable').textContent = formatCommand(job.Cmd, job.Args);
+        const cmdText = formatCommand(job.Cmd, job.Args);
+        const cmdEl = $('#quick-executable');
+        cmdEl.textContent = cmdText;
+        // Add long-cmd class for long commands so they wrap/scroll
+        if (cmdText.length > 60) {
+            cmdEl.classList.add('long-cmd');
+        } else {
+            cmdEl.classList.remove('long-cmd');
+        }
         $('#quick-host').textContent = job.RemoteHost ? basename(job.RemoteHost) : (job.LastRemoteHost ? basename(job.LastRemoteHost) : '—');
         
         // Wall Time = LastRemoteWallClockTime - CumulativeSuspensionTime, only for completed jobs

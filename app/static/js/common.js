@@ -745,6 +745,7 @@ function uploadFileRaw(file, url, options = {}) {
         nameHeader = 'X-Container-Name',
         onProgress = null,
         signal = null,
+        extraHeaders = {},  // Optional extra HTTP headers, e.g. { 'X-Overwrite': 'true' }
     } = options;
 
     xhr.open('POST', url);
@@ -752,6 +753,10 @@ function uploadFileRaw(file, url, options = {}) {
     xhr.setRequestHeader(filenameHeader, file.name);
     if (name) {
         xhr.setRequestHeader(nameHeader, name);
+    }
+    // Set any extra headers
+    for (const [key, value] of Object.entries(extraHeaders)) {
+        xhr.setRequestHeader(key, value);
     }
 
     if (signal) {

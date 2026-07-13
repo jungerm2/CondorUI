@@ -62,6 +62,40 @@ def _remove_empty_parents(path: Path) -> None:
             break
 
 
+def _find_existing_file_by_original_name(
+    base_dir: str, original_name: str
+) -> dict | None:
+    """Scan UUID-named subdirectories under *base_dir* for a file matching *original_name*.
+
+    Returns the file entry dict (with keys ``filename``, ``original_name``, etc.)
+    if found, or ``None``.
+    """
+    from app.utils import scan_uuid_directories
+
+    for entry in scan_uuid_directories(base_dir):
+        if entry.get("original_name") == original_name:
+            return entry
+    return None
+
+
+def _find_existing_container_by_name(containers_dir: str, name: str) -> dict | None:
+    """Scan the containers directory for a container with the same display *name*.
+
+    The display name is derived from the ``.sif`` filename stem (e.g.,
+    ``ubuntu_latest.sif`` → ``Ubuntu Latest``).  Returns the container entry
+    dict if found, or ``None``.
+    """
+    from pathlib import Path
+
+    from app.utils import scan_uuid_directories
+
+    for entry in scan_uuid_directories(containers_dir, file_filter=".sif"):
+        display_name = Path(entry["original_name"]).stem.replace("_", " ").title()
+        if display_name.lower() == name.lower():
+            return entry
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Error handlers
 # ---------------------------------------------------------------------------
@@ -575,12 +609,25 @@ def upload_files():
     Expects the raw file as the request body with:
       - Content-Type: application/octet-stream
       - X-Upload-Filename: original filename (required)
+      - X-Overwrite: "true" to replace an existing file with the same name
     """
     original_filename = request.headers.get("X-Upload-Filename", "").strip()
     if not original_filename:
         return jsonify({"error": "Missing 'X-Upload-Filename' header"}), 400
 
+    overwrite = request.headers.get("X-Overwrite", "").strip().lower() == "true"
     upload_dir = current_app.config["UPLOAD_DIR"]
+
+    # Check if a file with the same original_name already exists
+    existing = _find_existing_file_by_original_name(upload_dir, original_filename)
+    if existing:
+        if not overwrite:
+            return jsonify({"error": f"File '{original_filename}' already exists"}), 409
+        # Delete the existing entry (UUID directory + file)
+        existing_path = Path(upload_dir) / existing["filename"]
+        if existing_path.exists():
+            existing_path.unlink()
+            _remove_empty_parents(existing_path.parent)
 
     try:
         unique_name, size = save_uploaded_stream(
@@ -784,11 +831,13 @@ def upload_executable():
     Expects the raw file as the request body with:
       - Content-Type: application/octet-stream
       - X-Upload-Filename: original filename (required)
+      - X-Overwrite: "true" to replace an existing executable with the same name
     """
     original_filename = request.headers.get("X-Upload-Filename", "").strip()
     if not original_filename:
         return jsonify({"error": "Missing 'X-Upload-Filename' header"}), 400
 
+    overwrite = request.headers.get("X-Overwrite", "").strip().lower() == "true"
     exec_dir = Path(current_app.config["EXECUTABLES_DIR"])
     exec_dir.mkdir(parents=True, exist_ok=True)
 
@@ -797,7 +846,9 @@ def upload_executable():
     dest = exec_dir / filename
 
     if dest.exists():
-        return jsonify({"error": f"Executable '{filename}' already exists"}), 409
+        if not overwrite:
+            return jsonify({"error": f"Executable '{filename}' already exists"}), 409
+        dest.unlink()
 
     # Save raw stream to disk
     with open(dest, "wb") as f:
@@ -953,7 +1004,8 @@ def pull_container():
     Request JSON:
     {
         "image": "docker://ubuntu:latest",
-        "name": "Ubuntu Latest"
+        "name": "Ubuntu Latest",
+        "overwrite": false
     }
     """
     data = request.get_json()
@@ -969,6 +1021,7 @@ def pull_container():
         ), 400
 
     name = data.get("name", "").strip() or Path(image_ref).name
+    overwrite = data.get("overwrite", False)
 
     osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
     if not osdf_root:
@@ -976,6 +1029,17 @@ def pull_container():
 
     containers_dir = Path(osdf_root) / "containers"
     containers_dir.mkdir(parents=True, exist_ok=True)
+
+    # Check if a container with the same display name already exists
+    existing = _find_existing_container_by_name(str(containers_dir), name)
+    if existing:
+        if not overwrite:
+            return jsonify({"error": f"Container '{name}' already exists"}), 409
+        # Delete the existing entry
+        existing_path = containers_dir / existing["filename"]
+        if existing_path.exists():
+            existing_path.unlink()
+            _remove_empty_parents(existing_path.parent)
 
     # Generate a unique filename: uuid/safe_name.sif
     safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in name.lower())
@@ -1054,6 +1118,7 @@ def pull_container_stream():
         return Response(err_gen(), mimetype="text/event-stream")
 
     name = request.args.get("name", "").strip() or Path(image_ref).name
+    overwrite = request.args.get("overwrite", "").strip().lower() == "true"
 
     osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
     if not osdf_root:
@@ -1065,6 +1130,21 @@ def pull_container_stream():
 
     containers_dir = Path(osdf_root) / "containers"
     containers_dir.mkdir(parents=True, exist_ok=True)
+
+    # Check if a container with the same display name already exists
+    existing = _find_existing_container_by_name(str(containers_dir), name)
+    if existing:
+        if not overwrite:
+
+            def err_gen():
+                yield f"event: error\ndata: Container '{name}' already exists\n\n"
+
+            return Response(err_gen(), mimetype="text/event-stream")
+        # Delete the existing entry
+        existing_path = containers_dir / existing["filename"]
+        if existing_path.exists():
+            existing_path.unlink()
+            _remove_empty_parents(existing_path.parent)
 
     safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in name.lower())
     pull_uuid = uuid.uuid4().hex
@@ -1199,6 +1279,7 @@ def upload_container():
       - Content-Type: application/octet-stream
       - X-Container-Filename: original filename (for .sif validation)
       - X-Container-Name: optional display name
+      - X-Overwrite: "true" to replace an existing container with the same name
     """
     original_filename = request.headers.get("X-Container-Filename", "").strip()
     if not original_filename:
@@ -1207,6 +1288,7 @@ def upload_container():
     if not original_filename.lower().endswith(".sif"):
         return jsonify({"error": "Only .sif files are accepted"}), 400
 
+    overwrite = request.headers.get("X-Overwrite", "").strip().lower() == "true"
     name = (
         request.headers.get("X-Container-Name", "").strip()
         or Path(original_filename).stem
@@ -1217,6 +1299,17 @@ def upload_container():
         return jsonify({"error": "OSDF root path is not configured"}), 400
 
     containers_dir = str(Path(osdf_root) / "containers")
+
+    # Check if a container with the same display name already exists
+    existing = _find_existing_container_by_name(containers_dir, name)
+    if existing:
+        if not overwrite:
+            return jsonify({"error": f"Container '{name}' already exists"}), 409
+        # Delete the existing entry
+        existing_path = Path(containers_dir) / existing["filename"]
+        if existing_path.exists():
+            existing_path.unlink()
+            _remove_empty_parents(existing_path.parent)
 
     try:
         unique_name, size = save_uploaded_stream(
@@ -1388,11 +1481,33 @@ def release_clusters():
 
 @api_bp.route("/jobs/<job_id>", methods=["DELETE"])
 def remove_job(job_id):
-    """Remove a job."""
+    """Remove a job from the schedd, DB, and delete its log/out/err files."""
     try:
-        result = act_on_job("remove", job_id)
-        return jsonify(result)
+        # Parse cluster_id from job_id (format: "<clusterId>.<procId>" or just "<clusterId>")
+        cluster_id = int(job_id.split(".")[0])
+
+        # Ensure a clean session state
+        db.session.rollback()
+
+        # 1. Remove from schedd
+        try:
+            act_on_job("remove", job_id)
+        except Exception:
+            pass  # Job may already be gone from schedd
+
+        # 2. Delete from local DB and remove log/out/err files
+        submission = JobSubmission.query.filter_by(cluster_id=cluster_id).first()
+        if submission:
+            for path_attr in ("log_path", "out_path", "err_path"):
+                file_path = getattr(submission, path_attr, None)
+                if file_path and Path(file_path).exists():
+                    Path(file_path).unlink()
+            db.session.delete(submission)
+            db.session.commit()
+
+        return jsonify({"message": f"Job {job_id} removed"})
     except Exception as e:
+        db.session.rollback()
         return jsonify({"error": str(e)}), 500
 
 
@@ -1724,13 +1839,27 @@ def download_template(name: str):
             lines = []
             # Build .sub file content from JSON dict
             key_order = [
-                "universe", "container_image", "executable", "shell",
-                "arguments", "transfer_input_files", "transfer_executable",
-                "request_cpus", "request_memory", "request_disk",
-                "request_gpus", "gpus_minimum_capability", "gpus_minimum_memory",
-                "gpus_minimum_runtime", "cuda_version",
-                "output", "error", "log",
-                "transfer_output_files", "output_directory", "transfer_output_remaps",
+                "universe",
+                "container_image",
+                "executable",
+                "shell",
+                "arguments",
+                "transfer_input_files",
+                "transfer_executable",
+                "request_cpus",
+                "request_memory",
+                "request_disk",
+                "request_gpus",
+                "gpus_minimum_capability",
+                "gpus_minimum_memory",
+                "gpus_minimum_runtime",
+                "cuda_version",
+                "output",
+                "error",
+                "log",
+                "transfer_output_files",
+                "output_directory",
+                "transfer_output_remaps",
             ]
             # Standard keys in order
             for key in key_order:
@@ -1746,7 +1875,7 @@ def download_template(name: str):
             queue_val = parsed.get("queue", 1)
             lines.append(f"\nqueue {queue_val}")
             content = "\n".join(lines)
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError, TypeError:
         # If parsing fails, use raw content as-is
         pass
 

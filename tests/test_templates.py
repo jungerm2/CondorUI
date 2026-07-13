@@ -31,6 +31,7 @@ SAMPLE_EXECUTABLE_SUBMIT = {
     ),
     "MyCustomAttr": "custom_value",
     "AnotherAttr": "another_value",
+    "queue": 1,
 }
 
 SAMPLE_SHELL_SUBMIT = {
@@ -49,6 +50,7 @@ SAMPLE_CONTAINER_SUBMIT = {
     "request_cpus": "1",
     "request_memory": "2 GB",
     "request_disk": "4 GB",
+    "queue": 1,
 }
 
 SAMPLE_GPU_SUBMIT = {
@@ -62,6 +64,7 @@ SAMPLE_GPU_SUBMIT = {
     "gpus_minimum_memory": "4 GB",
     "gpus_minimum_runtime": "9.1",
     "cuda_version": "11.0",
+    "queue": 1,
 }
 
 SAMPLE_RAW_TEXT = """universe = vanilla
@@ -375,6 +378,24 @@ class TestTemplateFieldPreservation:
         assert data["gpus_minimum_runtime"] == "9.1"
         assert data["cuda_version"] == "11.0"
 
+    def test_queue_field_preserved(self, client, app):
+        """queue (job count) field round-trips correctly."""
+        submit_data = dict(SAMPLE_EXECUTABLE_SUBMIT)
+        submit_data["queue"] = 10
+        tmpl = self._create_and_retrieve(client, app, "Queue Test", submit_data)
+        data = json.loads(tmpl["submit_data"])
+        assert data["queue"] == 10
+
+    def test_queue_variable_preserved(self, client, app):
+        """queue with a variable expression (non-integer) round-trips correctly."""
+        submit_data = dict(SAMPLE_EXECUTABLE_SUBMIT)
+        submit_data["queue"] = "$(N)"
+        tmpl = self._create_and_retrieve(
+            client, app, "Queue Variable", submit_data
+        )
+        data = json.loads(tmpl["submit_data"])
+        assert data["queue"] == "$(N)"
+
     def test_raw_text_preserved(self, client, app):
         """Raw text submit_data round-trips verbatim."""
         tmpl = self._create_and_retrieve(client, app, "Raw Text", SAMPLE_RAW_TEXT)
@@ -403,6 +424,7 @@ class TestTemplateFieldPreservation:
             "Requirements": "(Target.HasCHTCStaging == true)",
             "MyCustom": "custom_val",
             "AnotherCustom": "12345",
+            "queue": 5,
         }
 
         resp = client.post(
@@ -466,6 +488,7 @@ class TestTemplateFieldPreservation:
             "Requirements": "(Target.HasCHTCStaging == true)",
             "MyCustom": "custom_val",
             "AnotherCustom": "12345",
+            "queue": 5,
         }
 
         resp = client.post(

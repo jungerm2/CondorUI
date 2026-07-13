@@ -449,3 +449,171 @@ queue 1"""
         assert "gpus_minimum_capability" in restored_text, (
             "gpus_minimum_capability missing from restored raw text"
         )
+
+    def test_save_and_load_form_template_variable_queue(self, live_server, page):
+        """Save a Form Builder template with a non-integer queue variable and verify it loads."""
+        # ------------------------------------------------------------------
+        # 1. Navigate to the submit page
+        # ------------------------------------------------------------------
+        page.goto(f"{live_server}/submit")
+        page.wait_for_load_state("networkidle")
+        page.wait_for_selector("#job-name", state="visible")
+        time.sleep(0.5)
+
+        # ------------------------------------------------------------------
+        # 2. Fill in form fields with a non-default queue count
+        # ------------------------------------------------------------------
+        # Job name
+        _set_form_field_value(page, "job-name", "Form Queue Variable")
+
+        # Universe
+        page.select_option("#job-universe", "vanilla")
+
+        # Executable mode (not shell)
+        page.click("#execmode-exec-btn")
+        time.sleep(0.1)
+
+        # Executable
+        _set_form_field_value(page, "job-executable", "/bin/sleep")
+
+        # Arguments
+        _set_form_field_value(page, "job-arguments", "60")
+
+        # Resources
+        _set_form_field_value(page, "job-cpus", "1")
+        _set_form_field_value(page, "job-memory", "1 GB")
+        _set_form_field_value(page, "job-disk", "1 GB")
+
+        # Set queue to a variable expression (non-integer)
+        _set_form_field_value(page, "job-count", "$(N)")
+
+        time.sleep(0.2)
+
+        # ------------------------------------------------------------------
+        # 3. Save as template
+        # ------------------------------------------------------------------
+        page.click("#save-as-tmpl-btn")
+        time.sleep(0.3)
+        page.wait_for_selector("#save-template-modal.active", state="visible")
+        time.sleep(0.2)
+
+        # Verify pre-filled name
+        tmpl_name = _get_form_field_value(page, "save-template-name")
+        assert tmpl_name == "Form Queue Variable", (
+            f"Expected 'Form Queue Variable', got '{tmpl_name}'"
+        )
+
+        page.click("#save-template-confirm-btn")
+        time.sleep(0.5)
+        page.wait_for_selector(".toast", state="visible", timeout=5000)
+        time.sleep(0.3)
+
+        # ------------------------------------------------------------------
+        # 4. Navigate to templates page and load the template
+        # ------------------------------------------------------------------
+        page.goto(f"{live_server}/templates")
+        page.wait_for_load_state("networkidle")
+        time.sleep(0.5)
+
+        use_btn = page.locator(".use-tmpl-btn").first
+        assert use_btn.is_visible(), "Use Template button not found"
+        use_btn.click()
+
+        page.wait_for_url(f"{live_server}/submit")
+        page.wait_for_load_state("networkidle")
+        time.sleep(0.5)
+
+        # ------------------------------------------------------------------
+        # 5. Verify queue value is preserved as the variable expression
+        # ------------------------------------------------------------------
+        queue_value = _get_form_field_value(page, "job-count")
+        assert queue_value == "$(N)", (
+            f"Queue variable not preserved: expected '$(N)', got '{queue_value}'"
+        )
+
+        # Also verify other form fields are intact
+        assert (
+            _get_form_field_value(page, "job-executable") == "/bin/sleep"
+        ), "Executable not preserved"
+        assert (
+            _get_form_field_value(page, "job-arguments") == "60"
+        ), "Arguments not preserved"
+
+    def test_save_and_load_raw_template_variable_queue(self, live_server, page):
+        """Save a raw text template with a non-integer queue variable and verify it loads."""
+        # ------------------------------------------------------------------
+        # 1. Navigate to submit page and switch to Raw Editor
+        # ------------------------------------------------------------------
+        page.goto(f"{live_server}/submit")
+        page.wait_for_load_state("networkidle")
+        page.wait_for_selector("#job-name", state="visible")
+        time.sleep(0.3)
+
+        page.click("#mode-raw-btn")
+        time.sleep(0.3)
+
+        # Fill in raw editor with a variable queue expression
+        raw_text = """universe = vanilla
+executable = /bin/sleep
+arguments = 60
+request_cpus = 2
+request_memory = 2 GB
+request_disk = 4 GB
+output = test.out
+error = test.err
+log = test.log
+
+queue $(N)"""
+
+        page.fill("#raw-submit-editor", raw_text)
+        _set_form_field_value(page, "raw-job-name", "Variable Queue Raw")
+        time.sleep(0.2)
+
+        # ------------------------------------------------------------------
+        # 2. Save as template from raw mode
+        # ------------------------------------------------------------------
+        page.click("#raw-save-as-tmpl-btn")
+        time.sleep(0.3)
+        page.wait_for_selector("#save-template-modal.active", state="visible")
+        time.sleep(0.2)
+
+        # Verify pre-filled name
+        tmpl_name = _get_form_field_value(page, "save-template-name")
+        assert tmpl_name == "Variable Queue Raw", (
+            f"Expected 'Variable Queue Raw', got '{tmpl_name}'"
+        )
+
+        page.click("#save-template-confirm-btn")
+        time.sleep(0.5)
+        page.wait_for_selector(".toast", state="visible", timeout=5000)
+        time.sleep(0.3)
+
+        # ------------------------------------------------------------------
+        # 3. Load the template
+        # ------------------------------------------------------------------
+        page.goto(f"{live_server}/templates")
+        page.wait_for_load_state("networkidle")
+        time.sleep(0.5)
+
+        # Find the "Use Template" button for our raw template
+        # (It should be the first one since it was most recently updated)
+        use_btn = page.locator(".use-tmpl-btn").first
+        assert use_btn.is_visible(), "Use Template button not found"
+        use_btn.click()
+
+        page.wait_for_url(f"{live_server}/submit")
+        page.wait_for_load_state("networkidle")
+        time.sleep(0.5)
+
+        # ------------------------------------------------------------------
+        # 4. Verify raw text is restored with the variable queue preserved
+        # ------------------------------------------------------------------
+        restored_text = page.evaluate(
+            "document.getElementById('raw-submit-editor')?.value || ''"
+        )
+        assert "queue $(N)" in restored_text, (
+            f"Variable queue not preserved in restored text: {restored_text[:200]}..."
+        )
+        assert "executable = /bin/sleep" in restored_text, (
+            f"Raw text not restored properly: {restored_text[:200]}..."
+        )

@@ -208,7 +208,7 @@ function updateSelectionUI() {
 // Status Bar Helper — builds a stacked bar showing status distribution
 // ---------------------------------------------------------------------------
 
-function renderStatusBar(jobs) {
+function renderStatusBar(jobs, clusterId) {
     // Count jobs by status
     const counts = {};
     jobs.forEach(job => {
@@ -229,7 +229,7 @@ function renderStatusBar(jobs) {
         4: 'status-completed', 5: 'status-held', 6: 'status-transferring'
     };
 
-    // Build segments
+    // Build segments — if clusterId is provided, make segments clickable links
     let segments = '';
     statusOrder.forEach(status => {
         const count = counts[status] || 0;
@@ -237,7 +237,12 @@ function renderStatusBar(jobs) {
         const pct = (count / total) * 100;
         const label = statusLabels[status] || 'Unknown';
         const cls = statusClasses[status] || 'status-unknown';
-        segments += `<div class="status-bar-segment ${cls}" style="width: ${pct}%" title="${count} ${label} (${Math.round(pct)}%)"></div>`;
+        if (clusterId !== undefined) {
+            // Apply width and color directly on the <a> tag to avoid flex:1 override issues
+            segments += `<a href="/?cluster_id=${clusterId}&status=${status}" class="status-bar-segment-link ${cls}" style="width: ${pct}%" title="${count} ${label} (${Math.round(pct)}%)"></a>`;
+        } else {
+            segments += `<div class="status-bar-segment ${cls}" style="width: ${pct}%" title="${count} ${label} (${Math.round(pct)}%)"></div>`;
+        }
     });
 
     // If no segments match known statuses, show a fallback
@@ -257,15 +262,28 @@ function renderFilterBadge() {
     const container = $('#filter-badge-container');
     if (!container) return;
 
-    if (!clusterFilter) {
+    const params = new URLSearchParams(window.location.search);
+    const cid = params.get('cluster_id');
+    const statusVal = params.get('status');
+
+    if (!cid && !statusVal) {
         container.innerHTML = '';
         return;
     }
 
+    let parts = [];
+    if (cid) {
+        parts.push(`Cluster: ${cid}`);
+    }
+    if (statusVal) {
+        const statusNames = {1: 'Idle', 2: 'Running', 3: 'Removed', 4: 'Completed', 5: 'Held', 6: 'Transferring'};
+        parts.push(`Status: ${statusNames[statusVal] || statusVal}`);
+    }
+
     container.innerHTML = `
         <span class="filter-badge">
-            🔍 Cluster: ${clusterFilter}
-            <button class="filter-badge-clear" id="clear-filter-btn" title="Clear filter">✕</button>
+            🔍 ${parts.join(' · ')}
+            <button class="filter-badge-clear" id="clear-filter-btn" title="Clear all filters">✕</button>
         </span>
     `;
 
@@ -274,9 +292,12 @@ function renderFilterBadge() {
         // Update URL without reloading
         const url = new URL(window.location);
         url.searchParams.delete('cluster_id');
+        url.searchParams.delete('status');
         window.history.replaceState({}, '', url);
         // Re-enable group toggle
         $('#group-toggle').disabled = false;
+        // Reset status filter dropdown
+        $('#status-filter').value = '';
         renderFilterBadge();
         loadJobs();
     });
@@ -489,13 +510,27 @@ function renderGroupedTable() {
         const mem = hasRes ? formatMemory(cr.maxMemory) : '—';
         const disk = hasRes ? formatDisk(cr.maxDisk) : '—';
         const gpus = hasRes ? cr.totalGpus : '—';
-        const statusBarHtml = renderStatusBar(group.jobs);
+
+        // For single-job groups, show a status badge instead of the status bar
+        const isSingleJob = group.jobs.length === 1;
+        let statusHtml;
+        let rowClickUrl;
+        if (isSingleJob) {
+            const job = group.jobs[0];
+            const statusClass = getStatusClass(job.JobStatus);
+            const statusName = getStatusName(job.JobStatus);
+            statusHtml = `<span class="status-badge ${statusClass}">${statusName}</span>`;
+            rowClickUrl = `/job/${job.ClusterId}/${job.ProcId}`;
+        } else {
+            statusHtml = renderStatusBar(group.jobs, cid);
+            rowClickUrl = `/?cluster_id=${cid}`;
+        }
 
         // Check if all jobs in this group are selected
         const allSelected = group.jobs.every(j => selectedIds.has(`${j.ClusterId}.${j.ProcId}`));
         const someSelected = group.jobs.some(j => selectedIds.has(`${j.ClusterId}.${j.ProcId}`));
 
-        // Group header row — clicking navigates to filtered view
+        // Group header row — clicking navigates to filtered view (or details for single-job groups)
         const headerTr = document.createElement('tr');
         headerTr.className = 'group-header';
         headerTr.dataset.clusterId = cid;
@@ -503,11 +538,11 @@ function renderGroupedTable() {
             <td style="text-align: center;">
                 <input type="checkbox" class="group-checkbox" data-cluster-id="${cid}" ${allSelected ? 'checked' : ''}>
             </td>
-            <td><a href="/?cluster_id=${cid}" class="job-id-link">${cid}</a></td>
+            <td><a href="${rowClickUrl}" class="job-id-link">${cid}</a></td>
             <td style="max-width: 120px; overflow: hidden; text-overflow: ellipsis;" title="${escHtml(name)}">${escHtml(name)}</td>
             <td>${escHtml(owner)}</td>
             <td class="monospace cmd-cell" title="${escHtml(cmd || args || '')}">${formatCommand(cmd, args)}</td>
-            <td>${statusBarHtml}</td>
+            <td>${statusHtml}</td>
             <td class="monospace" style="display: none;">—</td>
             <td style="text-align: center; font-weight: 500;">${group.jobs.length}</td>
             <td>${qDate}</td>
@@ -516,10 +551,10 @@ function renderGroupedTable() {
             <td style="font-size: 0.85rem;">${cpus} CPU, ${mem}, ${disk}${gpus !== '—' ? `, ${gpus} GPU` : ''}</td>
         `;
 
-        // Click on the row (but not on the link or checkbox) navigates to filtered view
+        // Click on the row (but not on the link or checkbox) navigates to details or filtered view
         headerTr.addEventListener('click', (e) => {
             if (e.target.closest('a') || e.target.closest('input[type="checkbox"]')) return;
-            window.location.href = `/?cluster_id=${cid}`;
+            window.location.href = rowClickUrl;
         });
 
         tbody.appendChild(headerTr);
@@ -745,55 +780,68 @@ async function executeDelete(clusterIds, deleteOutputs) {
         countdownInterval = null;
     }
 
-    // --- Add navigation guard ---
-    const beforeUnloadHandler = (e) => {
-        e.preventDefault();
-        e.returnValue = 'Job deletion is in progress. Are you sure you want to leave?';
-    };
-    window.addEventListener('beforeunload', beforeUnloadHandler);
+    // For small batches (< 10), skip the progress modal and do it silently
+    const useProgressModal = total >= 10;
 
-    // --- Create progress modal (non-dismissable) ---
-    const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay active';
-    overlay.id = 'delete-progress-modal';
-    overlay.style.zIndex = '10000';
-    overlay.innerHTML = `
-        <div class="modal" style="max-width: 480px;">
-            <div class="modal-header">
-                <h2>Deleting Jobs</h2>
+    let abortController = null;
+    let overlay = null;
+    let progressText = null;
+    let progressFill = null;
+    let progressDetail = null;
+    let progressErrors = null;
+    let cancelBtn = null;
+
+    if (useProgressModal) {
+        // --- Add navigation guard ---
+        const beforeUnloadHandler = (e) => {
+            e.preventDefault();
+            e.returnValue = 'Job deletion is in progress. Are you sure you want to leave?';
+        };
+        window.addEventListener('beforeunload', beforeUnloadHandler);
+
+        // --- Create progress modal (non-dismissable) ---
+        overlay = document.createElement('div');
+        overlay.className = 'modal-overlay active';
+        overlay.id = 'delete-progress-modal';
+        overlay.style.zIndex = '10000';
+        overlay.innerHTML = `
+            <div class="modal" style="max-width: 480px;">
+                <div class="modal-header">
+                    <h2>Deleting Jobs</h2>
+                </div>
+                <div class="modal-body">
+                    <div id="delete-progress-text" style="margin-bottom: 16px; color: var(--text-secondary);">
+                        Deleting 0 of ${total} jobs...
+                    </div>
+                    <div class="progress-bar-container" style="height: 24px;">
+                        <div class="progress-bar-fill" id="delete-progress-fill" style="width: 0%; height: 100%; background: var(--status-running); border-radius: 4px; transition: width 0.2s ease;"></div>
+                    </div>
+                    <div id="delete-progress-detail" style="margin-top: 8px; font-size: 0.8rem; color: var(--text-muted);"></div>
+                    <div id="delete-progress-errors" style="margin-top: 8px; font-size: 0.8rem; color: var(--status-held); max-height: 120px; overflow-y: auto; display: none;"></div>
+                    <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;">
+                        <button class="btn btn-ghost" id="delete-cancel-btn">Cancel</button>
+                    </div>
+                </div>
             </div>
-            <div class="modal-body">
-                <div id="delete-progress-text" style="margin-bottom: 16px; color: var(--text-secondary);">
-                    Deleting 0 of ${total} jobs...
-                </div>
-                <div class="progress-bar-container" style="height: 24px;">
-                    <div class="progress-bar-fill" id="delete-progress-fill" style="width: 0%; height: 100%; background: var(--status-running); border-radius: 4px; transition: width 0.2s ease;"></div>
-                </div>
-                <div id="delete-progress-detail" style="margin-top: 8px; font-size: 0.8rem; color: var(--text-muted);"></div>
-                <div id="delete-progress-errors" style="margin-top: 8px; font-size: 0.8rem; color: var(--status-held); max-height: 120px; overflow-y: auto; display: none;"></div>
-                <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;">
-                    <button class="btn btn-ghost" id="delete-cancel-btn">Cancel</button>
-                </div>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(overlay);
+        `;
+        document.body.appendChild(overlay);
 
-    const progressText = overlay.querySelector('#delete-progress-text');
-    const progressFill = overlay.querySelector('#delete-progress-fill');
-    const progressDetail = overlay.querySelector('#delete-progress-detail');
-    const progressErrors = overlay.querySelector('#delete-progress-errors');
-    const cancelBtn = overlay.querySelector('#delete-cancel-btn');
+        progressText = overlay.querySelector('#delete-progress-text');
+        progressFill = overlay.querySelector('#delete-progress-fill');
+        progressDetail = overlay.querySelector('#delete-progress-detail');
+        progressErrors = overlay.querySelector('#delete-progress-errors');
+        cancelBtn = overlay.querySelector('#delete-cancel-btn');
 
-    // --- Create AbortController for cancellation ---
-    const abortController = new AbortController();
+        // --- Create AbortController for cancellation ---
+        abortController = new AbortController();
 
-    cancelBtn.addEventListener('click', () => {
-        cancelled = true;
-        abortController.abort();
-        cancelBtn.disabled = true;
-        cancelBtn.textContent = 'Cancelling...';
-    });
+        cancelBtn.addEventListener('click', () => {
+            cancelled = true;
+            abortController.abort();
+            cancelBtn.disabled = true;
+            cancelBtn.textContent = 'Cancelling...';
+        });
+    }
 
     // --- Sequential deletion with progress ---
     for (let i = 0; i < total; i++) {
@@ -801,17 +849,19 @@ async function executeDelete(clusterIds, deleteOutputs) {
 
         const cid = clusterIds[i];
         const current = i + 1;
-        const pct = Math.round((current / total) * 100);
 
-        progressText.textContent = `Deleting job ${current} of ${total} (Cluster #${cid})...`;
-        progressFill.style.width = pct + '%';
-        progressDetail.textContent = `${succeeded} succeeded, ${failed} failed`;
+        if (useProgressModal) {
+            const pct = Math.round((current / total) * 100);
+            progressText.textContent = `Deleting job ${current} of ${total} (Cluster #${cid})...`;
+            progressFill.style.width = pct + '%';
+            progressDetail.textContent = `${succeeded} succeeded, ${failed} failed`;
+        }
 
         try {
             const result = await api('/history/delete', {
                 method: 'POST',
                 body: JSON.stringify({ cluster_ids: [cid], delete_outputs: deleteOutputs }),
-                signal: abortController.signal,
+                signal: abortController ? abortController.signal : undefined,
             });
             if (result.results && result.results[0] && result.results[0].success) {
                 succeeded++;
@@ -831,41 +881,43 @@ async function executeDelete(clusterIds, deleteOutputs) {
         completed++;
     }
 
-    // --- Cleanup ---
-    window.removeEventListener('beforeunload', beforeUnloadHandler);
+    if (useProgressModal) {
+        // --- Cleanup ---
+        window.removeEventListener('beforeunload', beforeUnloadHandler);
 
-    // --- Update modal to show final result ---
-    cancelBtn.remove(); // Remove cancel button
+        // --- Update modal to show final result ---
+        cancelBtn.remove(); // Remove cancel button
 
-    if (cancelled) {
-        progressText.textContent = `Deletion cancelled. ${succeeded} jobs deleted, ${failed} failed.`;
-        progressFill.style.width = Math.round((completed / total) * 100) + '%';
-        progressFill.style.background = 'var(--text-muted)';
-    } else {
-        progressText.textContent = `Deleted ${succeeded} of ${total} jobs successfully.`;
-        progressFill.style.width = '100%';
-        if (failed > 0) {
-            progressFill.style.background = 'var(--status-held)';
+        if (cancelled) {
+            progressText.textContent = `Deletion cancelled. ${succeeded} jobs deleted, ${failed} failed.`;
+            progressFill.style.width = Math.round((completed / total) * 100) + '%';
+            progressFill.style.background = 'var(--text-muted)';
         } else {
-            progressFill.style.background = 'var(--status-running)';
+            progressText.textContent = `Deleted ${succeeded} of ${total} jobs successfully.`;
+            progressFill.style.width = '100%';
+            if (failed > 0) {
+                progressFill.style.background = 'var(--status-held)';
+            } else {
+                progressFill.style.background = 'var(--status-running)';
+            }
         }
+
+        progressDetail.textContent = `${succeeded} succeeded, ${failed} failed`;
+
+        if (errors.length > 0) {
+            progressErrors.style.display = 'block';
+            progressErrors.innerHTML = errors.map(e => `<div>${escHtml(e)}</div>`).join('');
+        }
+
+        // Add close button
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'btn btn-primary';
+        closeBtn.textContent = 'Close';
+        closeBtn.addEventListener('click', () => {
+            overlay.remove();
+        });
+        overlay.querySelector('.modal-body').appendChild(closeBtn);
     }
-
-    progressDetail.textContent = `${succeeded} succeeded, ${failed} failed`;
-
-    if (errors.length > 0) {
-        progressErrors.style.display = 'block';
-        progressErrors.innerHTML = errors.map(e => `<div>${escHtml(e)}</div>`).join('');
-    }
-
-    // Add close button
-    const closeBtn = document.createElement('button');
-    closeBtn.className = 'btn btn-primary';
-    closeBtn.textContent = 'Close';
-    closeBtn.addEventListener('click', () => {
-        overlay.remove();
-    });
-    overlay.querySelector('.modal-body').appendChild(closeBtn);
 
     // --- Clear selection and reload ---
     selectedIds.clear();
@@ -1024,6 +1076,12 @@ document.addEventListener('DOMContentLoaded', () => {
         $('#group-toggle-label').style.opacity = '0.5';
     }
 
+    // Parse status filter from URL and set the dropdown
+    const statusVal = params.get('status');
+    if (statusVal && statusVal.match(/^\d+$/)) {
+        $('#status-filter').value = statusVal;
+    }
+
     loadJobs();
     loadQuotas();
     startAutoRefresh();
@@ -1035,7 +1093,18 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     $('#job-search').addEventListener('input', renderTable);
-    $('#status-filter').addEventListener('change', renderTable);
+    $('#status-filter').addEventListener('change', () => {
+        // Sync status filter to URL
+        const url = new URL(window.location);
+        const statusVal = $('#status-filter').value;
+        if (statusVal) {
+            url.searchParams.set('status', statusVal);
+        } else {
+            url.searchParams.delete('status');
+        }
+        window.history.replaceState({}, '', url);
+        renderTable();
+    });
     $('#history-limit').addEventListener('change', loadJobs);
 
     // Group by ClusterID toggle

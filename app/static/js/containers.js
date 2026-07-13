@@ -195,13 +195,32 @@ function renderContainers() {
 // ---------------------------------------------------------------------------
 let pullEventSource = null;
 
-function handlePull() {
+async function handlePull() {
     const imageRef = $('#pull-image-ref').value.trim();
     const name = $('#pull-image-name').value.trim() || '';
 
     if (!imageRef) {
         toast('Docker image reference is required', 'warning');
         return;
+    }
+
+    // Check for conflicts with existing containers (by display name)
+    const displayName = name || 'Image from ' + imageRef;
+    const conflict = currentContainers.find(c => c.name.toLowerCase() === displayName.toLowerCase());
+    if (conflict) {
+        const replace = await new Promise((resolve) => {
+            showConfirmModal(
+                `Container <strong>${escHtml(displayName)}</strong> already exists.<br><br>Replace it?`,
+                {
+                    title: 'Replace Container',
+                    confirmText: 'Replace',
+                    confirmClass: 'btn-primary',
+                    onConfirm: () => resolve(true),
+                    onCancel: () => resolve(false),
+                }
+            );
+        });
+        if (!replace) return;
     }
 
     // Hide pull form, show log container
@@ -223,6 +242,7 @@ function handlePull() {
 
     const params = new URLSearchParams({ image: imageRef });
     if (name) params.set('name', name);
+    if (conflict) params.set('overwrite', 'true');
 
     pullEventSource = new EventSource(`/api/containers/pull/stream?${params}`);
 
@@ -350,8 +370,26 @@ function stopPull() {
 }
 
 // Upload .sif as raw request body with progress bar, ETA, and sub-1% granularity
-function handleSifUpload(file) {
+async function handleSifUpload(file) {
     const name = $('#upload-sif-name').value.trim() || '';
+
+    // Check for conflicts with existing containers (by display name)
+    const conflict = currentContainers.find(c => c.name.toLowerCase() === name.toLowerCase());
+    if (conflict) {
+        const replace = await new Promise((resolve) => {
+            showConfirmModal(
+                `Container <strong>${escHtml(name)}</strong> already exists.<br><br>Replace it?`,
+                {
+                    title: 'Replace Container',
+                    confirmText: 'Replace',
+                    confirmClass: 'btn-primary',
+                    onConfirm: () => resolve(true),
+                    onCancel: () => resolve(false),
+                }
+            );
+        });
+        if (!replace) return;
+    }
 
     // Show progress bar
     const progressContainer = $('#sif-upload-progress');
@@ -371,6 +409,7 @@ function handleSifUpload(file) {
         filenameHeader: 'X-Container-Filename',
         nameHeader: 'X-Container-Name',
         onProgress,
+        extraHeaders: conflict ? { 'X-Overwrite': 'true' } : {},
     });
     promise.then(async (data) => {
         toast(`Container '${data.name}' uploaded successfully!`);

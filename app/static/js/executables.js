@@ -178,10 +178,37 @@ function createProgressItem(file) {
     return container;
 }
 
+// Check if any of the given files conflict with existing executables.
+// Returns an array of conflicting filenames.
+function getExecConflicts(files) {
+    const existingNames = new Set(currentExecs.map(f => f.filename));
+    return Array.from(files).filter(f => existingNames.has(f.name)).map(f => f.name);
+}
+
 // Upload files — each file sent as raw request body
 async function handleUpload(files) {
     const fileList = Array.from(files);
     if (fileList.length === 0) return;
+
+    // Check for conflicts with existing executables
+    const conflicts = getExecConflicts(fileList);
+    if (conflicts.length > 0) {
+        const detail = conflicts.slice(0, 5).join(', ');
+        const suffix = conflicts.length > 5 ? `, and ${conflicts.length - 5} more...` : '';
+        const replace = await new Promise((resolve) => {
+            showConfirmModal(
+                `<strong>${conflicts.length}</strong> executable(s) already exist: <code style="font-size: 0.82rem;">${escHtml(detail)}${escHtml(suffix)}</code><br><br>Replace existing file(s)?`,
+                {
+                    title: 'Replace Executables',
+                    confirmText: 'Replace',
+                    confirmClass: 'btn-primary',
+                    onConfirm: () => resolve(true),
+                    onCancel: () => resolve(false),
+                }
+            );
+        });
+        if (!replace) return;
+    }
 
     const dropzone = $('#exec-dropzone');
     const progressList = $('#exec-upload-progress-list');
@@ -194,6 +221,9 @@ async function handleUpload(files) {
     progressList.innerHTML = '';
 
     uploadAbortControllers = [];
+
+    // Determine if we need to use overwrite mode
+    const overwrite = conflicts.length > 0;
 
     // Create a progress item for each file
     const progressItems = fileList.map(file => {
@@ -224,6 +254,7 @@ async function handleUpload(files) {
         const { promise, abort } = uploadFileRaw(file, '/api/executables', {
             filenameHeader: 'X-Upload-Filename',
             onProgress,
+            extraHeaders: overwrite ? { 'X-Overwrite': 'true' } : {},
         });
 
         // Store abort for cancel-all

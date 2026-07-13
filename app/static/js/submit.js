@@ -5,6 +5,20 @@ let selectedFileUris = new Set();
 let selectedContainerUri = null;
 let pendingSubmitFile = null;
 
+// Auto-resize textareas to fit their content
+function autoResizeTextarea(el) {
+    el.style.height = 'auto';
+    el.style.height = Math.max(el.scrollHeight, 36) + 'px';
+}
+
+// Initialize auto-resize for all textarea.form-input elements
+function initAutoResizeTextareas() {
+    document.querySelectorAll('textarea.form-input').forEach(el => {
+        autoResizeTextarea(el);
+        el.addEventListener('input', () => autoResizeTextarea(el));
+    });
+}
+
 // Submission modes toggle
 function initModeToggle() {
     const buttons = $$('.mode-toggle button');
@@ -298,13 +312,15 @@ function buildSubmitDict() {
         if (key) d[key] = val;
     });
 
+    d.queue = $('#job-count').value || '1';
+
     return d;
 }
 
 // Job Submission handlers
 async function submitFormJob() {
     const name = $('#job-name').value.trim() || 'Untitled Job';
-    const count = parseInt($('#job-count').value) || 1;
+    const count = $('#job-count').value || '1';
     const submit = buildSubmitDict();
 
     if (!submit.executable && !submit.shell) {
@@ -448,8 +464,7 @@ function syncFormToRaw() {
         }
     });
 
-    const count = parseInt($('#job-count').value) || 1;
-    rawText += `\nqueue ${count}\n`;
+    rawText += `\nqueue ${$('#job-count').value || '1'}\n`;
 
     $('#raw-submit-editor').value = rawText;
 }
@@ -468,7 +483,7 @@ function syncRawToForm() {
         if (!trimmedLine) return;
 
         // Handle queue directive separately (e.g., "queue 5")
-        const queueMatch = trimmedLine.match(/^queue\s+(\d+)$/i);
+        const queueMatch = trimmedLine.match(/^queue\s+(.+)$/i);
         if (queueMatch) {
             $('#job-count').value = queueMatch[1];
             return;
@@ -915,6 +930,7 @@ function updateExecutablesCardVisibility() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    initAutoResizeTextareas();
     initModeToggle();
     initExtraAttrs();
     initSubmitFileUpload();

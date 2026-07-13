@@ -85,12 +85,11 @@
                             </div>
                             <div class="form-group execmode-field form-group-full" id="shell-field" style="display:none;">
                                 <label for="job-shell-cmd">Shell Command</label>
-                                <input type="text" id="job-shell-cmd" placeholder="sleep 60" class="form-input"
-                                    required>
+                                <textarea id="job-shell-cmd" placeholder="sleep 60" class="form-input" rows="1" required></textarea>
                             </div>
                             <div class="form-group execmode-field" id="args-field">
                                 <label for="job-arguments">Arguments</label>
-                                <input type="text" id="job-arguments" placeholder="60" class="form-input">
+                                <textarea id="job-arguments" placeholder="60" class="form-input" rows="1"></textarea>
                             </div>
                         </div>
                         <div class="form-group">
@@ -262,7 +261,7 @@
                             </div>
                             <div class="form-group">
                                 <label for="job-count">Number of Jobs</label>
-                                <input type="number" id="job-count" value="1" min="1" class="form-input">
+                                <input type="text" id="job-count" value="1" class="form-input">
                             </div>
                         </div>
                         <div class="form-group">
