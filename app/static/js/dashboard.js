@@ -14,6 +14,36 @@ let clusterFilter = null; // Cluster ID filter from URL (?cluster_id=X), null if
 
 let lastActiveJobs = []; // Track last active jobs for stats
 
+// Pagination state
+let currentPage = 1;
+let totalHistoryCount = 0;
+let historyHasMore = false;
+
+function updateURLParams() {
+    const url = new URL(window.location);
+    const limit = $('#history-limit').value;
+    url.searchParams.set('limit', limit);
+    url.searchParams.set('page', String(currentPage));
+    window.history.replaceState({}, '', url);
+}
+
+function updatePaginationUI() {
+    const prevBtn = $('#prev-page');
+    const nextBtn = $('#next-page');
+    const pageInfo = $('#page-info');
+
+    if (!prevBtn || !nextBtn || !pageInfo) return;
+
+    const limit = parseInt($('#history-limit').value) || 100;
+    const totalPages = Math.max(1, Math.ceil(totalHistoryCount / limit));
+    const unit = (groupByCluster && !clusterFilter) ? 'clusters' : 'procs';
+
+    prevBtn.disabled = currentPage <= 1;
+    nextBtn.disabled = !historyHasMore;
+
+    pageInfo.textContent = `Page ${currentPage} of ${totalPages} (${totalHistoryCount} ${unit})`;
+}
+
 async function loadJobs() {
     // Prevent concurrent refresh calls
     if (refreshInProgress) return;
@@ -21,6 +51,10 @@ async function loadJobs() {
 
     try {
         const limit = $('#history-limit').value;
+        const offset = (currentPage - 1) * parseInt(limit);
+        // Paginate by cluster in grouped view, by individual proc otherwise.
+        // A cluster filter always renders flat, so use proc pagination there too.
+        const groupedParam = (groupByCluster && !clusterFilter) ? 1 : 0;
 
         // Build active jobs URL with optional cluster filter
         let activeUrl = '/jobs';
@@ -31,11 +65,15 @@ async function loadJobs() {
         // Fetch both active jobs and history in parallel
         const [activeData, historyData] = await Promise.all([
             api(activeUrl),
-            api(`/history?limit=${limit}`),
+            api(`/history?limit=${limit}&offset=${offset}&grouped=${groupedParam}`),
         ]);
 
         const activeJobs = (activeData.jobs || []).filter(j => !activeData.daemon_unavailable);
         let historyJobs = historyData.jobs || [];
+
+        // Update pagination state from history response
+        totalHistoryCount = historyData.total || 0;
+        historyHasMore = historyData.has_more || false;
 
         // If cluster filter is active, also filter history client-side
         if (clusterFilter) {
@@ -67,6 +105,8 @@ async function loadJobs() {
         currentJobs = merged;
         renderTable();
         renderStats(activeJobs);
+        updatePaginationUI();
+        updateURLParams();
     } catch (e) {
         toast('Failed to load jobs: ' + e.message, 'error');
         const tbody = $('#jobs-tbody');
@@ -1066,8 +1106,9 @@ function startAutoRefresh() {
 // ---------------------------------------------------------------------------
 
 document.addEventListener('DOMContentLoaded', () => {
-    // Parse cluster filter from URL
     const params = new URLSearchParams(window.location.search);
+
+    // Parse cluster filter from URL
     const cid = params.get('cluster_id');
     if (cid && cid.match(/^\d+$/)) {
         clusterFilter = cid;
@@ -1080,6 +1121,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const statusVal = params.get('status');
     if (statusVal && statusVal.match(/^\d+$/)) {
         $('#status-filter').value = statusVal;
+    }
+
+    // Parse pagination params from URL
+    const pageVal = params.get('page');
+    if (pageVal && pageVal.match(/^\d+$/) && parseInt(pageVal) > 0) {
+        currentPage = parseInt(pageVal);
+    }
+    const limitVal = params.get('limit');
+    if (limitVal && limitVal.match(/^\d+$/)) {
+        const limitOptions = $$('#history-limit option');
+        const match = Array.from(limitOptions).find(opt => opt.value === limitVal);
+        if (match) {
+            $('#history-limit').value = limitVal;
+        }
     }
 
     loadJobs();
@@ -1105,12 +1160,33 @@ document.addEventListener('DOMContentLoaded', () => {
         window.history.replaceState({}, '', url);
         renderTable();
     });
-    $('#history-limit').addEventListener('change', loadJobs);
+    $('#history-limit').addEventListener('change', () => {
+        // Reset to page 1 when limit changes
+        currentPage = 1;
+        loadJobs();
+    });
+
+    // Pagination buttons
+    $('#prev-page').addEventListener('click', () => {
+        if (currentPage > 1) {
+            currentPage--;
+            loadJobs();
+        }
+    });
+    $('#next-page').addEventListener('click', () => {
+        if (historyHasMore) {
+            currentPage++;
+            loadJobs();
+        }
+    });
 
     // Group by ClusterID toggle
     $('#group-toggle').addEventListener('change', (e) => {
         groupByCluster = e.target.checked;
-        renderTable();
+        // Switching grouping changes the pagination unit (cluster <-> proc), so
+        // reset to page 1 and re-fetch so the backend paginates by the new unit.
+        currentPage = 1;
+        loadJobs();
     });
 
     // Select-all checkbox

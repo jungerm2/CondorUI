@@ -344,81 +344,151 @@ def list_history():
     limit = request.args.get(
         "limit", current_app.config["MAX_HISTORY_RESULTS"], type=int
     )
+    offset = request.args.get("offset", 0, type=int)
+    # When grouped=1, pagination is by cluster (each page shows N clusters with
+    # all their procs). When grouped=0, pagination is by individual proc.
+    grouped = request.args.get("grouped", "0") == "1"
     try:
-        submissions = (
-            JobSubmission.query.order_by(JobSubmission.submitted_at.desc())
-            .limit(limit)
-            .all()
+        # ---- Build the merged universe: active schedd jobs ∪ local DB ----
+        all_submissions = list(
+            JobSubmission.query.order_by(JobSubmission.submitted_at.desc()).all()
         )
+        # Cluster -> submission lookup (first record per cluster).
+        sub_by_cluster: dict[int, JobSubmission] = {}
+        for sub in all_submissions:
+            sub_by_cluster.setdefault(sub.cluster_id, sub)
 
-        # Build a per-proc lookup from the schedd: { cluster_id: { proc_id: job } }
-        schedd_procs: dict[int, dict[int, dict]] = {}
+        # Active schedd jobs (full projection) keyed by (ClusterId, ProcId).
+        active_by_key: dict[tuple[int, int], dict] = {}
+        active_jobs: list[dict] = []
         if daemon_available() and source != "db":
             try:
-                cluster_ids = sorted({s.cluster_id for s in submissions})
-                if cluster_ids:
-                    constraint = " || ".join(
-                        f"ClusterId == {cid}" for cid in cluster_ids
-                    )
-                    active_jobs = query_jobs(
-                        constraint=constraint,
-                        projection=[
-                            "ClusterId",
-                            "ProcId",
-                            "JobStatus",
-                            "Owner",
-                            "Cmd",
-                            "Args",
-                            "QDate",
-                            "JobStartDate",
-                            "CompletionDate",
-                            "HoldReason",
-                            "RemoteHost",
-                            "RemoteWallClockTime",
-                            "ExitCode",
-                            "ExitBySignal",
-                            "JobBatchName",
-                            "RequestCpus",
-                            "RequestMemory",
-                            "RequestDisk",
-                            "RequestGPUs",
-                        ],
-                    )
-                    for job in active_jobs:
-                        cid = job.get("ClusterId")
-                        pid = job.get("ProcId", 0)
-                        if cid is not None:
-                            schedd_procs.setdefault(cid, {})[pid] = job
+                active_jobs = query_jobs(
+                    constraint=DEFAULT_CONSTRAINT,
+                    projection=[
+                        "ClusterId",
+                        "ProcId",
+                        "JobStatus",
+                        "Owner",
+                        "Cmd",
+                        "Args",
+                        "QDate",
+                        "JobStartDate",
+                        "CompletionDate",
+                        "HoldReason",
+                        "RemoteHost",
+                        "RemoteWallClockTime",
+                        "ExitCode",
+                        "ExitBySignal",
+                        "JobBatchName",
+                        "RequestCpus",
+                        "RequestMemory",
+                        "RequestDisk",
+                        "RequestGPUs",
+                    ],
+                )
+                for job in active_jobs:
+                    cid = job.get("ClusterId")
+                    pid = job.get("ProcId", 0)
+                    if cid is not None:
+                        active_by_key[cid, pid] = job
             except Exception:
                 logger.warning(
                     "Could not query schedd for history statuses", exc_info=True
                 )
 
-        jobs: list[dict] = []
-        for sub in submissions:
-            cluster_schedd = schedd_procs.get(sub.cluster_id, {})
+        # Ordered, de-duplicated list of (ClusterId, ProcId) across the universe.
+        procs: list[tuple[int, int]] = []
+        seen: set[tuple[int, int]] = set()
+        if source != "db":
+            for job in active_jobs:
+                cid = job.get("ClusterId")
+                pid = job.get("ProcId", 0)
+                if cid is None:
+                    continue
+                key = (cid, pid)
+                if key not in seen:
+                    seen.add(key)
+                    procs.append(key)
+        if source != "schedd":
+            for sub in all_submissions:
+                for pid in range(sub.num_procs):
+                    key = (sub.cluster_id, pid)
+                    if key not in seen:
+                        seen.add(key)
+                        procs.append(key)
 
-            if source == "schedd":
-                # Only return what's in the schedd (one proc per cluster)
-                if cluster_schedd:
-                    schedd_job = cluster_schedd.get(0) or next(
-                        iter(cluster_schedd.values())
-                    )
-                    jobs.append(
-                        _build_job_entry(sub, schedd_job.get("ProcId", 0), schedd_job)
-                    )
-            elif source == "db":
-                # Return all procs from DB only (all Completed)
-                for proc_id in range(sub.num_procs):
-                    jobs.append(_build_job_entry(sub, proc_id))
-            else:
-                # "merged" (default): return ALL procs — active from schedd,
-                # completed from DB
-                for proc_id in range(sub.num_procs):
-                    schedd_job = cluster_schedd.get(proc_id)
-                    jobs.append(_build_job_entry(sub, proc_id, schedd_job))
+        def _entry(cid: int, pid: int) -> dict | None:
+            sub = sub_by_cluster.get(cid)
+            active = active_by_key.get((cid, pid))
+            if sub is not None and pid < sub.num_procs:
+                return _build_job_entry(sub, pid, active)
+            if active is not None:
+                return active
+            return None
 
-        return jsonify({"jobs": jobs, "count": len(jobs)})
+        # ---- Global stats over the WHOLE universe (all procs) ----
+        stats: dict[str, int] = {
+            "total": 0,
+            "idle": 0,
+            "running": 0,
+            "completed": 0,
+            "held": 0,
+            "removed": 0,
+            "transferring": 0,
+        }
+        for cid, pid in procs:
+            entry = _entry(cid, pid)
+            if not entry:
+                continue
+            stats["total"] += 1
+            status = int(entry.get("JobStatus") or 0)
+            if status == 1:
+                stats["idle"] += 1
+            elif status == 2:
+                stats["running"] += 1
+            elif status == 4:
+                stats["completed"] += 1
+            elif status == 5:
+                stats["held"] += 1
+            elif status == 3:
+                stats["removed"] += 1
+            elif status == 6:
+                stats["transferring"] += 1
+
+        if grouped:
+            # total = number of clusters; each page shows `limit` clusters
+            # with ALL their procs expanded.
+            cluster_ids: list[int] = list(dict.fromkeys(cid for cid, _ in procs))
+            total = len(cluster_ids)
+            page_clusters = set(cluster_ids[offset : offset + limit])
+            has_more = (offset + limit) < total
+            jobs = [
+                entry
+                for cid, pid in procs
+                if cid in page_clusters and (entry := _entry(cid, pid)) is not None
+            ]
+        else:
+            # Proc-level pagination (flat view): total and has_more reflect
+            # individual jobs (procs).
+            total = len(procs)
+            page_procs = procs[offset : offset + limit]
+            has_more = (offset + limit) < total
+            jobs = [
+                entry
+                for cid, pid in page_procs
+                if (entry := _entry(cid, pid)) is not None
+            ]
+
+        return jsonify({
+            "jobs": jobs,
+            "count": len(jobs),
+            "total": total,
+            "has_more": has_more,
+            "limit": limit,
+            "offset": offset,
+            "stats": stats,
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
