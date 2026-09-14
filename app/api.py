@@ -58,7 +58,7 @@ def _remove_empty_parents(path: Path) -> None:
                 parent.rmdir()
             else:
                 break
-        except OSError, PermissionError:
+        except (OSError, PermissionError):
             break
 
 
@@ -285,7 +285,7 @@ def _build_job_entry(
                 request_disk = desc["request_disk"]
             if "request_gpus" in desc:
                 request_gpus = desc["request_gpus"]
-    except json.JSONDecodeError, AttributeError:
+    except (json.JSONDecodeError, AttributeError):
         pass
 
     qdate = int(sub.submitted_at.timestamp()) if sub.submitted_at else 0
@@ -1009,7 +1009,7 @@ def get_quotas():
                         val = float(val)
                     else:
                         val = int(val)
-                except ValueError, TypeError:
+                except (ValueError, TypeError):
                     pass
                 entry[h] = val
             quotas.append(entry)
@@ -1669,7 +1669,7 @@ def job_details(cluster_id: int):
                     if submission.submit_description.strip().startswith("{"):
                         desc = json.loads(submission.submit_description)
                         cmd = desc.get("executable", desc.get("shell", ""))
-                except json.JSONDecodeError, AttributeError:
+                except (json.JSONDecodeError, AttributeError):
                     cmd = ""
 
                 qdate = (
@@ -1885,29 +1885,18 @@ def delete_template(name: str):
     return jsonify({"message": f"Template '{name}' deleted"})
 
 
-@api_bp.route("/templates/<name>/download")
-def download_template(name: str):
-    """Download a template as a .sub file.
+def _template_to_sub(submit_data: str) -> str:
+    """Convert a template's stored submit_data into standard .sub file syntax.
 
-    If the template's submit_data is a JSON object (form mode), it is converted
-    to standard .sub syntax.  If it is already raw .sub text, it is returned as-is.
+    If submit_data is a JSON string representing an object (form mode), it is
+    converted to standard .sub syntax.  If it is already raw .sub text, it is
+    returned as-is.
     """
-    templates_dir = current_app.config["TEMPLATES_DIR"]
-    file_path = _template_path(templates_dir, name)
-
-    tmpl = _read_template(file_path)
-    if tmpl is None:
-        return jsonify({"error": f"Template '{name}' not found"}), 404
-
-    submit_data = tmpl.get("submit_data", "")
-
-    # If submit_data is a JSON string representing an object, convert to .sub format
-    content = submit_data
+    content = submit_data or ""
     try:
-        if submit_data.strip().startswith("{"):
-            parsed = json.loads(submit_data)
+        if content.strip().startswith("{"):
+            parsed = json.loads(content)
             lines = []
-            # Build .sub file content from JSON dict
             key_order = [
                 "universe",
                 "container_image",
@@ -1945,9 +1934,23 @@ def download_template(name: str):
             queue_val = parsed.get("queue", 1)
             lines.append(f"\nqueue {queue_val}")
             content = "\n".join(lines)
-    except json.JSONDecodeError, TypeError:
+    except (json.JSONDecodeError, TypeError):
         # If parsing fails, use raw content as-is
         pass
+    return content
+
+
+@api_bp.route("/templates/<name>/download")
+def download_template(name: str):
+    """Download a template as a .sub file."""
+    templates_dir = current_app.config["TEMPLATES_DIR"]
+    file_path = _template_path(templates_dir, name)
+
+    tmpl = _read_template(file_path)
+    if tmpl is None:
+        return jsonify({"error": f"Template '{name}' not found"}), 404
+
+    content = _template_to_sub(tmpl.get("submit_data", ""))
 
     # Sanitize filename for .sub download
     safe_name = _slugify(name)
@@ -1959,6 +1962,20 @@ def download_template(name: str):
         download_name=download_name,
         mimetype="text/plain",
     )
+
+
+@api_bp.route("/templates/<name>/preview")
+def preview_template(name: str):
+    """Return the .sub representation of a template as JSON for client-side preview."""
+    templates_dir = current_app.config["TEMPLATES_DIR"]
+    file_path = _template_path(templates_dir, name)
+
+    tmpl = _read_template(file_path)
+    if tmpl is None:
+        return jsonify({"error": f"Template '{name}' not found"}), 404
+
+    content = _template_to_sub(tmpl.get("submit_data", ""))
+    return jsonify({"name": tmpl["name"], "content": content})
 
 
 # ---------------------------------------------------------------------------
@@ -2133,7 +2150,7 @@ def list_output_files():
             if desc_text.strip().startswith("{"):
                 desc = json.loads(desc_text)
                 command = desc.get("shell") or desc.get("executable", "")
-        except json.JSONDecodeError, AttributeError:
+        except (json.JSONDecodeError, AttributeError):
             pass
         cluster_meta[sub.cluster_id] = {
             "name": sub.name,

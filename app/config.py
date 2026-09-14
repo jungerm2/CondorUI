@@ -1,6 +1,7 @@
 """Application configuration."""
 
 import os
+import getpass
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -23,15 +24,16 @@ class Config:
 
     # Directory for job stdout, stderr, and user logs (outside project root)
     JOB_LOGS_DIR = os.environ.get(
-        "JOB_LOGS_DIR", str(BASE_DIR.parent / "condor_job_logs")
+        "JOB_LOGS_DIR", str(BASE_DIR / "condor_job_logs")
     )
 
     # OSDF root path for file transfers — uploaded files and containers are
     # stored in subdirectories under this path so HTCondor can cache them via OSDF.
-    OSDF_ROOT_PATH = os.environ.get("OSDF_ROOT_PATH", "")
+    username = getpass.getuser()
+    OSDF_ROOT_PATH = os.environ.get("OSDF_ROOT_PATH", f"/staging/{username[0]}/{username}/webui")
 
     # Base URI prefix for OSDF-staged files (e.g., "osdf:///" or "gsiftp://...")
-    OSDF_BASE_URI = os.environ.get("OSDF_BASE_URI", "osdf:///")
+    OSDF_BASE_URI = os.environ.get("OSDF_BASE_URI", "osdf:///chtc")
 
     # Directory for output files transferred back from completed jobs.
     # Each job gets a per-cluster subfolder: OUTPUT_DIR/<ClusterId>/
@@ -43,8 +45,11 @@ class Config:
     # Directory for uploaded executables (flat, no UUID paths)
     EXECUTABLES_DIR = os.environ.get("EXECUTABLES_DIR", str(BASE_DIR / "executables"))
 
-    # Directory for submit templates (stored as .sub files)
+    # Directory for submit templates (stored as .json files)
     TEMPLATES_DIR = os.environ.get("TEMPLATES_DIR", str(BASE_DIR / "templates"))
 
-    # Maximum upload size (10 GB) — containers can be very large
-    MAX_CONTENT_LENGTH = 10 * 1024 * 1024 * 1024
+    # Maximum upload size — containers can be very large.
+    # Default: 10 GB. Override with MAX_CONTENT_LENGTH (bytes).
+    MAX_CONTENT_LENGTH = int(
+        os.environ.get("MAX_CONTENT_LENGTH", str(10 * 1024 * 1024 * 1024))
+    )

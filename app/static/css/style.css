@@ -464,6 +464,11 @@ body {
     align-items: center;
     gap: 10px;
     min-width: 200px;
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+}
+.legend-item:hover {
+    opacity: 0.8;
 }
 .legend-swatch {
     width: 14px;
@@ -935,7 +940,8 @@ details.card[open] .card-body {
     padding: 12px 20px;
 }
 
-#submit-files-list {
+#submit-files-list,
+#exec-picker-list {
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -1251,6 +1257,16 @@ details.card[open] .card-body {
 .status-bar-segment-link.status-completed { background: var(--status-completed); }
 .status-bar-segment-link.status-removed { background: var(--status-removed); }
 .status-bar-segment-link.status-transferring { background: var(--status-transferring); }
+
+/* Wider status bar cell in the grouped dashboard view (status bar is the 2nd data column) */
+.group-status-cell {
+    width: 260px;
+    min-width: 200px;
+}
+.group-status-cell .status-bar {
+    width: 100%;
+    max-width: none;
+}
 
 /* ===== Filter Badge ===== */
 .filter-badge {

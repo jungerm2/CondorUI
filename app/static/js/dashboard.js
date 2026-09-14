@@ -350,7 +350,7 @@ function renderFilterBadge() {
 function updateTableHeaders() {
     const isGrouped = groupByCluster && !clusterFilter;
     const headers = $$('#jobs-table thead th.sortable');
-    // Headers in order: 0=ClusterId, 1=JobBatchName, 2=Owner, 3=Cmd, 4=JobStatus, 5=ExitCode, 6=Procs, 7=QDate, 8=CompletionDate, 9=RemoteWallClockTime, 10=Resources
+    // Headers in order: 0=ClusterId, 1=JobStatus, 2=JobBatchName, 3=Owner, 4=Cmd, 5=ExitCode, 6=Procs, 7=QDate, 8=CompletionDate, 9=RemoteWallClockTime, 10=Resources
     if (headers.length >= 11) {
         // Exit code column: hide in grouped view
         const exitCodeTh = headers[5];
@@ -579,10 +579,10 @@ function renderGroupedTable() {
                 <input type="checkbox" class="group-checkbox" data-cluster-id="${cid}" ${allSelected ? 'checked' : ''}>
             </td>
             <td><a href="${rowClickUrl}" class="job-id-link">${cid}</a></td>
+            <td class="group-status-cell">${statusHtml}</td>
             <td style="max-width: 120px; overflow: hidden; text-overflow: ellipsis;" title="${escHtml(name)}">${escHtml(name)}</td>
             <td>${escHtml(owner)}</td>
             <td class="monospace cmd-cell" title="${escHtml(cmd || args || '')}">${formatCommand(cmd, args)}</td>
-            <td>${statusHtml}</td>
             <td class="monospace" style="display: none;">—</td>
             <td style="text-align: center; font-weight: 500;">${group.jobs.length}</td>
             <td>${qDate}</td>
@@ -672,7 +672,7 @@ function renderFlatTable() {
 
     // Reset column header text
     const headers = $$('#jobs-table thead th.sortable');
-    // Headers in order: 0=ClusterId, 1=JobBatchName, 2=Owner, 3=Cmd, 4=JobStatus, 5=ExitCode, 6=Procs, 7=QDate, 8=CompletionDate, 9=RemoteWallClockTime, 10=Resources
+    // Headers in order: 0=ClusterId, 1=JobStatus, 2=JobBatchName, 3=Owner, 4=Cmd, 5=ExitCode, 6=Procs, 7=QDate, 8=CompletionDate, 9=RemoteWallClockTime, 10=Resources
     if (headers.length >= 11) {
         const wallTimeTh = headers[9];
         if (wallTimeTh) {
@@ -728,10 +728,10 @@ function renderFlatTable() {
                 <input type="checkbox" class="row-checkbox" data-job-key="${escHtml(jobKey)}" ${isChecked ? 'checked' : ''}>
             </td>
             <td><a href="/job/${job.ClusterId}/${job.ProcId}" class="job-id-link">${job.ClusterId}.${job.ProcId}</a></td>
+            <td><span class="status-badge ${statusClass}">${statusName}</span></td>
             <td style="max-width: 120px; overflow: hidden; text-overflow: ellipsis;" title="${escHtml(name)}">${escHtml(name)}</td>
             <td>${escHtml(job.Owner || '—')}</td>
             <td class="monospace cmd-cell" title="${escHtml(job.Cmd || job.Args || '')}">${formatCommand(job.Cmd, job.Args)}</td>
-            <td><span class="status-badge ${statusClass}">${statusName}</span></td>
             <td class="monospace">${exitCode}</td>
             <td>${qDate}</td>
             <td>${compDate}</td>
@@ -1160,6 +1160,27 @@ document.addEventListener('DOMContentLoaded', () => {
         window.history.replaceState({}, '', url);
         renderTable();
     });
+
+    // Legend icon click: filter the jobs by that status (same as selecting it in the dropdown)
+    const legendStatusCodes = {
+        'status-idle': '1',
+        'status-running': '2',
+        'status-removed': '3',
+        'status-completed': '4',
+        'status-held': '5',
+        'status-transferring': '6',
+    };
+    $$('.legend-item').forEach(item => {
+        item.addEventListener('click', () => {
+            const swatch = item.querySelector('.legend-swatch');
+            if (!swatch) return;
+            const cls = Array.from(swatch.classList).find(c => legendStatusCodes[c]);
+            if (!cls) return;
+            $('#status-filter').value = legendStatusCodes[cls];
+            $('#status-filter').dispatchEvent(new Event('change'));
+        });
+    });
+
     $('#history-limit').addEventListener('change', () => {
         // Reset to page 1 when limit changes
         currentPage = 1;

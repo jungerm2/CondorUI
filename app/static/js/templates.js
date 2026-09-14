@@ -7,6 +7,18 @@ async function loadTemplates() {
     }
 }
 
+// Show a modal previewing the template's associated .sub file content
+async function showTemplatePreview(name) {
+    try {
+        const data = await api(`/templates/${encodeURIComponent(name)}/preview`);
+        $('#template-preview-title').textContent = `${data.name} — Preview`;
+        $('#template-preview-content').textContent = data.content || '(empty)';
+        openModal('template-preview-modal');
+    } catch (err) {
+        toast(`Failed to load preview: ${err.message}`, 'error');
+    }
+}
+
 function renderTemplatesGrid(templates) {
     const grid = $('#templates-grid');
     grid.innerHTML = '';
@@ -86,6 +98,12 @@ function renderTemplatesGrid(templates) {
         // Set the template data via dataset to avoid XSS through HTML attribute injection
         const useBtn = card.querySelector('.use-tmpl-btn');
         useBtn.dataset.tmpl = JSON.stringify(tmpl);
+
+        // Clicking elsewhere on the card shows a preview of the associated .sub file
+        card.addEventListener('click', (e) => {
+            if (e.target.closest('button')) return;
+            showTemplatePreview(tmpl.name);
+        });
 
         grid.appendChild(card);
     });
@@ -190,6 +208,19 @@ document.addEventListener('DOMContentLoaded', () => {
         renameInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 confirmRenameTemplate();
+            }
+        });
+    }
+
+    // Preview modal: close via its buttons or by clicking the overlay backdrop
+    $$('[data-close="template-preview-modal"]').forEach(btn => {
+        btn.addEventListener('click', () => closeModal('template-preview-modal'));
+    });
+    const previewOverlay = $('#template-preview-modal');
+    if (previewOverlay) {
+        previewOverlay.addEventListener('click', (e) => {
+            if (e.target === previewOverlay) {
+                closeModal('template-preview-modal');
             }
         });
     }
