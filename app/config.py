@@ -1,7 +1,7 @@
 """Application configuration."""
 
-import os
 import getpass
+import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -23,14 +23,14 @@ class Config:
     UPLOAD_DIR = os.environ.get("UPLOAD_DIR", str(BASE_DIR / "uploads"))
 
     # Directory for job stdout, stderr, and user logs (outside project root)
-    JOB_LOGS_DIR = os.environ.get(
-        "JOB_LOGS_DIR", str(BASE_DIR / "condor_job_logs")
-    )
+    JOB_LOGS_DIR = os.environ.get("JOB_LOGS_DIR", str(BASE_DIR / "condor_job_logs"))
 
     # OSDF root path for file transfers — uploaded files and containers are
     # stored in subdirectories under this path so HTCondor can cache them via OSDF.
     username = getpass.getuser()
-    OSDF_ROOT_PATH = os.environ.get("OSDF_ROOT_PATH", f"/staging/{username[0]}/{username}/webui")
+    OSDF_ROOT_PATH = os.environ.get(
+        "OSDF_ROOT_PATH", f"/staging/{username[0]}/{username}/webui"
+    )
 
     # Base URI prefix for OSDF-staged files (e.g., "osdf:///" or "gsiftp://...")
     OSDF_BASE_URI = os.environ.get("OSDF_BASE_URI", "osdf:///chtc")

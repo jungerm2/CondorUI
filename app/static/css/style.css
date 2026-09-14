@@ -1211,6 +1211,19 @@ details.card[open] .card-body {
     display: none;
 }
 
+/* Generic toggle-switch variant (e.g. the QEdit advanced-mode toggle) */
+.toggle-input:checked + .toggle-switch {
+    background: rgba(34, 211, 238, 0.2);
+    border-color: var(--accent-cyan);
+}
+.toggle-input:checked + .toggle-switch::after {
+    left: 18px;
+    background: var(--accent-cyan);
+}
+.toggle-input {
+    display: none;
+}
+
 /* ===== Status Bar (stacked percentage bar) ===== */
 .status-bar {
     display: flex;

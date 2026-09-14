@@ -75,7 +75,7 @@ def resolve_commands(jobs: list[dict]) -> None:
                 orig_exec = parsed.get("executable", "")
                 if orig_exec and not Path(orig_exec).is_absolute():
                     job["Cmd"] = orig_exec
-        except (json.JSONDecodeError, AttributeError):
+        except json.JSONDecodeError, AttributeError:
             pass
 
 
@@ -264,7 +264,7 @@ def build_history_job(
                     request_memory = desc["request_memory"]
                 if "request_disk" in desc:
                     request_disk = desc["request_disk"]
-        except (json.JSONDecodeError, AttributeError):
+        except json.JSONDecodeError, AttributeError:
             cmd = ""
 
         qdate = (

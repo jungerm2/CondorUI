@@ -81,7 +81,7 @@ async function loadJobDetails() {
         renderAttributesTable(job);
 
         // Render action buttons
-        renderActions(statusVal, data.log);
+        renderActions(statusVal, data.log, job);
 
         // Update download links
         updateDownloadLinks(data.paths);
@@ -278,7 +278,7 @@ function renderAttributesTable(job) {
     });
 }
 
-function renderActions(statusVal, logContent) {
+function renderActions(statusVal, logContent, job) {
     const container = $('#job-actions-container');
     container.innerHTML = '';
     
@@ -386,9 +386,17 @@ function renderActions(statusVal, logContent) {
 
     if (qeditBtn) {
         qeditBtn.addEventListener('click', () => {
+            // Resource-exceeded holds are the common case for qedit; open those
+            // directly in advanced mode so other fields are reachable.
+            const resourceExceeded = logContent && (
+                logContent.includes('exceeded allocated disk') ||
+                logContent.includes('exceeded allocated memory')
+            );
             openQeditDialog([{ clusterId, procId }], {
                 onComplete: loadJobDetails,
                 autoRelease: true,
+                classad: job || null,
+                advancedDefault: !!resourceExceeded,
             });
         });
     }

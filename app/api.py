@@ -58,7 +58,7 @@ def _remove_empty_parents(path: Path) -> None:
                 parent.rmdir()
             else:
                 break
-        except (OSError, PermissionError):
+        except OSError, PermissionError:
             break
 
 
@@ -285,7 +285,7 @@ def _build_job_entry(
                 request_disk = desc["request_disk"]
             if "request_gpus" in desc:
                 request_gpus = desc["request_gpus"]
-    except (json.JSONDecodeError, AttributeError):
+    except json.JSONDecodeError, AttributeError:
         pass
 
     qdate = int(sub.submitted_at.timestamp()) if sub.submitted_at else 0
@@ -480,15 +480,17 @@ def list_history():
                 if (entry := _entry(cid, pid)) is not None
             ]
 
-        return jsonify({
-            "jobs": jobs,
-            "count": len(jobs),
-            "total": total,
-            "has_more": has_more,
-            "limit": limit,
-            "offset": offset,
-            "stats": stats,
-        })
+        return jsonify(
+            {
+                "jobs": jobs,
+                "count": len(jobs),
+                "total": total,
+                "has_more": has_more,
+                "limit": limit,
+                "offset": offset,
+                "stats": stats,
+            }
+        )
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1009,7 +1011,7 @@ def get_quotas():
                         val = float(val)
                     else:
                         val = int(val)
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     pass
                 entry[h] = val
             quotas.append(entry)
@@ -1669,7 +1671,7 @@ def job_details(cluster_id: int):
                     if submission.submit_description.strip().startswith("{"):
                         desc = json.loads(submission.submit_description)
                         cmd = desc.get("executable", desc.get("shell", ""))
-                except (json.JSONDecodeError, AttributeError):
+                except json.JSONDecodeError, AttributeError:
                     cmd = ""
 
                 qdate = (
@@ -1934,7 +1936,7 @@ def _template_to_sub(submit_data: str) -> str:
             queue_val = parsed.get("queue", 1)
             lines.append(f"\nqueue {queue_val}")
             content = "\n".join(lines)
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError, TypeError:
         # If parsing fails, use raw content as-is
         pass
     return content
@@ -2150,7 +2152,7 @@ def list_output_files():
             if desc_text.strip().startswith("{"):
                 desc = json.loads(desc_text)
                 command = desc.get("shell") or desc.get("executable", "")
-        except (json.JSONDecodeError, AttributeError):
+        except json.JSONDecodeError, AttributeError:
             pass
         cluster_meta[sub.cluster_id] = {
             "name": sub.name,

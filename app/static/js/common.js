@@ -371,16 +371,62 @@ const COMMON_QEDIT_ATTRS = [
     { attr: 'PeriodicRemove', desc: 'Periodic Remove (expr)' },
 ];
 
+// Extended list of ClassAd attributes that are commonly editable via
+// `condor_qedit`. Used purely as autocomplete suggestions in advanced mode —
+// the backend accepts any attribute name.
+const ADVANCED_QEDIT_ATTRS = [
+    { attr: 'Cmd', desc: 'Executable path' },
+    { attr: 'Args', desc: 'Command arguments' },
+    { attr: 'BatchName', desc: 'Batch name' },
+    { attr: 'Rank', desc: 'Preference expression' },
+    { attr: 'Requirements', desc: 'Match expression' },
+    { attr: 'ConcurrencyLimits', desc: 'Concurrency limits' },
+    { attr: 'JobPrio', desc: 'Job priority' },
+    { attr: 'MaxJobRetirementTime', desc: 'Max retirement time (sec)' },
+    { attr: 'JobMaxVacateTime', desc: 'Max vacate time (sec)' },
+    { attr: 'JobLeaseDuration', desc: 'Job lease duration (sec)' },
+    { attr: 'PeriodicHold', desc: 'Periodic hold (expr)' },
+    { attr: 'PeriodicRelease', desc: 'Periodic release (expr)' },
+    { attr: 'PeriodicRemove', desc: 'Periodic remove (expr)' },
+    { attr: 'PeriodicRemoveReason', desc: 'Periodic remove reason' },
+    { attr: 'RequestCpus', desc: 'Request CPUs' },
+    { attr: 'RequestMemory', desc: 'Request memory (MB)' },
+    { attr: 'RequestDisk', desc: 'Request disk (KB)' },
+    { attr: 'RequestGpus', desc: 'Request GPUs' },
+    { attr: 'RunAsOwner', desc: 'Run as owner (bool)' },
+    { attr: 'NiceUser', desc: 'Nice user (bool)' },
+    { attr: 'AcctGroup', desc: 'Accounting group' },
+    { attr: 'AcctGroupUser', desc: 'Accounting group user' },
+    { attr: 'ImageSize', desc: 'Image size (KB)' },
+    { attr: 'DiskUsage', desc: 'Disk usage (KB)' },
+    { attr: 'WantHold', desc: 'Want hold (bool)' },
+    { attr: 'UserLog', desc: 'User log path' },
+    { attr: 'HoldReason', desc: 'Hold reason' },
+];
+
 /**
  * Open a shared qedit modal for editing ClassAd attributes on one or more jobs.
+ *
+ * Basic mode presents a curated dropdown of common attributes. Advanced mode
+ * lets the user type any ClassAd attribute name, with autocomplete suggestions
+ * drawn from the job's live ClassAd (when supplied) plus a list of known
+ * edit-able attributes.
  *
  * @param {Array<{clusterId: number, procId: number}>} jobs - Jobs to edit.
  * @param {Object} options
  * @param {Function} [options.onComplete] - Called after successful edit.
  * @param {boolean} [options.autoRelease=true] - Whether to release held jobs after edit.
+ * @param {Object} [options.classad] - Live ClassAd of a job, used to seed advanced
+ *   suggestions and show current values.
+ * @param {boolean} [options.advancedDefault=false] - Start with advanced mode enabled.
  */
 function openQeditDialog(jobs, options = {}) {
-    const { onComplete, autoRelease = true } = options;
+    const {
+        onComplete,
+        autoRelease = true,
+        classad = null,
+        advancedDefault = false,
+    } = options;
     if (!jobs || jobs.length === 0) {
         toast('No jobs selected for editing', 'warning');
         return;
@@ -389,6 +435,14 @@ function openQeditDialog(jobs, options = {}) {
     const jobLabel = jobs.length === 1
         ? `${jobs[0].clusterId}.${jobs[0].procId}`
         : `${jobs.length} jobs`;
+
+    // Advanced-mode autocomplete: live ClassAd fields first, then known-editable
+    // attribute names, deduplicated and sorted.
+    const classadKeys = (classad && typeof classad === 'object') ? Object.keys(classad) : [];
+    const suggestionNames = [...new Set([
+        ...classadKeys,
+        ...ADVANCED_QEDIT_ATTRS.map(a => a.attr),
+    ])].sort();
 
     // Create modal
     const overlay = document.createElement('div');
@@ -406,27 +460,21 @@ function openQeditDialog(jobs, options = {}) {
                 </button>
             </div>
             <div class="modal-body">
-                <p style="margin-bottom: 16px; color: var(--text-secondary);">
+                <p style="margin-bottom: 12px; color: var(--text-secondary);">
                     Edit ClassAd attributes for <strong>${escHtml(jobLabel)}</strong>.
                     Changes take effect immediately via <code>condor_qedit</code>.
                 </p>
-                <div id="qedit-rows-container">
-                    <div class="qedit-row">
-                        <select class="form-input qedit-attr-select" style="flex: 1;">
-                            <option value="">— Select attribute —</option>
-                            ${COMMON_QEDIT_ATTRS.map(a =>
-                                `<option value="${a.attr}">${a.attr} — ${escHtml(a.desc)}</option>`
-                            ).join('')}
-                        </select>
-                        <input type="text" class="form-input qedit-value-input" placeholder="New value" style="flex: 1;">
-                        <button class="btn btn-ghost btn-sm qedit-remove-row" style="padding: 4px 8px; flex-shrink: 0;" title="Remove row">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                                <line x1="18" y1="6" x2="6" y2="18" />
-                                <line x1="6" y1="6" x2="18" y2="18" />
-                            </svg>
-                        </button>
-                    </div>
+                <label class="toggle-label" id="qedit-advanced-label" style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.8rem; color: var(--text-secondary); user-select: none; margin-bottom: 16px;">
+                    <input type="checkbox" class="toggle-input" id="qedit-advanced-toggle">
+                    <span class="toggle-switch"></span>
+                    Advanced mode — edit any ClassAd attribute
+                </label>
+                <div id="qedit-advanced-note" style="display: none; margin-bottom: 16px; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: var(--radius-sm); font-size: 0.78rem; color: var(--text-muted);">
+                    Advanced attributes are sent to <code>condor_qedit</code> as-is and are not
+                    validated against the common list. Use with care — changes apply immediately.
                 </div>
+                <datalist id="qedit-attr-datalist"></datalist>
+                <div id="qedit-rows-container"></div>
                 <button class="btn btn-ghost" id="qedit-add-row-btn" style="margin-top: 8px; border: 1px dashed var(--border-color); width: 100%;">
                     + Add another attribute
                 </button>
@@ -448,33 +496,133 @@ function openQeditDialog(jobs, options = {}) {
     const applyBtn = overlay.querySelector('#qedit-apply-btn');
     const addRowBtn = overlay.querySelector('#qedit-add-row-btn');
     const rowsContainer = overlay.querySelector('#qedit-rows-container');
+    const advancedToggle = overlay.querySelector('#qedit-advanced-toggle');
+    const advancedNote = overlay.querySelector('#qedit-advanced-note');
+    const datalist = overlay.querySelector('#qedit-attr-datalist');
+
+    let advancedMode = advancedDefault;
+
+    // Populate the advanced-mode autocomplete suggestions (rendered as DOM
+    // options so ClassAd field names never need HTML escaping).
+    suggestionNames.forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        datalist.appendChild(opt);
+    });
 
     function closeModal() { overlay.remove(); }
     closeBtns.forEach(btn => btn.addEventListener('click', closeModal));
     overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
 
+    // Build the attribute field for the current mode: a curated dropdown in
+    // basic mode, or a free-text input (backed by the datalist) in advanced mode.
+    function buildAttrField(selectedAttr = '') {
+        if (advancedMode) {
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'form-input qedit-attr-input';
+            input.setAttribute('list', 'qedit-attr-datalist');
+            input.placeholder = 'Attribute name (e.g. HoldReason)';
+            input.style.flex = '1';
+            input.spellcheck = false;
+            input.autocomplete = 'off';
+            input.value = selectedAttr;
+            return input;
+        }
+
+        const select = document.createElement('select');
+        select.className = 'form-input qedit-attr-select';
+        select.style.flex = '1';
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = '— Select attribute —';
+        select.appendChild(placeholder);
+        COMMON_QEDIT_ATTRS.forEach(a => {
+            const opt = document.createElement('option');
+            opt.value = a.attr;
+            opt.textContent = `${a.attr} — ${a.desc}`;
+            if (a.attr === selectedAttr) opt.selected = true;
+            select.appendChild(opt);
+        });
+        return select;
+    }
+
+    // Return the job's current value for a ClassAd attribute, when known.
+    function currentValueFor(attr) {
+        if (!classad || !attr || !Object.prototype.hasOwnProperty.call(classad, attr)) {
+            return undefined;
+        }
+        const value = classad[attr];
+        if (value === null || value === undefined) return undefined;
+        return typeof value === 'object' ? JSON.stringify(value) : value;
+    }
+
+    // Show the current value (when known) as the value input's placeholder.
+    function updateValueHint(row) {
+        const attrField = row.querySelector('.qedit-attr-input, .qedit-attr-select');
+        const valueInput = row.querySelector('.qedit-value-input');
+        if (!attrField || !valueInput) return;
+        const attr = (attrField.value || '').trim();
+        const current = currentValueFor(attr);
+        valueInput.placeholder = current !== undefined
+            ? `Current: ${current}`
+            : 'New value';
+    }
+
+    // Re-render all attribute fields in place when the mode changes, preserving
+    // any attribute names the user already entered.
+    function applyMode() {
+        advancedToggle.checked = advancedMode;
+        advancedNote.style.display = advancedMode ? 'block' : 'none';
+
+        overlay.querySelectorAll('.qedit-row').forEach(row => {
+            const oldField = row.querySelector('.qedit-attr-input, .qedit-attr-select');
+            const currentAttr = oldField ? (oldField.value || '').trim() : '';
+            const newField = buildAttrField(currentAttr);
+
+            if (oldField) {
+                oldField.replaceWith(newField);
+            } else {
+                row.insertBefore(newField, row.firstChild);
+            }
+
+            newField.addEventListener('input', () => updateValueHint(row));
+            newField.addEventListener('change', () => updateValueHint(row));
+            updateValueHint(row);
+        });
+    }
+
     // Add a new editable row
     function addRow(attrValue = '', valueValue = '') {
         const row = document.createElement('div');
         row.className = 'qedit-row';
-        row.innerHTML = `
-            <select class="form-input qedit-attr-select" style="flex: 1;">
-                <option value="">— Select attribute —</option>
-                ${COMMON_QEDIT_ATTRS.map(a =>
-                    `<option value="${a.attr}" ${a.attr === attrValue ? 'selected' : ''}>${a.attr} — ${escHtml(a.desc)}</option>`
-                ).join('')}
-            </select>
-            <input type="text" class="form-input qedit-value-input" placeholder="New value" value="${escHtml(valueValue)}" style="flex: 1;">
-            <button class="btn btn-ghost btn-sm qedit-remove-row" style="padding: 4px 8px; flex-shrink: 0;" title="Remove row">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-            </button>
+
+        const attrField = buildAttrField(attrValue);
+
+        const valueInput = document.createElement('input');
+        valueInput.type = 'text';
+        valueInput.className = 'form-input qedit-value-input';
+        valueInput.placeholder = 'New value';
+        valueInput.style.flex = '1';
+        valueInput.value = valueValue;
+
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'btn btn-ghost btn-sm qedit-remove-row';
+        removeBtn.style.padding = '4px 8px';
+        removeBtn.style.flexShrink = '0';
+        removeBtn.title = 'Remove row';
+        removeBtn.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
         `;
+
+        row.appendChild(attrField);
+        row.appendChild(valueInput);
+        row.appendChild(removeBtn);
         rowsContainer.appendChild(row);
 
-        const removeBtn = row.querySelector('.qedit-remove-row');
         removeBtn.addEventListener('click', () => {
             if (rowsContainer.children.length > 1) {
                 row.remove();
@@ -483,32 +631,33 @@ function openQeditDialog(jobs, options = {}) {
             }
         });
 
+        attrField.addEventListener('input', () => updateValueHint(row));
+        attrField.addEventListener('change', () => updateValueHint(row));
+        updateValueHint(row);
+
         // Focus the value input
-        const valInput = row.querySelector('.qedit-value-input');
-        setTimeout(() => valInput.focus(), 50);
+        setTimeout(() => valueInput.focus(), 50);
+        return row;
     }
 
     addRowBtn.addEventListener('click', () => addRow());
-
-    // Remove-row handlers for initial row
-    const initialRemoveBtns = overlay.querySelectorAll('.qedit-remove-row');
-    initialRemoveBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            const row = btn.closest('.qedit-row');
-            if (rowsContainer.children.length > 1) {
-                row.remove();
-            } else {
-                toast('At least one attribute row is required', 'warning');
-            }
-        });
+    advancedToggle.addEventListener('change', () => {
+        advancedMode = advancedToggle.checked;
+        applyMode();
     });
+
+    // Initial state + first row
+    advancedToggle.checked = advancedMode;
+    advancedNote.style.display = advancedMode ? 'block' : 'none';
+    addRow();
 
     // Apply
     applyBtn.addEventListener('click', async () => {
         const rows = overlay.querySelectorAll('.qedit-row');
         const edits = [];
         rows.forEach(row => {
-            const attr = row.querySelector('.qedit-attr-select').value.trim();
+            const attrField = row.querySelector('.qedit-attr-input, .qedit-attr-select');
+            const attr = attrField ? attrField.value.trim() : '';
             const value = row.querySelector('.qedit-value-input').value.trim();
             if (attr && value) {
                 edits.push({ attr, value });
@@ -517,6 +666,13 @@ function openQeditDialog(jobs, options = {}) {
 
         if (edits.length === 0) {
             toast('Please fill in at least one attribute and value', 'warning');
+            return;
+        }
+
+        // ClassAd attribute names cannot contain whitespace
+        const invalidEdit = edits.find(edit => /\s/.test(edit.attr));
+        if (invalidEdit) {
+            toast(`Invalid attribute name: "${invalidEdit.attr}"`, 'warning');
             return;
         }
 
@@ -557,9 +713,10 @@ function openQeditDialog(jobs, options = {}) {
         }
     });
 
-    // Allow Enter key to submit
+    // Allow Enter key to submit from the value input. Scoped to the value input
+    // so it doesn't interfere with accepting a datalist suggestion in advanced mode.
     overlay.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && e.target.closest('.qedit-row')) {
+        if (e.key === 'Enter' && e.target.classList.contains('qedit-value-input')) {
             applyBtn.click();
         }
     });

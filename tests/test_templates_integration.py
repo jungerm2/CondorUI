@@ -532,12 +532,12 @@ queue 1"""
         )
 
         # Also verify other form fields are intact
-        assert (
-            _get_form_field_value(page, "job-executable") == "/bin/sleep"
-        ), "Executable not preserved"
-        assert (
-            _get_form_field_value(page, "job-arguments") == "60"
-        ), "Arguments not preserved"
+        assert _get_form_field_value(page, "job-executable") == "/bin/sleep", (
+            "Executable not preserved"
+        )
+        assert _get_form_field_value(page, "job-arguments") == "60", (
+            "Arguments not preserved"
+        )
 
     def test_save_and_load_raw_template_variable_queue(self, live_server, page):
         """Save a raw text template with a non-integer queue variable and verify it loads."""

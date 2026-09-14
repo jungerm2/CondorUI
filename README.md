@@ -32,6 +32,8 @@ will show a "daemon unavailable" notice rather than failing.
 - **Dashboard** — live view of active jobs with status counts, filters, sorting,
   hold / release / remove, and QEdit. History is merged into the same table with
   cluster/proc pagination and a "group by ClusterID" toggle. Auto-refreshes every 30 s.
+  The Edit Job (QEdit) dialog has an **advanced mode** for editing any ClassAd
+  attribute, with autocomplete drawn from the job's live ClassAd.
 - **Job Submission** — three modes: Form Builder, Raw `.sub` editor, or upload a
   `.sub` file. Supports shell commands, itemdata (`queue from`), and output remaps.
 - **Templates** — save, load, edit, download, and delete reusable submit descriptions.

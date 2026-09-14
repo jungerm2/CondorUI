@@ -1012,7 +1012,7 @@ async function releaseSelected() {
     }
 }
 
-function editSelected() {
+async function editSelected() {
     if (selectedIds.size === 0) return;
 
     const jobs = [...selectedIds].map(key => {
@@ -1020,9 +1020,22 @@ function editSelected() {
         return { clusterId: parseInt(clusterId), procId: parseInt(procId || '0') };
     });
 
+    // Fetch the first selected job's ClassAd so advanced mode can suggest real
+    // field names and show current values. On failure, fall back to the
+    // static suggestion list (tail=0 skips loading log/stdout/stderr content).
+    let classad = null;
+    try {
+        const first = jobs[0];
+        const details = await api(`/jobs/${first.clusterId}/details?proc=${first.procId}&tail=0`);
+        classad = details.job || null;
+    } catch {
+        classad = null;
+    }
+
     openQeditDialog(jobs, {
         onComplete: loadJobs,
         autoRelease: true,
+        classad,
     });
 }
 

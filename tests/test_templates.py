@@ -390,9 +390,7 @@ class TestTemplateFieldPreservation:
         """queue with a variable expression (non-integer) round-trips correctly."""
         submit_data = dict(SAMPLE_EXECUTABLE_SUBMIT)
         submit_data["queue"] = "$(N)"
-        tmpl = self._create_and_retrieve(
-            client, app, "Queue Variable", submit_data
-        )
+        tmpl = self._create_and_retrieve(client, app, "Queue Variable", submit_data)
         data = json.loads(tmpl["submit_data"])
         assert data["queue"] == "$(N)"
 

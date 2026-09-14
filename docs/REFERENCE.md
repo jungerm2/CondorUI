@@ -29,7 +29,7 @@ notes, see the [README](../README.md).
 | `GET` | `/api/submissions` | Raw submissions from the local DB. |
 | `POST` | `/api/submit` | Submit from a JSON submit description. |
 | `POST` | `/api/submit/file` | Submit from an uploaded `.sub` file. |
-| `POST` | `/api/qedit` | Edit a ClassAd attribute. Body: `{cluster_id, proc_id, attr, value}`. |
+| `POST` | `/api/qedit` | Edit a ClassAd attribute. Body: `{cluster_id, proc_id, attr, value}`. There is no attribute whitelist — `attr` is passed straight to `condor_qedit`. |
 | `POST` | `/api/jobs/<job_id>/hold` | Hold a job. |
 | `POST` | `/api/jobs/<job_id>/release` | Release a held job. |
 | `DELETE` | `/api/jobs/<job_id>` | Remove a job. |
