@@ -50,7 +50,7 @@ Every setting has a sensible default; override via environment variables.
 | Variable | Default | Description |
 |---|---|---|
 | `SECRET_KEY` | `condor-webui-dev-key` | Flask secret key. **Change before exposing the app.** |
-| `DATABASE_URL` | `sqlite:///instance/condor_webui.db` | SQLAlchemy database URI. |
+| `DATABASE_URL` | `sqlite:///<root>/instance/condor_webui.db` | SQLAlchemy database URI. Relative SQLite paths resolve against `instance/`, not the working directory. |
 | `UPLOAD_DIR` | `<root>/uploads` | Uploaded input files. |
 | `EXECUTABLES_DIR` | `<root>/executables` | Uploaded executables. |
 | `OUTPUT_DIR` | `<root>/outputs` | Transferred job output (`OUTPUT_DIR/<ClusterId>/`). |
