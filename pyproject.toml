@@ -21,4 +21,14 @@ testpaths = ["tests"]
 dev = [
     "pytest>=9.1.0",
     "pytest-playwright>=0.8.0",
+    "ruff>=0.16",
+    "mypy>=1.19",
 ]
+
+[tool.mypy]
+python_version = "3.14"
+
+[[tool.mypy.overrides]]
+# htcondor bindings ship no py.typed/stubs and the v1 fallback names don't exist here
+module = ["htcondor", "htcondor2", "classad", "classad2"]
+ignore_missing_imports = true
