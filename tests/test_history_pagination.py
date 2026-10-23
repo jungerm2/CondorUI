@@ -9,7 +9,7 @@ The schedd is stubbed out (``daemon_available`` -> ``False``) so the tests
 exercise the local-DB history path deterministically.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -18,7 +18,7 @@ from app.models import JobSubmission
 
 
 def _ts(epoch: int) -> datetime:
-    return datetime.fromtimestamp(epoch, tz=timezone.utc)
+    return datetime.fromtimestamp(epoch, tz=UTC)
 
 
 @pytest.fixture
@@ -106,3 +106,30 @@ def test_default_grouped_is_proc_level(app, sample_subs, no_daemon):
     assert d["total"] == 6
     assert d["has_more"] is True
     assert len(d["jobs"]) == 2
+
+
+def test_history_list_never_scans_schedd_history(app, sample_subs, monkeypatch):
+    """The dashboard list must render from the DB + active queue only.
+
+    It used to run a constrained ``schedd.history`` scan on every load and
+    auto-refresh to fill completion dates (fe35348).  Matching an OR of a
+    page's cluster ids walks the history file from newest to oldest, which
+    takes far longer than fetching the newest N rows — on a real history it
+    exceeded the 15s query timeout and blocked every other schedd call.
+    """
+    import app.condor as condor_module
+
+    monkeypatch.setattr("app.api.daemon_available", lambda: True)
+    monkeypatch.setattr("app.api.history.query_jobs", lambda **kwargs: [])
+
+    submits: list[tuple] = []
+    monkeypatch.setattr(
+        condor_module._schedd_executor,
+        "submit",
+        lambda *args, **kwargs: submits.append(args),
+    )
+
+    resp = app.test_client().get("/api/history?grouped=1&limit=2")
+    assert resp.status_code == 200
+    assert resp.get_json()["count"] == 4  # clusters 12 (1 proc) + 11 (3 procs)
+    assert submits == []

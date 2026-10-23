@@ -12,7 +12,7 @@ let selectedIds = new Set(); // Set of "clusterId.procId" strings
 let groupByCluster = true; // Group by ClusterId toggle (default on)
 let clusterFilter = null; // Cluster ID filter from URL (?cluster_id=X), null if not set
 
-let lastActiveJobs = []; // Track last active jobs for stats
+let lastJobsSig = null; // Signature of the last fetched data, to skip no-op renders
 
 // Pagination state
 let currentPage = 1;
@@ -56,17 +56,44 @@ async function loadJobs() {
         // A cluster filter always renders flat, so use proc pagination there too.
         const groupedParam = (groupByCluster && !clusterFilter) ? 1 : 0;
 
+        // Fetch both active jobs and history in parallel. Filters ride along
+        // to the history endpoint so pagination, stats, and rows all cover
+        // the same filtered universe — client-side paging alone drops older
+        // completed clusters that no longer fit on the first page.
+        const statusFilter = $('#status-filter').value;
+        const queryText = $('#job-search').value.trim();
+        const filterParams = [];
+        if (statusFilter) filterParams.push(`status=${statusFilter}`);
+        if (queryText) filterParams.push(`query=${encodeURIComponent(queryText)}`);
+        if (clusterFilter) filterParams.push(`cluster_id=${clusterFilter}`);
+        const historyFilterQs = filterParams.length ? `&${filterParams.join('&')}` : '';
+
         // Build active jobs URL with optional cluster filter
         let activeUrl = '/jobs';
         if (clusterFilter) {
             activeUrl += `?cluster_id=${clusterFilter}`;
         }
 
-        // Fetch both active jobs and history in parallel
-        const [activeData, historyData] = await Promise.all([
-            api(activeUrl),
-            api(`/history?limit=${limit}&offset=${offset}&grouped=${groupedParam}`),
+        // Fetch the active jobs and history sequentially. The htcondor2
+        // bindings wedge when two calls run at once (single-threaded calls
+        // are instant — verified by probe), and Promise.all used to race
+        // /jobs and /history on every load and auto-refresh tick.
+        const activeData = await api(activeUrl);
+        const historyData = await api(
+            `/history?limit=${limit}&offset=${offset}&grouped=${groupedParam}${historyFilterQs}`
+        );
+
+        // Skip the entire render when the data is unchanged — the auto-refresh
+        // tick reruns this every 30s and a redundant render resets table
+        // hover/focus/scroll state the user is in the middle of using
+        // View mode is part of the signature: a flat and a grouped response
+        // can be byte-identical for small datasets, but the row rendering
+        // differs, so the no-op guard must not mask a mode switch
+        const jobsSig = JSON.stringify([
+            activeData, historyData, groupByCluster, clusterFilter,
         ]);
+        if (jobsSig === lastJobsSig) return;
+        lastJobsSig = jobsSig;
 
         const activeJobs = (activeData.jobs || []).filter(j => !activeData.daemon_unavailable);
         let historyJobs = historyData.jobs || [];
@@ -79,8 +106,6 @@ async function loadJobs() {
         if (clusterFilter) {
             historyJobs = historyJobs.filter(j => String(j.ClusterId) === String(clusterFilter));
         }
-
-        lastActiveJobs = activeJobs;
 
         // Merge: active jobs take precedence by ClusterId.ProcId
         const seen = new Set();
@@ -104,7 +129,7 @@ async function loadJobs() {
 
         currentJobs = merged;
         renderTable();
-        renderStats(activeJobs);
+        renderStats(historyData.stats);
         updatePaginationUI();
         updateURLParams();
     } catch (e) {
@@ -118,34 +143,50 @@ async function loadJobs() {
     }
 }
 
-function renderStats(activeJobs) {
+function renderStats(historyStats) {
+    // Server stats count the WHOLE universe (every proc, not just the
+    // fetched page) with the same filters the table paginated under, so
+    // cards agree with the status bar, the filter, and the footer count.
+    // Client-side counting stays as the fallback for older responses.
     const stats = { total: 0, idle: 0, running: 0, completed: 0, held: 0 };
+    if (historyStats) {
+        stats.total = historyStats.total || 0;
+        stats.idle = historyStats.idle || 0;
+        stats.running = historyStats.running || 0;
+        stats.completed = historyStats.completed || 0;
+        stats.held = historyStats.held || 0;
+    } else {
+        stats.total = currentJobs.length;
+        currentJobs.forEach(job => {
+            const status = parseInt(job.JobStatus);
+            if (status === 1) stats.idle++;
+            else if (status === 2) stats.running++;
+            else if (status === 5) stats.held++;
+            else if (status === 4) stats.completed++;
+        });
+    }
 
-    // Total = all merged jobs (active + completed history)
-    stats.total = currentJobs.length;
-
-    // Idle, Running, Held = from active schedd jobs only
-    activeJobs.forEach(job => {
-        const status = parseInt(job.JobStatus);
-        if (status === 1) stats.idle++;
-        else if (status === 2) stats.running++;
-        else if (status === 5) stats.held++;
-    });
-
-    // Completed = count of status 4 across ALL merged jobs
-    currentJobs.forEach(job => {
-        if (parseInt(job.JobStatus) === 4) stats.completed++;
-    });
-
-    $('#stat-total').textContent = stats.total;
+    if ($('#stat-total')) $('#stat-total').textContent = stats.total;
     $('#stat-idle').textContent = stats.idle;
     $('#stat-running').textContent = stats.running;
     $('#stat-completed').textContent = stats.completed;
     $('#stat-held').textContent = stats.held;
 }
 
-function getFilteredJobs() {
-    const query = $('#job-search').value.toLowerCase().trim();
+/**
+ * Compact resource summary for table cells; falls back to a single em dash
+ * when the submission carried no resource requests at all.
+ */
+function formatResourceSummary(cpus, mem, disk, gpus) {
+    const parts = [];
+    if (cpus && cpus !== '—') parts.push(`${cpus} CPU`);
+    if (mem && mem !== '—') parts.push(mem);
+    if (disk && disk !== '—') parts.push(disk);
+    if (gpus && gpus !== '—') parts.push(`${gpus} GPU`);
+    return parts.length ? parts.join(', ') : '—';
+}
+
+function getFilteredJobs() {    const query = $('#job-search').value.toLowerCase().trim();
     const statusFilter = $('#status-filter').value;
 
     return currentJobs.filter(job => {
@@ -166,6 +207,26 @@ function getFilteredJobs() {
             (getStatusName(job.JobStatus) && getStatusName(job.JobStatus).toLowerCase().includes(query))
         );
     });
+}
+
+// ---------------------------------------------------------------------------
+// Empty-state copy for the table: a filtered view that matches nothing reads
+// differently from a genuinely empty cluster
+// ---------------------------------------------------------------------------
+
+function filteredEmptyMessage() {
+    const hasFilter =
+        $('#status-filter').value || $('#job-search').value.trim() || clusterFilter;
+    if (hasFilter) {
+        return (
+            '<tr class="empty-row"><td colspan="12">No jobs match the current filters. ' +
+            '<button class="empty-clear-btn">Clear filters</button></td></tr>'
+        );
+    }
+    return (
+        '<tr class="empty-row"><td colspan="12">No jobs in the queue. ' +
+        '<a href="/submit">Submit a job</a> to get started.</td></tr>'
+    );
 }
 
 function getSortValue(job, field) {
@@ -202,19 +263,6 @@ function sortJobs(jobs) {
     return sorted;
 }
 
-function updateSortArrows() {
-    $$('#jobs-table thead th.sortable').forEach(th => {
-        const arrow = th.querySelector('.sort-arrow');
-        if (!arrow) return;
-        const field = th.dataset.sort;
-        if (field === sortField) {
-            arrow.textContent = sortAsc ? ' ▲' : ' ▼';
-        } else {
-            arrow.textContent = '';
-        }
-    });
-}
-
 function updateSelectionUI() {
     const count = selectedIds.size;
     $('#selection-count').textContent = `${count} selected`;
@@ -230,18 +278,7 @@ function updateSelectionUI() {
     releaseBtn.disabled = count === 0;
 
     // Update select-all checkbox
-    const selectAll = $('#select-all');
-    if (selectAll) {
-        const filtered = getFilteredJobs();
-        if (filtered.length > 0) {
-            const allSelected = filtered.every(j => selectedIds.has(`${j.ClusterId}.${j.ProcId}`));
-            selectAll.checked = allSelected;
-            selectAll.indeterminate = !allSelected && filtered.some(j => selectedIds.has(`${j.ClusterId}.${j.ProcId}`));
-        } else {
-            selectAll.checked = false;
-            selectAll.indeterminate = false;
-        }
-    }
+    updateSelectAllState($('#select-all'), getFilteredJobs(), selectedIds, job => `${job.ClusterId}.${job.ProcId}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -313,17 +350,17 @@ function renderFilterBadge() {
 
     let parts = [];
     if (cid) {
-        parts.push(`Cluster: ${cid}`);
+        parts.push(`Cluster: ${escHtml(cid)}`);
     }
     if (statusVal) {
         const statusNames = {1: 'Idle', 2: 'Running', 3: 'Removed', 4: 'Completed', 5: 'Held', 6: 'Transferring'};
-        parts.push(`Status: ${statusNames[statusVal] || statusVal}`);
+        parts.push(`Status: ${escHtml(statusNames[statusVal] || statusVal)}`);
     }
 
     container.innerHTML = `
         <span class="filter-badge">
-            🔍 ${parts.join(' · ')}
-            <button class="filter-badge-clear" id="clear-filter-btn" title="Clear all filters">✕</button>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg> ${parts.join(' · ')}
+            <button class="filter-badge-clear" id="clear-filter-btn" title="Clear all filters" aria-label="Clear all filters"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
         </span>
     `;
 
@@ -526,7 +563,7 @@ function renderGroupedTable() {
     });
 
     if (groups.length === 0) {
-        tbody.innerHTML = `<tr class="empty-row"><td colspan="12">No jobs found</td></tr>`;
+        tbody.innerHTML = filteredEmptyMessage();
         updateSelectionUI();
         return;
     }
@@ -587,8 +624,8 @@ function renderGroupedTable() {
             <td style="text-align: center; font-weight: 500;">${group.jobs.length}</td>
             <td>${qDate}</td>
             <td style="display: none;">—</td>
-            <td>${timeSinceSubmitted}</td>
-            <td style="font-size: 0.85rem;">${cpus} CPU, ${mem}, ${disk}${gpus !== '—' ? `, ${gpus} GPU` : ''}</td>
+            <td title="Submitted ${escHtml(formatDate(group.qDate))}">${timeSinceSubmitted}</td>
+            <td style="font-size: 0.85rem;">${formatResourceSummary(cpus, mem, disk, gpus)}</td>
         `;
 
         // Click on the row (but not on the link or checkbox) navigates to details or filtered view
@@ -631,7 +668,7 @@ function renderGroupedTable() {
         cb.indeterminate = !allSel && someSel;
     });
 
-    updateSortArrows();
+    updateSortArrows($('#jobs-table'), sortField, sortAsc);
     updateSelectionUI();
 }
 
@@ -690,7 +727,7 @@ function renderFlatTable() {
     filtered = sortJobs(filtered);
 
     if (filtered.length === 0) {
-        tbody.innerHTML = `<tr class="empty-row"><td colspan="12">No jobs found</td></tr>`;
+        tbody.innerHTML = filteredEmptyMessage();
         updateSelectionUI();
         return;
     }
@@ -736,7 +773,7 @@ function renderFlatTable() {
             <td>${qDate}</td>
             <td>${compDate}</td>
             <td>${wallTime}</td>
-            <td style="font-size: 0.85rem;">${cpus} CPU, ${mem}, ${disk}${gpus !== '—' ? `, ${gpus} GPU` : ''}</td>
+            <td style="font-size: 0.85rem;">${formatResourceSummary(cpus, mem, disk, gpus)}</td>
         `;
 
         // Row click toggles checkbox
@@ -765,7 +802,7 @@ function renderFlatTable() {
         });
     });
 
-    updateSortArrows();
+    updateSortArrows($('#jobs-table'), sortField, sortAsc);
     updateSelectionUI();
 }
 
@@ -1150,6 +1187,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    $('#jobs-tbody').innerHTML =
+        '<tr class="empty-row"><td colspan="12">Loading jobs…</td></tr>';
     loadJobs();
     loadQuotas();
     startAutoRefresh();
@@ -1160,7 +1199,37 @@ document.addEventListener('DOMContentLoaded', () => {
         startAutoRefresh();
     });
 
-    $('#job-search').addEventListener('input', renderTable);
+    // Search: instant local render for the loaded page, plus a debounced
+    // server refetch so pagination and stats cover the filtered universe
+    let searchDebounce = null;
+    $('#job-search').addEventListener('input', () => {
+        renderTable();
+        if (searchDebounce) clearTimeout(searchDebounce);
+        searchDebounce = setTimeout(() => {
+            currentPage = 1;
+            lastJobsSig = null;
+            loadJobs();
+        }, 350);
+    });
+
+    // Delegated handler for the empty-state's clear-filters button (rows
+    // re-render constantly, so the listener lives on the tbody)
+    $('#jobs-tbody').addEventListener('click', (e) => {
+        if (!e.target.closest('.empty-clear-btn')) return;
+        $('#status-filter').value = '';
+        $('#job-search').value = '';
+        clusterFilter = null;
+        $('#group-toggle').disabled = false;
+        const url = new URL(window.location);
+        url.searchParams.delete('cluster_id');
+        url.searchParams.delete('status');
+        window.history.replaceState({}, '', url);
+        renderFilterBadge();
+        currentPage = 1;
+        lastJobsSig = null;
+        loadJobs();
+    });
+    // Status filter: server re-paginates the filtered set, so reset page 1
     $('#status-filter').addEventListener('change', () => {
         // Sync status filter to URL
         const url = new URL(window.location);
@@ -1171,7 +1240,9 @@ document.addEventListener('DOMContentLoaded', () => {
             url.searchParams.delete('status');
         }
         window.history.replaceState({}, '', url);
-        renderTable();
+        currentPage = 1;
+        lastJobsSig = null;
+        loadJobs();
     });
 
     // Legend icon click: filter the jobs by that status (same as selecting it in the dropdown)

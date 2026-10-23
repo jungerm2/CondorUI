@@ -9,6 +9,7 @@ let fileContents = {
 let activeFileTab = 'log';
 let detailsRefreshTimer = null;
 let detailsRefreshInProgress = false;
+let lastDetailsSig = null; // Signature of the last fetched details, to skip no-op renders
 let submitFileContent = '';
 
 async function loadJobDetails() {
@@ -18,6 +19,13 @@ async function loadJobDetails() {
 
     try {
         const data = await api(`/jobs/${clusterId}/details?proc=${procId}&tail=1000`);
+
+        // Skip the re-population when nothing changed — the auto-refresh
+        // tick reruns this every 30s and redundant writes disturb selection
+        // and scroll position in the open log panes
+        const detailsSig = JSON.stringify(data);
+        if (detailsSig === lastDetailsSig) return;
+        lastDetailsSig = detailsSig;
         
         // Populate header & subtitle
         $('#job-submission-name').textContent = data.submission_name || 'Job Subbed Outside Web UI';
@@ -203,7 +211,7 @@ function parseLogsForUsage(logContent) {
 
         html += `
             <div class="usage-item">
-                <span class="usage-label">${resourceName}</span>
+                <span class="usage-label">${escHtml(resourceName)}</span>
                 <div class="usage-values">
                     <div class="usage-value">
                         <span class="usage-value-label">Usage</span>
@@ -271,8 +279,8 @@ function renderAttributesTable(job) {
             val = `${val} (${formatDate(val)})`;
         }
         tr.innerHTML = `
-            <td class="monospace" style="font-weight: 500; font-size: 0.85rem; color: var(--text-primary);">${key}</td>
-            <td class="monospace" style="font-size: 0.85rem; color: var(--text-secondary); word-break: break-all;">${val}</td>
+            <td class="monospace" style="font-weight: 500; font-size: 0.85rem; color: var(--text-primary);">${escHtml(key)}</td>
+            <td class="monospace" style="font-size: 0.85rem; color: var(--text-secondary); word-break: break-all;">${escHtml(val)}</td>
         `;
         tbody.appendChild(tr);
     });
@@ -521,6 +529,30 @@ document.addEventListener('DOMContentLoaded', () => {
             toast('Content copied to clipboard');
         }).catch(err => {
             toast('Failed to copy content: ' + err, 'error');
+        });
+    });
+
+    // Copy the command shown in the Command stat card
+    $('#copy-command-btn').addEventListener('click', () => {
+        const text = $('#quick-executable').textContent;
+        if (!text || text === '—') return;
+        navigator.clipboard.writeText(text).then(() => {
+            toast('Command copied to clipboard');
+        }).catch(err => {
+            toast('Failed to copy command: ' + err, 'error');
+        });
+    });
+
+    // Copy the submit description; placeholders mean there is nothing to copy
+    $('#copy-submitfile-btn').addEventListener('click', () => {
+        const text = $('#submitfile-content-output').textContent;
+        if (!text || /^(Loading submit file|Submit file not available|Failed to load submit file)/.test(text)) {
+            return;
+        }
+        navigator.clipboard.writeText(text).then(() => {
+            toast('Submit file copied to clipboard');
+        }).catch(err => {
+            toast('Failed to copy submit file: ' + err, 'error');
         });
     });
 });

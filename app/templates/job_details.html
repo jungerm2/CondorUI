@@ -161,14 +161,14 @@
                 <div class="details-subtitle" id="job-submission-name">Loading...</div>
             </div>
             <div style="display: flex; gap: 8px; align-items: center;">
+                <button class="btn btn-ghost" id="refresh-details-btn" title="Refresh">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                        <polyline points="23,4 23,10 17,10" />
+                        <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10" />
+                    </svg>
+                    Refresh
+                </button>
                 <div class="action-btns" id="job-actions-container" style="gap: 8px; align-items: center;">
-                    <button class="btn btn-ghost" id="refresh-details-btn" title="Refresh">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                            <polyline points="23,4 23,10 17,10" />
-                            <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10" />
-                        </svg>
-                        Refresh
-                    </button>
                     <!-- Filled dynamically -->
                 </div>
                 <span class="auto-refresh-label" style="white-space: nowrap;">Auto-refresh: <span id="details-refresh-countdown">30</span>s</span>
@@ -184,11 +184,17 @@
                 <span class="stat-label">Owner</span>
             </div>
         </div>
-        <div class="stat-card" style="padding: 16px;">
-            <div class="stat-info">
+        <div class="stat-card" style="padding: 16px; position: relative;">
+            <div class="stat-info" style="padding-right: 22px;">
                 <span class="stat-value" id="quick-executable">—</span>
                 <span class="stat-label">Command</span>
             </div>
+            <button class="copy-icon-btn" id="copy-command-btn" title="Copy command" aria-label="Copy command">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"></path>
+                </svg>
+            </button>
         </div>
         <div class="stat-card" style="padding: 16px;">
             <div class="stat-info">
@@ -302,7 +308,16 @@
 
             <!-- Tab 3: Submit File -->
             <div class="details-tab-panel" id="tab-panel-submitfile">
-                <h3 style="margin-bottom: 16px; font-size: 1rem; font-weight: 600;">Submit File</h3>
+                <div class="details-tab-heading">
+                    <h3 style="margin-bottom: 16px; font-size: 1rem; font-weight: 600;">Submit File</h3>
+                    <button class="btn btn-ghost btn-sm copy-log-btn" id="copy-submitfile-btn" title="Copy Content" style="margin-bottom: 16px;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"></path>
+                        </svg>
+                        Copy
+                    </button>
+                </div>
                 <div class="log-panel-container">
                     <div class="log-output" id="submitfile-content-output" style="max-height: 600px; overflow-y: auto; font-family: var(--font-mono); font-size: 0.85rem;">
                         Loading submit file...
