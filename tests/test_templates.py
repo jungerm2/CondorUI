@@ -6,6 +6,7 @@ and field-level round-trip integrity.
 """
 
 import json
+from datetime import UTC
 from pathlib import Path
 
 # =============================================================================
@@ -531,13 +532,11 @@ class TestTemplateTimestamps:
         data = resp.get_json()
         assert data["updated_at"] is not None
         # Should be a valid ISO datetime
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        dt = datetime.fromisoformat(data["updated_at"].rstrip("Z")).replace(
-            tzinfo=timezone.utc
-        )
+        dt = datetime.fromisoformat(data["updated_at"].rstrip("Z")).replace(tzinfo=UTC)
         # Should be recent (within last 10 seconds)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         assert (now - dt).total_seconds() < 10
 
     def test_updated_at_changes_on_update(self, client, app):

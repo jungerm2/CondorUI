@@ -571,6 +571,198 @@ class TestRawToFormSync:
 
 
 # =============================================================================
+# Tests: Known desync cases
+# =============================================================================
+
+
+class TestSyncDesyncCases:
+    """Regression tests for form <-> raw desyncs found during validation."""
+
+    def test_transfer_executable_false_reaches_submit_dict(self, page, live_server):
+        """Unchecked 'transfer executable' must be passed as False.
+
+        HTCondor's default is transfer_executable = true; omitting the key
+        (the old behavior) silently submitted with the opposite setting.
+        """
+        page.goto(f"{live_server}/submit")
+        page.wait_for_selector("#mode-form.submit-mode.active")
+
+        page.check("#job-transfer-executable")
+        assert page.evaluate("buildSubmitDict()")["transfer_executable"] is True
+
+        page.uncheck("#job-transfer-executable")
+        assert page.evaluate("buildSubmitDict()")["transfer_executable"] is False
+
+    def test_transfer_executable_round_trip(self, page, live_server):
+        """An unchecked box must survive form -> raw -> form unchecked."""
+        page.goto(f"{live_server}/submit")
+        page.wait_for_selector("#mode-form.submit-mode.active")
+
+        fill_form(page, {"job-executable": "/bin/sleep"})
+        page.uncheck("#job-transfer-executable")
+
+        switch_to_raw_mode(page)
+        assert "transfer_executable = false" in get_raw_editor_text(page)
+
+        switch_to_form_mode(page)
+        assert page.is_checked("#job-transfer-executable") is False
+
+    def test_raw_to_form_preserves_selected_server_files(self, page, live_server):
+        """A server-managed file listed in raw transfer_input_files must land
+        back in the transfer input field, or the form-submit path loses it."""
+        resp = page.request.post(
+            f"{live_server}/api/files",
+            data=b"data",
+            headers={
+                "Content-Type": "application/octet-stream",
+                "X-Upload-Filename": "syncprobe.txt",
+            },
+        )
+        assert resp.status == 201
+        uri = resp.json()["uri"]
+
+        page.goto(f"{live_server}/submit")
+        page.wait_for_selector("#submit-files-list .submit-file-item")
+
+        switch_to_raw_mode(page)
+        set_raw_editor_text(
+            page,
+            textwrap.dedent(
+                f"""\
+                universe = vanilla
+                executable = /bin/sleep
+                transfer_input_files = {uri}
+                queue 1
+                """
+            ),
+        )
+        switch_to_form_mode(page)
+
+        # buildSubmitDict() reads this field — the selected URI must be in it
+        assert uri in page.input_value("#job-transfer-input")
+        assert page.locator(".submit-file-item.selected").count() == 1
+
+    def test_raw_to_form_resets_fields_not_in_raw(self, page, live_server):
+        """Keys absent from the raw text must not inherit stale form values."""
+        page.goto(f"{live_server}/submit")
+        page.wait_for_selector("#mode-form.submit-mode.active")
+
+        fill_form(
+            page,
+            {
+                "job-output": "old.out",
+                "job-arguments": "999",
+                "job-cpus": "7",
+                "job-memory": "9 GB",
+                "job-transfer-output": "stale.dat",
+                "job-count": "9",
+            },
+        )
+
+        switch_to_raw_mode(page)
+        set_raw_editor_text(
+            page,
+            textwrap.dedent(
+                """\
+                universe = vanilla
+                executable = /bin/sleep
+                queue 1
+                """
+            ),
+        )
+        switch_to_form_mode(page)
+
+        default_output = "$(LogsDir)/$INT(ClusterId,%08d)/$INT(ProcId,%05d).out"
+        assert page.input_value("#job-output") == default_output
+        assert page.input_value("#job-arguments") == ""
+        assert page.input_value("#job-cpus") == "1"
+        assert page.input_value("#job-memory") == "1 GB"
+        assert page.input_value("#job-transfer-output") == ""
+        assert page.input_value("#job-count") == "1"
+
+    def test_unknown_universe_survives_round_trip(self, page, live_server):
+        """A universe value not in the select must not silently become 'vanilla'."""
+        page.goto(f"{live_server}/submit")
+        page.wait_for_selector("#mode-form.submit-mode.active")
+
+        switch_to_raw_mode(page)
+        set_raw_editor_text(
+            page,
+            textwrap.dedent(
+                """\
+                universe = grid
+                executable = /bin/sleep
+                queue 1
+                """
+            ),
+        )
+        switch_to_form_mode(page)
+
+        assert page.input_value("#job-universe") == "grid"
+
+        switch_to_raw_mode(page)
+        assert "universe = grid" in get_raw_editor_text(page)
+
+    def test_shell_arguments_survive_round_trip(self, page, live_server):
+        """'arguments' next to 'shell' must survive raw -> form -> raw."""
+        page.goto(f"{live_server}/submit")
+        page.wait_for_selector("#mode-form.submit-mode.active")
+
+        switch_to_raw_mode(page)
+        set_raw_editor_text(
+            page,
+            textwrap.dedent(
+                """\
+                universe = vanilla
+                shell = sleep 60
+                arguments = some args
+                queue 1
+                """
+            ),
+        )
+        switch_to_form_mode(page)
+        switch_to_raw_mode(page)
+
+        assert "arguments = some args" in get_raw_editor_text(page)
+
+    def test_hand_editing_transfer_field_reconciles_selection(self, page, live_server):
+        """Hand-edits to the transfer_input field must update selection state.
+
+        The field is what buildSubmitDict() reads, so it is the source of
+        truth: removing a server file's URI from the field must deselect the
+        item, or the next toggle restores the deleted URI.
+        """
+        resp = page.request.post(
+            f"{live_server}/api/files",
+            data=b"data",
+            headers={
+                "Content-Type": "application/octet-stream",
+                "X-Upload-Filename": "syncprobe2.txt",
+            },
+        )
+        assert resp.status == 201
+        uri = resp.json()["uri"]
+
+        page.goto(f"{live_server}/submit")
+        page.wait_for_selector("#submit-files-list .submit-file-item")
+
+        # Click-select the file — it lands in the field
+        page.click("#submit-files-list .submit-file-item")
+        assert uri in page.input_value("#job-transfer-input")
+        assert page.locator(".submit-file-item.selected").count() == 1
+
+        # Hand-remove it from the field — the item must deselect
+        page.fill("#job-transfer-input", "")
+        assert page.locator(".submit-file-item.selected").count() == 0
+
+        # Hand-add a manual entry, then click the file item — the manual
+        # entry survives and the file appends
+        page.fill("#job-transfer-input", "manual.txt")
+        page.click("#submit-files-list .submit-file-item")
+        assert page.input_value("#job-transfer-input") == f"manual.txt, {uri}"
+
+
+# =============================================================================
 # Tests: Round-trip consistency
 # =============================================================================
 

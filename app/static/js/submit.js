@@ -5,6 +5,37 @@ let selectedFileUris = new Set();
 let selectedContainerUri = null;
 let pendingSubmitFile = null;
 
+// Line-number gutter and Tab-to-indent for the raw submit editor. The gutter
+// mirrors the textarea's font metrics exactly (see .code-editor-gutter CSS),
+// and scroll position is kept in lockstep on every scroll event.
+function initRawEditorChrome() {
+    const editor = $('#raw-submit-editor');
+    const gutter = $('#raw-editor-gutter');
+    if (!editor || !gutter) return;
+
+    const updateGutter = () => {
+        const lines = editor.value.split('\n').length;
+        let text = '';
+        for (let i = 1; i <= lines; i++) text += i + '\n';
+        gutter.textContent = text;
+        gutter.scrollTop = editor.scrollTop;
+    };
+
+    editor.addEventListener('input', updateGutter);
+    editor.addEventListener('scroll', () => { gutter.scrollTop = editor.scrollTop; });
+    editor.addEventListener('keydown', (e) => {
+        if (e.key !== 'Tab' || e.ctrlKey || e.metaKey || e.altKey) return;
+        e.preventDefault();
+        // Tab inside the editor must indent, not move focus to the next control
+        const start = editor.selectionStart;
+        const end = editor.selectionEnd;
+        editor.value = editor.value.slice(0, start) + '    ' + editor.value.slice(end);
+        editor.selectionStart = editor.selectionEnd = start + 4;
+        editor.dispatchEvent(new Event('input'));
+    });
+    updateGutter();
+}
+
 // Auto-resize textareas to fit their content
 function autoResizeTextarea(el) {
     el.style.height = 'auto';
@@ -165,6 +196,22 @@ function updateTransferInputField() {
     $('#job-transfer-input').value = allUris.join(', ');
 }
 
+// Reconcile selection state when the user hand-edits the field: the field is
+// what buildSubmitDict() reads, so it is the source of truth — otherwise a
+// URI deleted manually is restored by the next item toggle
+function initTransferFieldHandEditSync() {
+    $('#job-transfer-input').addEventListener('input', () => {
+        const serverUriSet = new Set(serverFiles.map(f => f.uri));
+        const fieldUris = ($('#job-transfer-input').value || '')
+            .split(',')
+            .map(x => x.trim())
+            .filter(x => serverUriSet.has(x));
+        selectedFileUris = new Set(fieldUris);
+        refreshFileSelectionUI();
+        updateStagedRequirements();
+    });
+}
+
 // .sub file upload & preview
 function initSubmitFileUpload() {
     const dropzone = $('#submit-file-dropzone');
@@ -224,10 +271,9 @@ function buildSubmitDict() {
         d.shell = $('#job-shell-cmd').value.trim();
     } else {
         d.executable = $('#job-executable').value.trim();
-        // Transfer executable checkbox
-        if ($('#job-transfer-executable').checked) {
-            d.transfer_executable = true;
-        }
+        // Explicit either way: HTCondor's default is true, so omitting the
+        // key when unchecked would submit with transfer enabled
+        d.transfer_executable = $('#job-transfer-executable').checked;
     }
 
     if (universe === 'container') {
@@ -407,10 +453,18 @@ function syncFormToRaw() {
     }
     if (submit.shell) {
         rawText += `shell = ${submit.shell}\n`;
+        // Shell mode hides the arguments field but keeps its value; write it
+        // so the raw text round-trips it back
+        const shellArgs = $('#job-arguments').value.trim();
+        if (shellArgs) rawText += `arguments = ${shellArgs}\n`;
     } else if (submit.executable) {
         rawText += `executable = ${submit.executable}\n`;
         if (submit.arguments) {
             rawText += `arguments = ${submit.arguments}\n`;
+        }
+        // true is HTCondor's default — only the non-default is written
+        if (submit.transfer_executable === false) {
+            rawText += `transfer_executable = false\n`;
         }
     }
     if (submit.transfer_input_files) {
@@ -478,6 +532,38 @@ function syncRawToForm() {
     container.innerHTML = '';
     selectedFileUris.clear();
 
+    // Reset every known field to its default first — a raw text that omits a
+    // key must not silently inherit the value that was in the form before
+    $('#job-universe').value = 'vanilla';
+    $('#job-universe').dispatchEvent(new Event('change'));
+    $('#job-container-image').value = '';
+    $('#job-container-select').value = '';
+    $('#execmode-exec-btn').classList.add('active');
+    $('#execmode-shell-btn').classList.remove('active');
+    $('#exec-field').style.display = 'block';
+    $('#shell-field').style.display = 'none';
+    $('#args-field').style.display = 'block';
+    $('#job-executable').value = '';
+    $('#job-shell-cmd').value = '';
+    $('#job-arguments').value = '';
+    $('#job-transfer-executable').checked = true;
+    $('#job-transfer-input').value = '';
+    $('#job-cpus').value = '1';
+    $('#job-memory').value = '1 GB';
+    $('#job-disk').value = '1 GB';
+    $('#job-gpus').value = '0';
+    $('#job-gpu-min-capability').value = '';
+    $('#job-gpu-min-memory').value = '';
+    $('#job-gpu-min-runtime').value = '';
+    $('#job-cuda-version').value = '';
+    $('#job-output').value = $('#job-output').defaultValue;
+    $('#job-error').value = $('#job-error').defaultValue;
+    $('#job-log').value = $('#job-log').defaultValue;
+    $('#job-transfer-output').value = '';
+    $('#job-output-directory').value = $('#job-output-directory').defaultValue;
+    $('#job-output-remaps').value = '';
+    $('#job-count').value = '1';
+
     lines.forEach(line => {
         const trimmedLine = line.split('#')[0].trim();
         if (!trimmedLine) return;
@@ -496,12 +582,25 @@ function syncRawToForm() {
         const val = trimmedLine.substring(eqIdx + 1).trim();
 
         switch (key) {
-            case 'universe':
-                $('#job-universe').value = val;
-                $('#job-universe').dispatchEvent(new Event('change'));
+            case 'universe': {
+                // Keep universes the select doesn't know instead of silently
+                // falling back to the select's current value
+                const sel = $('#job-universe');
+                if (![...sel.options].some(o => o.value === val)) {
+                    sel.add(new Option(val, val));
+                }
+                sel.value = val;
+                sel.dispatchEvent(new Event('change'));
                 break;
-            case 'container_image':
+            }
+            case 'container_image': {
                 $('#job-container-image').value = val;
+                const match = serverContainers.find(c => c.uri === val);
+                if (match) $('#job-container-select').value = match.uri;
+                break;
+            }
+            case 'transfer_executable':
+                $('#job-transfer-executable').checked = val.toLowerCase() !== 'false';
                 break;
             case 'executable':
                 $('#execmode-exec-btn').classList.add('active');
@@ -603,8 +702,10 @@ function syncRawToForm() {
         }
     });
 
-    // Refresh the file selection UI and staged requirements
+    // Merge the (re-selected) server file URIs back into the text field —
+    // buildSubmitDict() only reads the field, never selectedFileUris
     refreshFileSelectionUI();
+    updateTransferInputField();
     updateStagedRequirements();
 }
 
@@ -735,7 +836,9 @@ function checkSelectedTemplate() {
                 if (submit.gpus_minimum_memory) $('#job-gpu-min-memory').value = submit.gpus_minimum_memory;
                 if (submit.gpus_minimum_runtime) $('#job-gpu-min-runtime').value = submit.gpus_minimum_runtime;
                 if (submit.cuda_version) $('#job-cuda-version').value = submit.cuda_version;
-                if (submit.transfer_executable) $('#job-transfer-executable').checked = true;
+                if ('transfer_executable' in submit) {
+                    $('#job-transfer-executable').checked = !!submit.transfer_executable;
+                }
                 if (submit.queue) $('#job-count').value = submit.queue;
 
                 if (submit.transfer_input_files) {
@@ -816,6 +919,19 @@ async function saveAsTemplate(mode) {
     window._saveTemplateMode = mode;
 }
 
+/**
+ * Mirror the server's template filename slug (templates.py::_slugify) so the
+ * override check matches what the server treats as the same template.
+ */
+function templateSlug(name) {
+    const slug = name.toLowerCase().trim()
+        .replace(/[^a-z0-9\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    return slug || 'untitled';
+}
+
 async function confirmSaveTemplate() {
     const name = $('#save-template-name').value.trim();
     if (!name) {
@@ -841,12 +957,56 @@ async function confirmSaveTemplate() {
         }
     }
 
+    // Ask before clobbering an existing template — POST refuses a duplicate,
+    // so overrides go through the PUT update endpoint. Names are compared as
+    // slugs because the server stores the file under the slugified name.
+    let exists = false;
+    try {
+        const list = await api('/templates');
+        const slug = templateSlug(name);
+        exists = (list.templates || []).some(t => templateSlug(t.name) === slug);
+    } catch {
+        exists = false;
+    }
+    const writeTemplate = async () => writeTemplateData(name, submit_data, exists ? 'update' : 'create');
+
+    if (!exists) {
+        await writeTemplate();
+        return;
+    }
+
+    showConfirmModal(
+        `A template named <strong>${escHtml(name)}</strong> already exists. Override it?`,
+        {
+            title: 'Override Template',
+            confirmText: 'Override',
+            confirmClass: 'btn-danger',
+            onConfirm: writeTemplate,
+        }
+    );
+}
+
+/**
+ * Write template data to the server via the appropriate endpoint.
+ *
+ * @param {string} name - Template name.
+ * @param {string} submitData - Raw submit description text.
+ * @param {string} verb - 'create' (POST) or 'update' (PUT).
+ */
+async function writeTemplateData(name, submitData, verb) {
     toast('Saving template...');
     try {
-        await api('/templates', {
-            method: 'POST',
-            body: JSON.stringify({ name, submit_data })
-        });
+        if (verb === 'update') {
+            await api(`/templates/${encodeURIComponent(name)}`, {
+                method: 'PUT',
+                body: JSON.stringify({ submit_data: submitData })
+            });
+        } else {
+            await api('/templates', {
+                method: 'POST',
+                body: JSON.stringify({ name, submit_data: submitData })
+            });
+        }
         toast('Template saved successfully!');
         closeModal('save-template-modal');
     } catch (err) {
@@ -931,9 +1091,11 @@ function updateExecutablesCardVisibility() {
 
 document.addEventListener('DOMContentLoaded', () => {
     initAutoResizeTextareas();
+    initRawEditorChrome();
     initModeToggle();
     initExtraAttrs();
     initSubmitFileUpload();
+    initTransferFieldHandEditSync();
 
     // Load server files, containers, and executables, then check for template
     Promise.all([

@@ -186,12 +186,6 @@ async function confirmRenameTemplate() {
 document.addEventListener('DOMContentLoaded', () => {
     loadTemplates();
 
-    $('#save-template-btn').addEventListener('click', () => {
-        if (confirm('Templates are configured and saved on the Submit job page. Go there now?')) {
-            window.location.href = '/submit';
-        }
-    });
-
     // Delete template modal
     const deleteConfirmBtn = $('#delete-template-confirm-btn');
     if (deleteConfirmBtn) {
