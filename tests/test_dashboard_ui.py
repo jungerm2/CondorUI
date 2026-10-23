@@ -91,3 +91,70 @@ class TestDashboardUI:
 
         assert not errors, f"JS errors on dashboard: {errors}"
         _clear_seeds(app, [202, 203])
+
+
+class TestSidebarUI:
+    def test_brand_theme_and_collapse_controls(self, page, live_server):
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"{live_server}/output-files")
+        page.wait_for_selector(".brand-mark", timeout=10_000)
+
+        # The brand is its own home link; the theme control is a footer utility.
+        assert page.locator("a.logo[href='/'] .brand-mark").count() == 1
+        assert page.locator(".logo #theme-toggle").count() == 0
+        assert page.locator(".sidebar-footer #theme-toggle").count() == 1
+        assert (
+            page.locator("link[rel='icon']").get_attribute("href")
+            == "/static/favicon.svg"
+        )
+        assert page.request.get(f"{live_server}/static/favicon.svg").ok
+
+        button = page.locator("#sidebar-collapse-btn")
+        box = button.bounding_box()
+        assert box is not None
+        assert box["width"] >= 32 and box["height"] >= 32
+
+        page.click("#sidebar-collapse-btn")
+        page.wait_for_timeout(250)
+        state = page.evaluate("""() => {
+            const brand = document.querySelector('.brand-mark').getBoundingClientRect();
+            const buttonEl = document.querySelector('#sidebar-collapse-btn');
+            const button = buttonEl.getBoundingClientRect();
+            const themeEl = document.querySelector('#theme-toggle');
+            const theme = themeEl.getBoundingClientRect();
+            return {
+                brandBottom: brand.bottom,
+                buttonTop: button.top,
+                buttonWidth: button.width,
+                buttonHeight: button.height,
+                buttonOpacity: getComputedStyle(buttonEl).opacity,
+                buttonDisplay: getComputedStyle(buttonEl).display,
+                buttonAriaExpanded: buttonEl.getAttribute('aria-expanded'),
+                sidebarWidth: document.querySelector('#sidebar').getBoundingClientRect().width,
+                themeWidth: theme.width,
+                themeHeight: theme.height,
+                themeLabelDisplay: getComputedStyle(document.querySelector('.theme-label')).display,
+            };
+        }""")
+        assert state["buttonTop"] >= state["brandBottom"], state
+        assert state["buttonWidth"] >= 32 and state["buttonHeight"] >= 32, state
+        assert state["buttonOpacity"] == "1", state
+        assert state["buttonDisplay"] == "flex", state
+        assert state["buttonAriaExpanded"] == "false", state
+        assert state["sidebarWidth"] == 60, state
+        assert state["themeWidth"] >= 32 and state["themeHeight"] >= 32, state
+        assert state["themeLabelDisplay"] == "none", state
+
+        was_light = page.evaluate(
+            "document.documentElement.classList.contains('light-theme')"
+        )
+        page.click("#theme-toggle")
+        page.wait_for_timeout(100)
+        is_light = page.evaluate(
+            "document.documentElement.classList.contains('light-theme')"
+        )
+        assert is_light != was_light
+        label = page.locator(".theme-label").text_content()
+        assert label == ("Light mode" if is_light else "Dark mode")
+        assert not errors, f"JS errors on sidebar: {errors}"

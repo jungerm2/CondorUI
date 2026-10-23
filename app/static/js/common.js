@@ -566,13 +566,23 @@ function initTheme() {
     document.documentElement.classList.toggle('light-theme', savedTheme === 'light');
 
     const toggle = $('#theme-toggle');
-    if (toggle) {
-        toggle.addEventListener('click', () => {
-            const isLight = document.documentElement.classList.contains('light-theme');
-            document.documentElement.classList.toggle('light-theme', !isLight);
-            localStorage.setItem('theme', isLight ? 'dark' : 'light');
-        });
-    }
+    if (!toggle) return;
+
+    const updateToggle = (isLight) => {
+        const label = isLight ? 'Light mode' : 'Dark mode';
+        const action = isLight ? 'Switch to dark mode' : 'Switch to light mode';
+        toggle.title = action;
+        toggle.setAttribute('aria-label', `${label}. ${action}`);
+        const labelEl = toggle.querySelector('.theme-label');
+        if (labelEl) labelEl.textContent = label;
+    };
+
+    updateToggle(savedTheme === 'light');
+    toggle.addEventListener('click', () => {
+        const isLight = document.documentElement.classList.toggle('light-theme');
+        localStorage.setItem('theme', isLight ? 'light' : 'dark');
+        updateToggle(isLight);
+    });
 }
 
 // Connection Status Monitor
@@ -1240,11 +1250,22 @@ function initSidebar() {
     const collapseBtn = $('#sidebar-collapse-btn');
     if (!collapseBtn) return;
 
+    const updateCollapseButton = () => {
+        const isCollapsed = document.documentElement.classList.contains('sidebar-collapsed');
+        const label = isCollapsed ? 'Expand sidebar' : 'Collapse sidebar';
+        collapseBtn.title = label;
+        collapseBtn.setAttribute('aria-label', label);
+        collapseBtn.setAttribute('aria-expanded', String(!isCollapsed));
+    };
+
     // Toggle sidebar collapsed state
     collapseBtn.addEventListener('click', () => {
         const isCollapsed = document.documentElement.classList.toggle('sidebar-collapsed');
         localStorage.setItem('sidebarCollapsed', isCollapsed);
+        updateCollapseButton();
     });
+
+    updateCollapseButton();
 
     // Initialize nav section collapse/expand
     initNavSections();

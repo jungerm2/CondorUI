@@ -227,6 +227,9 @@ The form language is compact rounded rectangles over hairlines, tuned per hierar
 
 ### Navigation
 - Fixed 240px sidebar on the slate panel ground, hairline right border; three collapsible uppercase section titles (0.7rem/700, 0.08em tracking) with inline SVG chevrons; links at 0.93rem/500 with 18px inline SVG stroke icons. Hover: 8% periwinkle wash. **Active:** cyan text + icon on a 9% cyan wash with a 3px cyan rail bar (radius 2px) flush to the sidebar edge — the only left rail in the system, and it marks state, not decoration. Sidebar footer carries the connection health dot (green on connect with a 3px green halo ring, red otherwise). Below 900px the rail shows icons only.
+- **Brand:** 30px cyan tile with a C-bracket and job-node mark, followed by `Condor` + muted `UI`; the whole lockup links home and the same tile ships as the SVG favicon. It is not a control surface for theme or collapse.
+- **Utilities:** the theme toggle lives in the sidebar footer as a 32px utility button with sun/moon icon and current-mode label (`Dark mode` / `Light mode`); collapsed, it becomes an icon-only 32px target with the action in `title`/`aria-label`.
+- **Collapse:** a persistent 32px bordered chevron button. Expanded, it sits at the header's right edge; in the 60px rail it stacks below the brand. It is never hidden or absolutely layered over the brand.
 
 ### Signature: Grouped Status Bar
 The dashboard's main instrument: each cluster row owns a stacked 8px segmented bar (2px segment gaps on a 1px input-well track) whose widths are the cluster's status distribution — clickable segments link to the filtered view, each with an exact `count label (pct%)` tooltip; single-job rows show a plain status badge instead. No sparklines, no tiles — the distribution is the data.

@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Web UI for submitting and monitoring HTCondor jobs">
     <title>{% block title %}Condor Web UI{% endblock %}</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/static/css/style.css">
     <script>
         // Apply saved theme immediately to prevent flash
@@ -31,19 +32,22 @@
     <!-- Sidebar Navigation -->
     <nav class="sidebar" id="sidebar">
         <div class="sidebar-header">
-            <div class="logo" id="theme-toggle" title="Toggle Light/Dark Mode" style="cursor: pointer;">
-                <svg class="logo-icon icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                    <circle cx="12" cy="12" r="3" />
-                    <path
-                        d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83" />
+            <a class="logo" href="/" aria-label="Condor Web UI dashboard">
+                <svg class="brand-mark" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+                    <rect x="1" y="1" width="30" height="30" rx="9" fill="currentColor" fill-opacity="0.10"
+                        stroke="currentColor" stroke-opacity="0.24" />
+                    <path d="M22 9H12.5A4.5 4.5 0 008 13.5v5A4.5 4.5 0 0012.5 23H22"
+                        stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
+                        stroke-linejoin="round" />
+                    <circle cx="24" cy="16" r="2.2" fill="currentColor" />
                 </svg>
-                <svg class="logo-icon icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-                </svg>
-                <span class="logo-text">Condor UI</span>
-            </div>
-            <button class="sidebar-collapse-btn" id="sidebar-collapse-btn" title="Collapse Sidebar">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <span class="logo-text">Condor<span class="logo-text-suffix"> UI</span></span>
+            </a>
+            <button class="sidebar-collapse-btn" id="sidebar-collapse-btn" type="button"
+                title="Collapse sidebar" aria-label="Collapse sidebar" aria-controls="sidebar"
+                aria-expanded="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M15 18l-6-6 6-6" />
                 </svg>
             </button>
@@ -164,6 +168,20 @@
                 <span class="status-dot"></span>
                 <span class="status-text">Connecting...</span>
             </div>
+            <button class="sidebar-theme-btn" id="theme-toggle" type="button"
+                title="Switch to light mode" aria-label="Dark mode. Switch to light mode">
+                <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                    <circle cx="12" cy="12" r="3" />
+                    <path
+                        d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83" />
+                </svg>
+                <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                </svg>
+                <span class="theme-label">Dark mode</span>
+            </button>
         </div>
     </nav>
 
