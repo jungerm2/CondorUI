@@ -115,6 +115,24 @@ class TestSidebarUI:
         assert box is not None
         assert box["width"] >= 32 and box["height"] >= 32
 
+        footer = page.evaluate(
+            """() => {
+                const connection = document.querySelector('.connection-status').getBoundingClientRect();
+                const theme = document.querySelector('#theme-toggle').getBoundingClientRect();
+                return {
+                    connectionRight: connection.right,
+                    themeLeft: theme.left,
+                    sameRow: Math.abs(
+                        (connection.top + connection.height / 2) -
+                        (theme.top + theme.height / 2)
+                    ) < 1,
+                };
+            }"""
+        )
+        assert footer["sameRow"], footer
+        assert footer["themeLeft"] > footer["connectionRight"], footer
+        assert page.locator(".theme-label").is_visible()
+
         page.click("#sidebar-collapse-btn")
         page.wait_for_timeout(250)
         state = page.evaluate("""() => {

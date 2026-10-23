@@ -308,13 +308,16 @@ a { text-underline-offset: 0.2em; }
     padding: 14px 16px 16px;
     border-top: 1px solid var(--border-color);
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
     gap: 8px;
     white-space: nowrap;
 }
 
 .sidebar-collapsed .sidebar-footer {
     padding: 16px 12px;
+    flex-direction: column;
     gap: 10px;
     align-items: center;
 }
@@ -324,10 +327,11 @@ a { text-underline-offset: 0.2em; }
 }
 
 .sidebar-collapsed .connection-status {
+    flex: 0 0 auto;
     justify-content: center;
 }
 
-.connection-status { display: flex; align-items: center; gap: 8px; font-size: 0.8rem; color: var(--text-muted); }
+.connection-status { display: flex; flex: 1; min-width: 0; align-items: center; gap: 8px; font-size: 0.8rem; color: var(--text-muted); }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--status-held); transition: background var(--transition); flex-shrink: 0; }
 .connection-status.connected { color: var(--text-secondary); }
 .connection-status.connected .status-dot { background: var(--status-running); box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.15); }
@@ -335,17 +339,18 @@ a { text-underline-offset: 0.2em; }
 .sidebar-theme-btn {
     display: flex;
     align-items: center;
-    gap: 8px;
-    width: 100%;
-    height: 32px;
-    padding: 0 8px;
+    gap: 6px;
+    width: auto;
+    height: 30px;
+    padding: 0 6px;
     border: 1px solid transparent;
     border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text-secondary);
     font-family: var(--font-sans);
-    font-size: 0.8rem;
+    font-size: 0.78rem;
     font-weight: 500;
+    flex-shrink: 0;
     cursor: pointer;
     transition: background var(--transition), color var(--transition),
         border-color var(--transition);
@@ -366,6 +371,7 @@ a { text-underline-offset: 0.2em; }
 
 .sidebar-collapsed .sidebar-theme-btn {
     width: 32px;
+    height: 32px;
     padding: 0;
     justify-content: center;
 }
@@ -1748,10 +1754,10 @@ details.card[open] .card-body {
     .nav-link.active::before { left: -2px; }
     .nav-section-header { justify-content: center; padding: 8px 6px; }
     .nav-section-content { display: flex !important; flex-direction: column; align-items: center; }
-    .sidebar-footer { padding: 12px 8px; gap: 10px; align-items: center; }
-    .sidebar-theme-btn { width: 32px; padding: 0; justify-content: center; }
+    .sidebar-footer { padding: 12px 8px; flex-direction: column; gap: 10px; align-items: center; }
+    .sidebar-theme-btn { width: 32px; height: 32px; padding: 0; justify-content: center; }
     .theme-label { display: none; }
-    .connection-status { justify-content: center; }
+    .connection-status { flex: 0 0 auto; justify-content: center; }
     .connection-status .status-text { display: none; }
 
     .main-content { margin-left: var(--sidebar-collapsed-width); padding: 16px; }
