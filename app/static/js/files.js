@@ -8,31 +8,6 @@ let uploadAbortControllers = []; // Track active uploads for cancel
 let fileSortField = 'original_name';
 let fileSortAsc = true;
 
-// Modal helpers
-function openModal(id) {
-    document.getElementById(id).classList.add('active');
-}
-
-function closeModal(id) {
-    document.getElementById(id).classList.remove('active');
-}
-
-function initModals() {
-    document.querySelectorAll('.modal-close-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const modalId = btn.dataset.modal;
-            if (modalId) closeModal(modalId);
-        });
-    });
-    document.querySelectorAll('.modal-overlay').forEach(overlay => {
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) {
-                overlay.classList.remove('active');
-            }
-        });
-    });
-}
-
 // formatFileSize and formatDateIso are now defined in common.js
 // These duplicates have been removed; use the shared versions instead.
 
@@ -59,10 +34,12 @@ function updateSelectionUI() {
     const unstageBtn = $('#file-unstage-btn');
     const deleteBtn = $('#file-delete-btn');
     const renameBtn = $('#file-rename-btn');
+    const downloadBtn = $('#file-download-btn');
 
     stageBtn.disabled = count === 0;
     unstageBtn.disabled = count === 0;
     deleteBtn.disabled = count === 0;
+    downloadBtn.disabled = count === 0;
     renameBtn.disabled = count !== 1; // Rename only works on a single file
 
     // Enable unstage only if all selected files are staged
@@ -72,17 +49,7 @@ function updateSelectionUI() {
     }
 
     // Update select-all checkbox
-    const selectAll = $('#file-select-all');
-    if (selectAll) {
-        if (currentFiles.length > 0) {
-            const allSelected = currentFiles.every(f => selectedFileFilenames.has(f.filename));
-            selectAll.checked = allSelected;
-            selectAll.indeterminate = !allSelected && currentFiles.some(f => selectedFileFilenames.has(f.filename));
-        } else {
-            selectAll.checked = false;
-            selectAll.indeterminate = false;
-        }
-    }
+    updateSelectAllState($('#file-select-all'), currentFiles, selectedFileFilenames, f => f.filename);
 }
 
 // Get sortable value for a file
@@ -119,6 +86,8 @@ function renderFiles() {
     if (filtered.length === 0) {
         table.style.display = 'none';
         empty.style.display = 'block';
+        const p = empty.querySelector('p');
+        if (p && p.dataset.emptyText) p.textContent = p.dataset.emptyText;
         updateSelectionUI();
         return;
     }
@@ -135,24 +104,34 @@ function renderFiles() {
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td style="text-align: center;">
-                <input type="checkbox" class="file-row-checkbox" data-file-filename="${f.filename}" ${isChecked ? 'checked' : ''}>
+                <input type="checkbox" class="file-row-checkbox" data-file-filename="${escHtml(f.filename)}" ${isChecked ? 'checked' : ''}>
             </td>
             <td class="monospace">${escHtml(f.original_name)}</td>
             <td>${formatFileSize(f.size)}</td>
             <td>${formatDate(f.uploaded_at)}</td>
             <td><span class="badge ${locationClass}">${locationLabel}</span></td>
+            <td>
+                <div class="action-btns">
+                    <button class="btn btn-ghost btn-sm file-preview-btn" data-filename="${escHtml(f.filename)}" title="Preview">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                            <circle cx="12" cy="12" r="3" />
+                        </svg>
+                    </button>
+                    <a href="/api/files/${escHtml(f.filename.split('/').map(encodeURIComponent).join('/'))}/download" class="btn btn-ghost btn-sm" title="Download" download>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                            <polyline points="7,10 12,15 17,10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                    </a>
+                </div>
+            </td>
         `;
         tbody.appendChild(tr);
 
-        // Row click toggles checkbox
-        tr.addEventListener('click', (e) => {
-            if (e.target.closest('input[type="checkbox"]')) return;
-            const cb = tr.querySelector('.file-row-checkbox');
-            if (cb) {
-                cb.checked = !cb.checked;
-                cb.dispatchEvent(new Event('change'));
-            }
-        });
+        // Row click toggles checkbox (actions get their own handlers)
+        bindRowClickToggle(tr, '.file-row-checkbox', ['a', 'button']);
     });
 
     // Bind checkbox events
@@ -168,8 +147,40 @@ function renderFiles() {
         });
     });
 
+    // Row actions
+    tbody.querySelectorAll('.file-preview-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const f = currentFiles.find(item => item.filename === btn.dataset.filename);
+            const name = f ? f.original_name : btn.dataset.filename;
+            openFilePreview({
+                name,
+                previewUrl: `/api/files/${btn.dataset.filename.split('/').map(encodeURIComponent).join('/')}/preview`,
+                downloadUrl: `/api/files/${btn.dataset.filename.split('/').map(encodeURIComponent).join('/')}/download`,
+            });
+        });
+    });
+
     updateSortArrows(table, fileSortField, fileSortAsc);
     updateSelectionUI();
+}
+
+// Standard bulk download: stored archives/containers download directly,
+// plain files are bundled into one zip
+async function handleBulkDownload() {
+    if (selectedFileFilenames.size === 0) return;
+
+    const items = currentFiles.filter(f => selectedFileFilenames.has(f.filename));
+    const btn = $('#file-download-btn');
+    btn.disabled = true;
+    try {
+        await bulkDownloadSelection(items, {
+            singleUrl: f => `/api/files/${f.filename.split('/').map(encodeURIComponent).join('/')}/download`,
+            zipUrl: '/api/files/bulk-download',
+            zipBody: names => ({ files: names.map(f => f.filename) }),
+        });
+    } finally {
+        btn.disabled = selectedFileFilenames.size === 0;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -286,14 +297,16 @@ async function handleUpload(files) {
         cancelBtn.addEventListener('click', () => {
             abort();
             item.classList.add('upload-cancelled');
-            progressText.textContent = '✗ Cancelled';
+            progressText.textContent = 'Cancelled';
+            progressText.classList.add('progress-error');
             cancelBtn.disabled = true;
         });
 
         return promise.then(() => {
             successCount++;
             progressFill.style.width = '100%';
-            progressText.textContent = '✓ Complete';
+            progressText.textContent = 'Complete';
+            progressText.classList.add('progress-success');
             cancelBtn.disabled = true;
         }).catch((err) => {
             if (err.name === 'AbortError') {
@@ -301,7 +314,8 @@ async function handleUpload(files) {
                 return;
             }
             failCount++;
-            progressText.textContent = `✗ ${err.message}`;
+            progressText.textContent = `Failed: ${err.message}`;
+            progressText.classList.add('progress-error');
             cancelBtn.disabled = true;
             toast(`Failed to upload '${file.name}': ${err.message}`, 'error');
         });
@@ -551,6 +565,7 @@ function initUploadDropzone() {
 document.addEventListener('DOMContentLoaded', () => {
     initModals();
     initUploadDropzone();
+    showListLoading('files-empty');
     loadFiles();
 
     // Select-all checkbox
@@ -597,6 +612,7 @@ document.addEventListener('DOMContentLoaded', () => {
     $('#file-unstage-btn').addEventListener('click', handleBulkUnstage);
     $('#file-delete-btn').addEventListener('click', handleBulkDelete);
     $('#file-rename-btn').addEventListener('click', handleBulkRename);
+    $('#file-download-btn').addEventListener('click', handleBulkDownload);
 
     // Rename confirm
     $('#rename-confirm-btn').addEventListener('click', handleRename);

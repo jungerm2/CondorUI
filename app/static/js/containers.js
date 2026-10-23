@@ -1,36 +1,12 @@
 // Container Management
 
 let currentContainers = [];
+let selectedContainerFilenames = new Set();
 let renameTargetFilename = null;
 let deleteTargetFilename = null;
 let osdfConfigured = false;
 let containerSortField = 'name';
 let containerSortAsc = true;
-
-// Modal helpers
-function openModal(id) {
-    document.getElementById(id).classList.add('active');
-}
-
-function closeModal(id) {
-    document.getElementById(id).classList.remove('active');
-}
-
-function initModals() {
-    document.querySelectorAll('.modal-close-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const modalId = btn.dataset.modal;
-            if (modalId) closeModal(modalId);
-        });
-    });
-    document.querySelectorAll('.modal-overlay').forEach(overlay => {
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) {
-                overlay.classList.remove('active');
-            }
-        });
-    });
-}
 
 // formatFileSize and formatDateIso are now defined in common.js
 // These duplicates have been removed; use the shared versions instead.
@@ -150,8 +126,12 @@ function renderContainers() {
         const sourceLabel = c.source && c.source.startsWith('uploaded:')
             ? `Uploaded: ${c.source.replace('uploaded:', '')}`
             : (c.source || '—');
+        const isChecked = selectedContainerFilenames.has(c.filename);
 
         tr.innerHTML = `
+            <td style="text-align: center;">
+                <input type="checkbox" class="container-row-checkbox" data-filename="${escHtml(c.filename)}" ${isChecked ? 'checked' : ''}>
+            </td>
             <td class="monospace" style="font-weight: 500;">${escHtml(c.name)}</td>
             <td class="monospace" style="font-size: 0.82rem; max-width: 200px; overflow: hidden; text-overflow: ellipsis;" title="${escHtml(c.source || '')}">${escHtml(sourceLabel)}</td>
             <td>${formatFileSize(c.size)}</td>
@@ -159,14 +139,27 @@ function renderContainers() {
             <td class="monospace" style="font-size: 0.8rem; max-width: 250px; overflow: hidden; text-overflow: ellipsis;" title="${escHtml(c.uri)}">${escHtml(c.uri)}</td>
             <td>
                 <div class="action-btns">
-                    <button class="btn btn-ghost btn-sm rename-container-btn" data-filename="${c.filename}" title="Rename">
+                    <button class="btn btn-ghost btn-sm container-preview-btn" data-filename="${escHtml(c.filename)}" title="Preview">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                            <circle cx="12" cy="12" r="3" />
+                        </svg>
+                    </button>
+                    <a href="/api/containers/${escHtml(c.filename.split('/').map(encodeURIComponent).join('/'))}/download" class="btn btn-ghost btn-sm" title="Download" download>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                            <polyline points="7,10 12,15 17,10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                    </a>
+                    <button class="btn btn-ghost btn-sm rename-container-btn" data-filename="${escHtml(c.filename)}" title="Rename">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
                             <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
                         </svg>
                         Rename
                     </button>
-                    <button class="btn btn-ghost btn-sm delete-container-btn" data-filename="${c.filename}" data-name="${escHtml(c.name)}" title="Delete" style="color: var(--danger-color, #f87171);">
+                    <button class="btn btn-ghost btn-sm delete-container-btn" data-filename="${escHtml(c.filename)}" data-name="${escHtml(c.name)}" title="Delete" style="color: var(--danger-color, #f87171);">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <polyline points="3,6 5,6 21,6" />
                             <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
@@ -177,9 +170,28 @@ function renderContainers() {
             </td>
         `;
         tbody.appendChild(tr);
+
+        // Row click toggles checkbox (actions get their own handlers)
+        bindRowClickToggle(tr, '.container-row-checkbox', ['a', 'button']);
+    });
+
+    // Bind checkbox events
+    tbody.querySelectorAll('.container-row-checkbox').forEach(cb => {
+        cb.addEventListener('change', () => {
+            const filename = cb.dataset.filename;
+            if (cb.checked) {
+                selectedContainerFilenames.add(filename);
+            } else {
+                selectedContainerFilenames.delete(filename);
+            }
+            updateSelectionUI();
+        });
     });
 
     // Bind action buttons
+    tbody.querySelectorAll('.container-preview-btn').forEach(btn => {
+        btn.addEventListener('click', () => openContainerPreview(btn.dataset.filename));
+    });
     tbody.querySelectorAll('.rename-container-btn').forEach(btn => {
         btn.addEventListener('click', () => openRenameModal(btn.dataset.filename));
     });
@@ -188,6 +200,48 @@ function renderContainers() {
     });
 
     updateSortArrows(table, containerSortField, containerSortAsc);
+    updateSelectionUI();
+}
+
+// Update the toolbar selection count and bulk-action enablement
+function updateSelectionUI() {
+    const count = selectedContainerFilenames.size;
+    $('#container-selection-count').textContent = `${count} selected`;
+    $('#container-download-btn').disabled = count === 0;
+
+    // Update select-all checkbox
+    updateSelectAllState($('#container-select-all'), currentContainers, selectedContainerFilenames, c => c.filename);
+}
+
+// Preview one container through the shared modal; the modal decides from
+// the filename that .sif binaries cannot render inline
+function openContainerPreview(filename) {
+    const c = currentContainers.find(item => item.filename === filename);
+    const enc = filename.split('/').map(encodeURIComponent).join('/');
+    openFilePreview({
+        name: c ? c.name : filename,
+        previewUrl: `/api/containers/${enc}/preview`,
+        downloadUrl: `/api/containers/${enc}/download`,
+    });
+}
+
+// Standard bulk download: archives and container images download
+// directly — one file each — instead of being re-zipped
+async function handleBulkDownload() {
+    if (selectedContainerFilenames.size === 0) return;
+
+    const items = currentContainers.filter(c => selectedContainerFilenames.has(c.filename));
+    const btn = $('#container-download-btn');
+    btn.disabled = true;
+    try {
+        await bulkDownloadSelection(items, {
+            singleUrl: c => `/api/containers/${c.filename.split('/').map(encodeURIComponent).join('/')}/download`,
+            zipUrl: '/api/containers/bulk-download',
+            zipBody: names => ({ files: names.map(c => c.filename) }),
+        });
+    } finally {
+        btn.disabled = selectedContainerFilenames.size === 0;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -423,7 +477,8 @@ async function handleSifUpload(file) {
         await loadContainers();
     }).catch((err) => {
         let msg = err.message || 'Upload failed';
-        progressText.textContent = `✗ ${msg}`;
+        progressText.textContent = `Failed: ${msg}`;
+        progressText.classList.add('progress-error');
         toast(msg, 'error');
     });
 }
@@ -482,6 +537,7 @@ async function handleDelete() {
     try {
         await api(`/containers/${encodeURIComponent(deleteTargetFilename)}`, { method: 'DELETE' });
         toast('Container deleted');
+        selectedContainerFilenames.delete(deleteTargetFilename);
         closeModal('delete-modal');
         deleteTargetFilename = null;
         await loadContainers();
@@ -590,6 +646,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Delete confirm
     $('#delete-confirm-btn').addEventListener('click', handleDelete);
+
+    // Bulk download from toolbar
+    $('#container-download-btn').addEventListener('click', handleBulkDownload);
+    const containerSelectAll = $('#container-select-all');
+    if (containerSelectAll) {
+        containerSelectAll.addEventListener('change', (e) => {
+            const checked = e.target.checked;
+            selectedContainerFilenames.clear();
+            if (checked) {
+                currentContainers.forEach(c => selectedContainerFilenames.add(c.filename));
+            }
+            renderContainers();
+        });
+    }
 
     // Stop pull
     const stopBtn = $('#pull-stop-btn');

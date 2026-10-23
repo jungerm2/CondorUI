@@ -8,31 +8,6 @@ let uploadAbortControllers = []; // Track active uploads for cancel
 let execSortField = 'filename';
 let execSortAsc = true;
 
-// Modal helpers (same as files.js)
-function openModal(id) {
-    document.getElementById(id).classList.add('active');
-}
-
-function closeModal(id) {
-    document.getElementById(id).classList.remove('active');
-}
-
-function initModals() {
-    document.querySelectorAll('.modal-close-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const modalId = btn.dataset.modal;
-            if (modalId) closeModal(modalId);
-        });
-    });
-    document.querySelectorAll('.modal-overlay').forEach(overlay => {
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) {
-                overlay.classList.remove('active');
-            }
-        });
-    });
-}
-
 // Load executables from API
 async function loadExecutables() {
     try {
@@ -53,20 +28,12 @@ function updateSelectionUI() {
     $('#exec-selection-count').textContent = `${count} selected`;
 
     const deleteBtn = $('#exec-delete-btn');
+    const downloadBtn = $('#exec-download-btn');
     deleteBtn.disabled = count === 0;
+    downloadBtn.disabled = count === 0;
 
     // Update select-all checkbox
-    const selectAll = $('#exec-select-all');
-    if (selectAll) {
-        if (currentExecs.length > 0) {
-            const allSelected = currentExecs.every(f => selectedExecFilenames.has(f.filename));
-            selectAll.checked = allSelected;
-            selectAll.indeterminate = !allSelected && currentExecs.some(f => selectedExecFilenames.has(f.filename));
-        } else {
-            selectAll.checked = false;
-            selectAll.indeterminate = false;
-        }
-    }
+    updateSelectAllState($('#exec-select-all'), currentExecs, selectedExecFilenames, f => f.filename);
 }
 
 // Get sortable value for an executable
@@ -101,6 +68,8 @@ function renderExecutables() {
     if (filtered.length === 0) {
         table.style.display = 'none';
         empty.style.display = 'block';
+        const p = empty.querySelector('p');
+        if (p && p.dataset.emptyText) p.textContent = p.dataset.emptyText;
         updateSelectionUI();
         return;
     }
@@ -114,23 +83,33 @@ function renderExecutables() {
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td style="text-align: center;">
-                <input type="checkbox" class="exec-row-checkbox" data-exec-filename="${f.filename}" ${isChecked ? 'checked' : ''}>
+                <input type="checkbox" class="exec-row-checkbox" data-exec-filename="${escHtml(f.filename)}" ${isChecked ? 'checked' : ''}>
             </td>
             <td class="monospace">${escHtml(f.filename)}</td>
             <td>${formatFileSize(f.size)}</td>
             <td>${formatDate(f.uploaded_at)}</td>
+            <td>
+                <div class="action-btns">
+                    <button class="btn btn-ghost btn-sm exec-preview-btn" data-filename="${escHtml(f.filename)}" title="Preview">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                            <circle cx="12" cy="12" r="3" />
+                        </svg>
+                    </button>
+                    <a href="/api/executables/${encodeURIComponent(f.filename)}/download" class="btn btn-ghost btn-sm" title="Download" download>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                            <polyline points="7,10 12,15 17,10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                    </a>
+                </div>
+            </td>
         `;
         tbody.appendChild(tr);
 
-        // Row click toggles checkbox
-        tr.addEventListener('click', (e) => {
-            if (e.target.closest('input[type="checkbox"]')) return;
-            const cb = tr.querySelector('.exec-row-checkbox');
-            if (cb) {
-                cb.checked = !cb.checked;
-                cb.dispatchEvent(new Event('change'));
-            }
-        });
+        // Row click toggles checkbox (actions get their own handlers)
+        bindRowClickToggle(tr, '.exec-row-checkbox', ['a', 'button']);
     });
 
     // Bind checkbox events
@@ -146,8 +125,38 @@ function renderExecutables() {
         });
     });
 
+    // Row actions
+    tbody.querySelectorAll('.exec-preview-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            openFilePreview({
+                name: btn.dataset.filename,
+                previewUrl: `/api/executables/${encodeURIComponent(btn.dataset.filename)}/preview`,
+                downloadUrl: `/api/executables/${encodeURIComponent(btn.dataset.filename)}/download`,
+            });
+        });
+    });
+
     updateSortArrows(table, execSortField, execSortAsc);
     updateSelectionUI();
+}
+
+// Standard bulk download: archives download directly, the rest go into
+// one zip
+async function handleBulkDownload() {
+    if (selectedExecFilenames.size === 0) return;
+
+    const items = currentExecs.filter(f => selectedExecFilenames.has(f.filename));
+    const btn = $('#exec-download-btn');
+    btn.disabled = true;
+    try {
+        await bulkDownloadSelection(items, {
+            singleUrl: f => `/api/executables/${encodeURIComponent(f.filename)}/download`,
+            zipUrl: '/api/executables/bulk-download',
+            zipBody: names => ({ files: names.map(f => f.filename) }),
+        });
+    } finally {
+        btn.disabled = selectedExecFilenames.size === 0;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -264,21 +273,24 @@ async function handleUpload(files) {
         cancelBtn.addEventListener('click', () => {
             abort();
             item.classList.add('upload-cancelled');
-            progressText.textContent = '✗ Cancelled';
+            progressText.textContent = 'Cancelled';
+            progressText.classList.add('progress-error');
             cancelBtn.disabled = true;
         });
 
         return promise.then(() => {
             successCount++;
             progressFill.style.width = '100%';
-            progressText.textContent = '✓ Complete';
+            progressText.textContent = 'Complete';
+            progressText.classList.add('progress-success');
             cancelBtn.disabled = true;
         }).catch((err) => {
             if (err.name === 'AbortError') {
                 return;
             }
             failCount++;
-            progressText.textContent = `✗ ${err.message}`;
+            progressText.textContent = `Failed: ${err.message}`;
+            progressText.classList.add('progress-error');
             cancelBtn.disabled = true;
             toast(`Failed to upload '${file.name}': ${err.message}`, 'error');
         });
@@ -413,6 +425,7 @@ function initUploadDropzone() {
 document.addEventListener('DOMContentLoaded', () => {
     initModals();
     initUploadDropzone();
+    showListLoading('exec-empty');
     loadExecutables();
 
     // Select-all checkbox
@@ -459,6 +472,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Bulk action buttons
     $('#exec-delete-btn').addEventListener('click', handleBulkDelete);
+    $('#exec-download-btn').addEventListener('click', handleBulkDownload);
 
     // Delete confirm
     $('#exec-delete-confirm-btn').addEventListener('click', handleDelete);
