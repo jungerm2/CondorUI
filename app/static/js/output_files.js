@@ -1,13 +1,25 @@
 // Output Files Management
 
 let currentOutputFiles = [];
-// Keyed by "cluster_id/filename" — filenames repeat across clusters
-let selectedFiles = new Map(); // key -> {cluster_id, filename}
-let outputSortField = 'filename';
-let outputSortAsc = true;
+// Keyed by absolute path — nested files can share a basename
+let selectedFiles = new Map(); // key -> {cluster_id, filename, root}
+let outputSortField = 'modified_at';
+let outputSortAsc = false;
 
-const outputKey = (f) => `${f.cluster_id}/${f.filename}`;
-const outputHref = (path) => `/api/output-files/${path}`;
+const outputKey = (f) => f.path || `${f.cluster_id}/${f.filename}`;
+const outputFilenameSlug = (filename) =>
+    filename.split('/').map(encodeURIComponent).join('/');
+const outputRootQuery = (root) =>
+    root ? `?root=${encodeURIComponent(root)}` : '';
+const outputHref = (path, root) =>
+    `/api/output-files/${path}${outputRootQuery(root)}`;
+const outputFileUrl = (action, f) =>
+    outputHref(`${action}/${f.cluster_id}/${outputFilenameSlug(f.filename)}`, f.root);
+const outputSelection = (f) => ({
+    cluster_id: f.cluster_id,
+    filename: f.filename,
+    root: f.root || '',
+});
 
 // Load output files from API
 async function loadOutputFiles() {
@@ -44,14 +56,27 @@ function getOutputSortValue(item, field) {
     }
 }
 
-// Remember collapsed job groups across re-renders (keyed by cluster id)
-const collapsedJobs = new Set();
+// Group order is its own concern: sorting by a file column should not make
+// job groups jump around based on which file happens to sort first.
+function getOutputGroupSortValue(group, field) {
+    switch (field) {
+        case 'filename':
+        case 'job_name': return (group.name || '').toLowerCase();
+        case 'size': return group.totalBytes || 0;
+        case 'cluster_id': return (group.clusterId || 0) * 100000 + (group.procId || 0);
+        case 'command': return (group.command || '').toLowerCase();
+        case 'modified_at': return group.maxModified || 0;
+        default: return 0;
+    }
+}
+
+// Remember collapsed job groups across re-renders (keyed by cluster/proc)
+const collapsedGroups = new Set();
 
 // One grouped file row: checkbox, folder-aware filename, size, date, actions
 function buildOutputFileRow(f) {
     const key = outputKey(f);
     const isChecked = selectedFiles.has(key);
-    const slug = `${f.cluster_id}/${f.filename.split('/').map(encodeURIComponent).join('/')}`;
     const parts = f.filename.split('/');
     const base = parts.pop() || f.filename;
     const dir = parts.join('/');
@@ -68,20 +93,20 @@ function buildOutputFileRow(f) {
         <td>${formatDate(f.modified_at)}</td>
         <td>
             <div class="action-btns">
-                <button class="btn btn-ghost btn-sm output-preview-btn" data-cluster-id="${f.cluster_id}" data-filename="${escHtml(f.filename)}" title="Preview">
+                <button class="btn btn-ghost btn-sm output-preview-btn" data-cluster-id="${f.cluster_id}" data-filename="${escHtml(f.filename)}" data-root="${escHtml(f.root || '')}" title="Preview">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
                         <circle cx="12" cy="12" r="3" />
                     </svg>
                 </button>
-                <a href="${outputHref(`download/${slug}`)}" class="btn btn-ghost btn-sm" title="Download" download>
+                <a href="${outputFileUrl('download', f)}" class="btn btn-ghost btn-sm" title="Download" download>
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                         <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
                         <polyline points="7,10 12,15 17,10" />
                         <line x1="12" y1="15" x2="12" y2="3" />
                     </svg>
                 </a>
-                <button class="btn btn-ghost btn-sm output-delete-btn" data-cluster-id="${f.cluster_id}" data-filename="${escHtml(f.filename)}" title="Delete" style="color: var(--danger-color, #f87171);">
+                <button class="btn btn-ghost btn-sm output-delete-btn" data-cluster-id="${f.cluster_id}" data-filename="${escHtml(f.filename)}" data-root="${escHtml(f.root || '')}" data-path="${escHtml(f.path || '')}" title="Delete" style="color: var(--danger-color, #f87171);">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                         <polyline points="3,6 5,6 21,6" />
                         <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
@@ -100,10 +125,7 @@ function bindOutputRowEvents(tbody) {
             const key = cb.dataset.key;
             if (cb.checked) {
                 const file = currentOutputFiles.find(f => outputKey(f) === key);
-                selectedFiles.set(key, {
-                    cluster_id: file ? file.cluster_id : parseInt(key, 10),
-                    filename: file ? file.filename : key.split('/').slice(1).join('/'),
-                });
+                if (file) selectedFiles.set(key, outputSelection(file));
             } else {
                 selectedFiles.delete(key);
             }
@@ -112,24 +134,30 @@ function bindOutputRowEvents(tbody) {
     });
 
     tbody.querySelectorAll('.output-preview-btn').forEach(btn => {
-        btn.addEventListener('click', () => openOutputPreview(btn.dataset.clusterId, btn.dataset.filename));
+        btn.addEventListener('click', () => openOutputPreview(
+            btn.dataset.clusterId, btn.dataset.filename, btn.dataset.root));
     });
     tbody.querySelectorAll('.output-delete-btn').forEach(btn => {
-        btn.addEventListener('click', () => handleSingleDelete(btn.dataset.clusterId, btn.dataset.filename));
+        btn.addEventListener('click', () => handleSingleDelete(
+            btn.dataset.clusterId, btn.dataset.filename, btn.dataset.root,
+            btn.dataset.path));
     });
 
     // Group checkbox: select/deselect only this job's files
     tbody.querySelectorAll('.output-group-checkbox').forEach(gcb => {
         gcb.addEventListener('change', () => {
             const clusterId = parseInt(gcb.dataset.clusterId, 10);
-            currentOutputFiles.filter(f => f.cluster_id === clusterId).forEach(f => {
-                const key = outputKey(f);
-                if (gcb.checked) {
-                    selectedFiles.set(key, { cluster_id: f.cluster_id, filename: f.filename });
-                } else {
-                    selectedFiles.delete(key);
-                }
-            });
+            const procId = parseInt(gcb.dataset.procId || '0', 10);
+            currentOutputFiles
+                .filter(f => f.cluster_id === clusterId && (f.proc_id || 0) === procId)
+                .forEach(f => {
+                    const key = outputKey(f);
+                    if (gcb.checked) {
+                        selectedFiles.set(key, outputSelection(f));
+                    } else {
+                        selectedFiles.delete(key);
+                    }
+                });
             renderOutputFiles();  // one re-render syncs every checkbox
         });
     });
@@ -138,16 +166,46 @@ function bindOutputRowEvents(tbody) {
     tbody.querySelectorAll('tr.group-header').forEach(tr => {
         tr.addEventListener('click', e => {
             if (e.target.closest('a, input, button')) return;
-            const id = parseInt(tr.dataset.clusterId, 10);
-            if (collapsedJobs.has(id)) collapsedJobs.delete(id); else collapsedJobs.add(id);
+            const key = tr.dataset.groupKey;
+            if (!key) return;
+            if (collapsedGroups.has(key)) collapsedGroups.delete(key);
+            else collapsedGroups.add(key);
             renderOutputFiles();
         });
     });
 }
 
+// Group files by job (cluster and, when known, proc).  A cluster whose
+// outputs live in one shared directory keeps a single group.
+function groupOutputFiles(files) {
+    const groups = new Map();
+    files.forEach(f => {
+        const procId = f.proc_id || 0;
+        const key = `${f.cluster_id}:${procId}`;
+        let group = groups.get(key);
+        if (!group) {
+            group = {
+                key,
+                clusterId: f.cluster_id,
+                procId,
+                name: f.job_name || 'Job',
+                command: f.command || '',
+                totalBytes: 0,
+                maxModified: 0,
+                files: [],
+            };
+            groups.set(key, group);
+        }
+        group.files.push(f);
+        group.totalBytes += f.size || 0;
+        group.maxModified = Math.max(group.maxModified, f.modified_at || 0);
+    });
+    return [...groups.values()];
+}
+
 // Render output file list grouped by job: a collapsible header row per
-// cluster (job name, file count, total size), file rows beneath it with
-// their folder path shown muted so nested output sticks together.
+// cluster/proc, with files sorted inside each group and a drawn expander
+// on the right edge of the header.
 function renderOutputFiles() {
     const tbody = $('#output-files-tbody');
     const empty = $('#output-files-empty');
@@ -161,12 +219,9 @@ function renderOutputFiles() {
         item => item.filename,
         item => item.job_name,
         item => String(item.cluster_id || ''),
+        item => String(item.proc_id || ''),
         item => item.command,
     ]);
-
-    // Apply sort, then group in order of first appearance: groups inherit
-    // the current sort (e.g. by size, jobs are ordered by their largest file)
-    filtered = sortData(filtered, outputSortField, outputSortAsc, getOutputSortValue);
 
     tbody.innerHTML = '';
 
@@ -182,33 +237,62 @@ function renderOutputFiles() {
     table.style.display = '';
     empty.style.display = 'none';
 
-    const groups = new Map();
-    filtered.forEach(f => {
-        if (!groups.has(f.cluster_id)) groups.set(f.cluster_id, []);
-        groups.get(f.cluster_id).push(f);
+    const groups = groupOutputFiles(filtered);
+    groups.forEach(group => {
+        group.files = sortData(
+            group.files, outputSortField, outputSortAsc, getOutputSortValue);
+    });
+    groups.sort((a, b) => {
+        const va = getOutputGroupSortValue(a, outputSortField);
+        const vb = getOutputGroupSortValue(b, outputSortField);
+        if (va < vb) return outputSortAsc ? -1 : 1;
+        if (va > vb) return outputSortAsc ? 1 : -1;
+        return (a.clusterId - b.clusterId) || (a.procId - b.procId);
     });
 
-    groups.forEach((files, clusterId) => {
-        const name = files[0].job_name || `Job #${clusterId}`;
+    // Show cluster.proc only when a cluster actually has per-proc groups.
+    const clusterProcs = new Map();
+    groups.forEach(group => {
+        if (!clusterProcs.has(group.clusterId)) {
+            clusterProcs.set(group.clusterId, new Set());
+        }
+        clusterProcs.get(group.clusterId).add(group.procId);
+    });
+
+    groups.forEach(group => {
+        const files = group.files;
+        const name = group.name;
         const totalCount = files.length;
-        const totalBytes = files.reduce((sum, f) => sum + (f.size || 0), 0);
         const allSelected = files.every(f => selectedFiles.has(outputKey(f)));
         const someSelected = files.some(f => selectedFiles.has(outputKey(f)));
-        const collapsed = collapsedJobs.has(clusterId);
+        const collapsed = collapsedGroups.has(group.key);
+        const showProc =
+            group.procId > 0 ||
+            (clusterProcs.get(group.clusterId)?.size || 0) > 1;
+        const jobLabel = showProc
+            ? `${group.clusterId}.${group.procId}`
+            : String(group.clusterId);
 
         const gtr = document.createElement('tr');
         gtr.className = 'group-header';
-        gtr.dataset.clusterId = clusterId;
+        gtr.dataset.groupKey = group.key;
+        gtr.dataset.clusterId = group.clusterId;
+        gtr.dataset.procId = group.procId;
         gtr.innerHTML = `
             <td style="text-align: center;">
-                <input type="checkbox" class="output-group-checkbox" data-cluster-id="${clusterId}"
+                <input type="checkbox" class="output-group-checkbox"
+                    data-cluster-id="${group.clusterId}" data-proc-id="${group.procId}"
                     ${allSelected ? 'checked' : ''}>
             </td>
             <td colspan="4">
-                <span class="expand-chevron ${collapsed ? '' : 'expanded'}"></span>
-                <a href="/job/${clusterId}" style="color: var(--accent-cyan);">${escHtml(name)}</a>
-                <span class="monospace" style="color: var(--text-muted); margin-left: 6px;">#${clusterId}</span>
-                <span style="color: var(--text-muted); margin-left: 10px;">${totalCount} file${totalCount === 1 ? '' : 's'} · ${formatFileSize(totalBytes)}</span>
+                <div class="output-group-header">
+                    <span class="output-group-name">
+                        <a href="/job/${group.clusterId}/${group.procId}">${escHtml(name)}</a>
+                        <span class="monospace output-group-id">#${jobLabel}</span>
+                    </span>
+                    <span class="output-group-meta">${totalCount} file${totalCount === 1 ? '' : 's'} · ${formatFileSize(group.totalBytes)}</span>
+                    <span class="expand-chevron ${collapsed ? '' : 'expanded'}" aria-hidden="true"></span>
+                </div>
             </td>
         `;
         const gcb = gtr.querySelector('.output-group-checkbox');
@@ -231,7 +315,7 @@ function renderOutputFiles() {
 }
 
 // Delete a single output file from its row
-function handleSingleDelete(clusterId, filename) {
+function handleSingleDelete(clusterId, filename, root, path) {
     showConfirmModal(
         `Delete output file <strong>${escHtml(filename)}</strong> from cluster <strong>${escHtml(clusterId)}</strong>?<br><br>This cannot be undone.`,
         {
@@ -240,9 +324,10 @@ function handleSingleDelete(clusterId, filename) {
             confirmClass: 'btn-danger',
             onConfirm: async () => {
                 try {
-                    await api(`/output-files/delete/${clusterId}/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+                    const url = `/output-files/delete/${clusterId}/${outputFilenameSlug(filename)}${outputRootQuery(root)}`;
+                    await api(url, { method: 'DELETE' });
                     toast(`Deleted '${filename}'`);
-                    selectedFiles.delete(outputKey({ cluster_id: parseInt(clusterId, 10), filename }));
+                    selectedFiles.delete(path || `${clusterId}/${filename}`);
                     await loadOutputFiles();
                 } catch (err) {
                     toast(`Failed to delete '${filename}': ${err.message}`, 'error');
@@ -299,7 +384,9 @@ async function handleBulkDownload() {
     try {
         await bulkDownloadSelection([...selectedFiles.values()], {
             singleUrl: f =>
-                outputHref(`download/${f.cluster_id}/${f.filename.split('/').map(encodeURIComponent).join('/')}`),
+                outputHref(
+                    `download/${f.cluster_id}/${outputFilenameSlug(f.filename)}`,
+                    f.root),
             zipUrl: outputHref('bulk-download'),
             zipBody: files => ({ files }),
         });
@@ -309,11 +396,13 @@ async function handleBulkDownload() {
 }
 
 // Open the shared preview modal for one output file
-function openOutputPreview(clusterId, filename) {
+function openOutputPreview(clusterId, filename, root) {
     openFilePreview({
         name: filename,
-        previewUrl: outputHref(`preview/${clusterId}/${encodeURIComponent(filename)}`),
-        downloadUrl: outputHref(`download/${clusterId}/${encodeURIComponent(filename)}`),
+        previewUrl: outputHref(
+            `preview/${clusterId}/${outputFilenameSlug(filename)}`, root),
+        downloadUrl: outputHref(
+            `download/${clusterId}/${outputFilenameSlug(filename)}`, root),
     });
 }
 
@@ -329,7 +418,7 @@ document.addEventListener('DOMContentLoaded', () => {
         currentOutputFiles.forEach(f => {
             const key = outputKey(f);
             if (checked) {
-                selectedFiles.set(key, { cluster_id: f.cluster_id, filename: f.filename });
+                selectedFiles.set(key, outputSelection(f));
             } else {
                 selectedFiles.delete(key);
             }

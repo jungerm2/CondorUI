@@ -1454,6 +1454,34 @@ details.card[open] .card-body {
 .group-header td:first-child {
     position: relative;
 }
+/* Output job header: name left, counts after it, expander pinned right */
+.output-group-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+.output-group-name {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+}
+.output-group-name a {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--accent-cyan);
+}
+.output-group-id {
+    color: var(--text-muted);
+}
+.output-group-meta {
+    color: var(--text-muted);
+    margin-left: 4px;
+    white-space: nowrap;
+}
 /* Group expander: a drawn chevron, not a typed glyph */
 .expand-chevron {
     display: inline-flex;
@@ -1461,14 +1489,15 @@ details.card[open] .card-body {
     justify-content: center;
     width: 10px;
     height: 10px;
-    margin-right: 6px;
+    margin-left: auto;
     flex-shrink: 0;
     background: var(--text-muted);
     clip-path: polygon(0 25%, 50% 87%, 100% 25%, 100% 45%, 50% 100%, 0 45%);
     transition: transform 0.2s ease;
+    transform: rotate(-90deg);
 }
 .expand-chevron.expanded {
-    transform: rotate(90deg);
+    transform: rotate(0);
 }
 .group-subrow {
     background: rgba(100, 120, 180, 0.02);
