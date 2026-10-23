@@ -1469,7 +1469,8 @@ details.card[open] .card-body {
     overflow: hidden;
     white-space: nowrap;
 }
-.output-group-name a {
+.output-group-name a,
+.output-group-label {
     overflow: hidden;
     text-overflow: ellipsis;
     color: var(--accent-cyan);

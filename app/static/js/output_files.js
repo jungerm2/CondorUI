@@ -272,6 +272,13 @@ function renderOutputFiles() {
         const jobLabel = showProc
             ? `${group.clusterId}.${group.procId}`
             : String(group.clusterId);
+        const hasJob = group.clusterId > 0;
+        const nameHtml = hasJob
+            ? `<a href="/job/${group.clusterId}/${group.procId}">${escHtml(name)}</a>`
+            : `<span class="output-group-label">${escHtml(name)}</span>`;
+        const idHtml = hasJob
+            ? `<span class="monospace output-group-id">#${jobLabel}</span>`
+            : '';
 
         const gtr = document.createElement('tr');
         gtr.className = 'group-header';
@@ -287,8 +294,8 @@ function renderOutputFiles() {
             <td colspan="4">
                 <div class="output-group-header">
                     <span class="output-group-name">
-                        <a href="/job/${group.clusterId}/${group.procId}">${escHtml(name)}</a>
-                        <span class="monospace output-group-id">#${jobLabel}</span>
+                        ${nameHtml}
+                        ${idHtml}
                     </span>
                     <span class="output-group-meta">${totalCount} file${totalCount === 1 ? '' : 's'} · ${formatFileSize(group.totalBytes)}</span>
                     <span class="expand-chevron ${collapsed ? '' : 'expanded'}" aria-hidden="true"></span>

@@ -11,9 +11,8 @@ def _add_submission(app, **kwargs):
     with app.app_context():
         db.session.add(
             JobSubmission(
-                name="Test job",
                 submit_description=json.dumps({"executable": "/bin/true"}),
-                **{"num_procs": 1, **kwargs},
+                **{"name": "Test job", "num_procs": 1, **kwargs},
             )
         )
         db.session.commit()
@@ -167,3 +166,64 @@ def test_bulk_actions_accept_remapped_root(secure_app, secure_client):
     assert resp.status_code == 200
     assert resp.get_json()["deleted"] == ["130/result.txt"]
     assert not dest.exists()
+
+
+def test_scans_output_dir_without_any_submission(secure_app, secure_client):
+    out_dir = secure_app.extensions["test_dirs"]["output_dir"] / "00000200"
+    (out_dir / "nested").mkdir(parents=True)
+    (out_dir / "nested" / "frame.png").write_bytes(b"frame")
+    (out_dir / "notes.txt").write_text("notes")
+
+    files = _listing(secure_client)
+    assert set(files) == {"nested/frame.png", "notes.txt"}
+    assert files["nested/frame.png"]["cluster_id"] == 200
+    assert files["nested/frame.png"]["root"] == str(out_dir.resolve())
+
+    resp = secure_client.get(
+        "/api/output-files/download/200/nested/frame.png",
+        query_string={"root": str(out_dir)},
+    )
+    assert resp.status_code == 200
+    assert resp.data == b"frame"
+
+
+def test_disk_scan_uses_submission_metadata_when_path_is_missing(
+    secure_app, secure_client
+):
+    out_dir = secure_app.extensions["test_dirs"]["output_dir"] / "201"
+    out_dir.mkdir(parents=True)
+    (out_dir / "result.txt").write_text("result")
+    _add_submission(
+        secure_app,
+        cluster_id=201,
+        name="Disk-only job",
+        output_destination=None,
+    )
+
+    files = _listing(secure_client)
+    assert files["result.txt"]["job_name"] == "Disk-only job"
+    assert files["result.txt"]["cluster_id"] == 201
+
+
+def test_files_directly_under_output_dir_are_listed(secure_app, secure_client):
+    output_dir = secure_app.extensions["test_dirs"]["output_dir"]
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "loose.txt").write_text("loose")
+
+    files = _listing(secure_client)
+    entry = files["loose.txt"]
+    assert entry["cluster_id"] == 0
+    assert entry["job_name"] == "Other outputs"
+    assert entry["root"] == str(output_dir.resolve())
+
+    resp = secure_client.delete(
+        "/api/output-files/delete-bulk",
+        json={
+            "files": [
+                {"cluster_id": 0, "filename": "loose.txt", "root": str(output_dir)}
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["deleted"] == ["0/loose.txt"]
+    assert not (output_dir / "loose.txt").exists()

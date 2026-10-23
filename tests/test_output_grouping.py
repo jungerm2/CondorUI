@@ -54,12 +54,13 @@ def test_groups_sort_newest_first_and_expander_is_right(
 
     headers = page.locator("tr.group-header")
     texts = headers.all_inner_texts()
-    assert "Newer job" in texts[0], texts
-    assert "Older job" in texts[1], texts
+    newer_index = next(i for i, text in enumerate(texts) if "Newer job" in text)
+    older_index = next(i for i, text in enumerate(texts) if "Older job" in text)
+    assert newer_index < older_index, texts
 
     geometry = page.evaluate(
-        """() => {
-            const row = document.querySelector('tr.group-header');
+        """(index) => {
+            const row = document.querySelectorAll('tr.group-header')[index];
             const group = row.querySelector('.output-group-header');
             const chevron = row.querySelector('.expand-chevron');
             const rowBox = row.getBoundingClientRect();
@@ -70,10 +71,29 @@ def test_groups_sort_newest_first_and_expander_is_right(
                 rowWidth: rowBox.width,
                 chevronRight: chevronBox.right,
             };
-        }"""
+        }""",
+        newer_index,
     )
     assert geometry["isLast"], "expander must be the last item in the header"
     assert (
         geometry["chevronRight"] > geometry["rowLeft"] + geometry["rowWidth"] * 0.8
     ), geometry
+    assert not errors, f"JS errors on output-files: {errors}"
+
+
+def test_disk_only_outputs_render_without_a_job_link(page, live_server, app, request):
+    output_root = Path(app.config["OUTPUT_DIR"])
+    output_root.mkdir(parents=True, exist_ok=True)
+    loose_file = output_root / "loose-disk-output.txt"
+    loose_file.write_text("loose")
+    request.addfinalizer(lambda: loose_file.unlink(missing_ok=True))
+
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(f"{live_server}/output-files")
+    page.wait_for_selector("tr.group-header", timeout=10_000)
+
+    header = page.locator("tr.group-header", has_text="Other outputs").first
+    assert header.count() == 1
+    assert header.locator("a").count() == 0
     assert not errors, f"JS errors on output-files: {errors}"

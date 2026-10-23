@@ -88,7 +88,7 @@ Templates are stored as `.json` files in `TEMPLATES_DIR` (slugified from the nam
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/api/output-files` | List output files located via `output_destination` and `transfer_output_remaps`. |
+| `GET` | `/api/output-files` | List output files discovered under `OUTPUT_DIR`, plus paths from `output_destination` and `transfer_output_remaps`. |
 | `GET` | `/api/output-files/download/<cluster_id>/<path:filename>` | Download an output file. |
 | `DELETE` | `/api/output-files/delete/<cluster_id>/<path:filename>` | Delete an output file from disk. |
 | `GET` | `/api/quotas` | Parse the system `get_quotas` command. `500` if the command is unavailable. |
@@ -146,7 +146,7 @@ truth, and files are grouped into UUID subdirectories (`<uuid>/<name>`).
 | Executables | `EXECUTABLES_DIR` | Flat; uploaded files are made `0755`. |
 | Templates | `TEMPLATES_DIR` | `<slug>.json` per template. |
 | Containers | `OSDF_ROOT_PATH/containers/` | `<uuid>/<safe_name>.sif`; only when `OSDF_ROOT_PATH` is set. |
-| Output files | `OUTPUT_DIR/<ClusterId>/` | Discovered via `output_destination` / `transfer_output_remaps`. |
+| Output files | `OUTPUT_DIR/<ClusterId>/` | Scanned from disk; submission `output_destination` / `transfer_output_remaps` add paths outside it. |
 | Job logs | `JOB_LOGS_DIR/<ClusterId>/` | HTCondor user log, stdout, stderr. |
 
 URIs for OSDF-staged files and containers are built as

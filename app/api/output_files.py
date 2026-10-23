@@ -9,7 +9,6 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from flask import abort, current_app, jsonify, request, send_file
-from sqlalchemy import or_
 
 from app.api import api_bp
 from app.api.helpers import (
@@ -67,6 +66,57 @@ def _output_root(sub: JobSubmission) -> Path | None:
         return None
     root = _local_output_path(sub.output_destination)
     return root.resolve() if root else None
+
+
+def _configured_output_root() -> Path | None:
+    """Return the app-wide output directory (``OUTPUT_DIR``) if configured."""
+    value = current_app.config.get("OUTPUT_DIR")
+    if not value:
+        return None
+    return Path(str(value)).expanduser().resolve()
+
+
+def _disk_output_entry(
+    path: Path, output_root: Path, cluster_meta: dict[int, dict[str, str]]
+) -> dict | None:
+    """Attribute an unclaimed file under OUTPUT_DIR to a cluster.
+
+    The default layout is ``OUTPUT_DIR/<ClusterId>/<files>``.  A numeric
+    first component becomes the job group; anything else (or a file directly
+    under OUTPUT_DIR) goes into the "Other outputs" group.
+    """
+    relative = path.relative_to(output_root)
+    parts = relative.parts
+    if len(parts) > 1 and parts[0].isdigit():
+        cluster_id = int(parts[0])
+        root = output_root / parts[0]
+        meta = cluster_meta.get(cluster_id, {"name": "", "command": ""})
+        return _output_file_entry(path, root, cluster_id, meta, proc_id=0)
+    return _output_file_entry(
+        path,
+        output_root,
+        0,
+        {"name": "Other outputs", "command": ""},
+        proc_id=0,
+    )
+
+
+def _collect_disk_files(
+    output_root: Path,
+    cluster_meta: dict[int, dict[str, str]],
+    seen: set[Path],
+) -> list[dict]:
+    """Scan OUTPUT_DIR for files not already claimed by a submission root."""
+    entries: list[dict] = []
+    for path in _iter_files(output_root):
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        entry = _disk_output_entry(path, output_root, cluster_meta)
+        if entry is not None:
+            seen.add(resolved)
+            entries.append(entry)
+    return entries
 
 
 def _proc_sibling_roots(root: Path, num_procs: int) -> list[tuple[int, Path]]:
@@ -143,7 +193,7 @@ def _iter_files(root: Path):
 def _output_file_entry(
     f: Path,
     root: Path,
-    sub: JobSubmission,
+    cluster_id: int,
     meta: dict,
     proc_id: int,
 ) -> dict | None:
@@ -159,7 +209,7 @@ def _output_file_entry(
         "root": str(root),
         "size": stat.st_size,
         "modified_at": stat.st_mtime,
-        "cluster_id": sub.cluster_id,
+        "cluster_id": cluster_id,
         "proc_id": proc_id,
         "job_name": meta["name"],
         "command": meta["command"],
@@ -206,7 +256,7 @@ def _collect_output_files(
             resolved = path.resolve()
             if resolved in seen:
                 continue
-            entry = _output_file_entry(path, root, sub, meta, proc_id)
+            entry = _output_file_entry(path, root, sub.cluster_id, meta, proc_id)
             if entry is not None:
                 seen.add(resolved)
                 entries.append(entry)
@@ -218,7 +268,7 @@ def _collect_output_files(
         if path.is_file() and not path.is_symlink():
             if path in seen:
                 continue
-            entry = _output_file_entry(path, path.parent, sub, meta, 0)
+            entry = _output_file_entry(path, path.parent, sub.cluster_id, meta, 0)
             if entry is not None:
                 seen.add(path)
                 entries.append(entry)
@@ -227,7 +277,7 @@ def _collect_output_files(
                 resolved = file_path.resolve()
                 if resolved in seen:
                     continue
-                entry = _output_file_entry(file_path, path, sub, meta, 0)
+                entry = _output_file_entry(file_path, path, sub.cluster_id, meta, 0)
                 if entry is not None:
                     seen.add(resolved)
                     entries.append(entry)
@@ -236,14 +286,30 @@ def _collect_output_files(
 
 
 def _allowed_output_file(
-    sub: JobSubmission, filename: str, root_value: str | None
+    sub: JobSubmission | None, filename: str, root_value: str | None
 ) -> Path:
     """Resolve a requested output file, rejecting roots we did not publish."""
     requested_root = (
-        Path(root_value).expanduser().resolve() if root_value else _output_root(sub)
+        Path(root_value).expanduser().resolve()
+        if root_value
+        else (_output_root(sub) if sub is not None else None)
     )
     if requested_root is None:
         abort(404, description="Output destination not found")
+
+    # OUTPUT_DIR is exposed wholesale by the outputs page; this also covers
+    # files found on disk that have no JobSubmission row (or no recorded
+    # output_destination).
+    configured_root = _configured_output_root()
+    if (
+        configured_root is not None
+        and requested_root.is_relative_to(configured_root)
+        and requested_root.is_dir()
+    ):
+        return _safe_path(str(requested_root), filename)
+
+    if sub is None:
+        abort(400, description="Invalid output root")
 
     for _proc_id, allowed_root in _scan_roots(sub):
         if requested_root == allowed_root.resolve():
@@ -271,40 +337,32 @@ def _allowed_output_file(
     abort(400, description="Invalid output root")
 
 
-def _parse_requested_files(data: dict) -> dict[int, list[tuple[str, str | None]]]:
-    """Group requested ``{cluster_id, filename, root}`` items by cluster."""
-    by_cluster: dict[int, list[tuple[str, str | None]]] = {}
+def _parse_requested_files(data: dict) -> list[tuple[int, str, str | None]]:
+    """Parse requested ``{cluster_id, filename, root}`` items."""
+    requested: list[tuple[int, str, str | None]] = []
     for item in data["files"]:
         cid = item.get("cluster_id")
         fname = str(item.get("filename") or "")
         if cid is None or not fname:
             continue
         root = item.get("root")
-        by_cluster.setdefault(int(cid), []).append((fname, str(root) if root else None))
-    return by_cluster
+        requested.append((int(cid), fname, str(root) if root else None))
+    return requested
 
 
 @api_bp.route("/output-files")
 def list_output_files():
     """List all output files from completed jobs.
 
-    Uses ``output_destination`` and ``transfer_output_remaps`` stored in the
-    JobSubmission record to locate output files.  Directories are scanned
-    recursively so nested output and per-proc directories are included.
+    Scans each submission's ``output_destination``/remaps, then scans the
+    configured ``OUTPUT_DIR`` for files that do not belong to any recorded
+    submission root.  The disk pass is what keeps outputs visible when a
+    JobSubmission row is missing or never captured its output path.
 
     Builds a cluster_id → {name, command} lookup in a single query
     to avoid N+1 queries when enriching each output file entry.
     """
-    submissions = (
-        JobSubmission.query.filter(
-            or_(
-                JobSubmission.output_destination.isnot(None),
-                JobSubmission.transfer_output_remaps.isnot(None),
-            )
-        )
-        .order_by(JobSubmission.submitted_at.desc())
-        .all()
-    )
+    submissions = JobSubmission.query.order_by(JobSubmission.submitted_at.desc()).all()
 
     # Build cluster_id → metadata lookup (in-memory, no extra queries)
     cluster_meta: dict[int, dict[str, str]] = {}
@@ -326,8 +384,14 @@ def list_output_files():
     seen: set[Path] = set()
     try:
         for sub in submissions:
+            if not sub.output_destination and not sub.transfer_output_remaps:
+                continue
             meta = cluster_meta.get(sub.cluster_id, {"name": sub.name, "command": ""})
             output_files.extend(_collect_output_files(sub, meta, seen))
+
+        output_root = _configured_output_root()
+        if output_root is not None and output_root.is_dir():
+            output_files.extend(_collect_disk_files(output_root, cluster_meta, seen))
 
         # Sort by modified_at descending
         output_files.sort(key=lambda x: x.get("modified_at", 0), reverse=True)
@@ -346,12 +410,13 @@ def preview_output_file(cluster_id: int, filename: str):
     downloading.  Same safety rules as the download endpoint.
     """
     submission = JobSubmission.query.filter_by(cluster_id=cluster_id).first()
-    if not submission:
+    root_value = request.args.get("root")
+    if not submission and not root_value:
         return jsonify(
             {"error": f"Output destination not found for cluster {cluster_id}"}
         ), 404
 
-    file_path = _allowed_output_file(submission, filename, request.args.get("root"))
+    file_path = _allowed_output_file(submission, filename, root_value)
 
     if not file_path.is_file():
         return jsonify({"error": f"Output file not found: {filename}"}), 404
@@ -379,39 +444,37 @@ def bulk_download_output_files():
     if not data or not isinstance(data.get("files"), list) or not data["files"]:
         return jsonify({"error": "Missing 'files' list"}), 400
 
-    by_cluster = _parse_requested_files(data)
-    if not by_cluster:
+    requested = _parse_requested_files(data)
+    if not requested:
         return jsonify({"error": "No valid files"}), 400
 
-    subs = JobSubmission.query.filter(
-        JobSubmission.cluster_id.in_(list(by_cluster.keys()))
-    ).all()
-    sub_by_cluster = {s.cluster_id: s for s in subs}
+    sub_by_cluster = {
+        s.cluster_id: s
+        for s in JobSubmission.query.filter(
+            JobSubmission.cluster_id.in_({cid for cid, _, _ in requested})
+        ).all()
+    }
 
     skipped: list[str] = []
     entries: list[tuple[str, Path]] = []
     seen_names: set[str] = set()
-    for cid, files in by_cluster.items():
+    for cid, fname, root in requested:
         submission = sub_by_cluster.get(cid)
-        for fname, root in files:
-            if submission is None:
-                skipped.append(f"{cid}/{fname}")
-                continue
-            try:
-                file_path = _allowed_output_file(submission, fname, root)
-            except Exception:  # noqa: BLE001 — traversal → skip
-                skipped.append(f"{cid}/{fname}")
-                continue
-            # Flat archive; same-named files from different clusters get a
-            # `{cid}-` prefix so the shared builder's collision handling
-            # stays unambiguous.
-            arcname = (
-                f"{cid}-{file_path.name}"
-                if file_path.name in seen_names
-                else file_path.name
-            )
-            seen_names.add(arcname)
-            entries.append((arcname, file_path))
+        try:
+            file_path = _allowed_output_file(submission, fname, root)
+        except Exception:  # noqa: BLE001 — traversal → skip
+            skipped.append(f"{cid}/{fname}")
+            continue
+        # Flat archive; same-named files from different clusters get a
+        # `{cid}-` prefix so the shared builder's collision handling
+        # stays unambiguous.
+        arcname = (
+            f"{cid}-{file_path.name}"
+            if file_path.name in seen_names
+            else file_path.name
+        )
+        seen_names.add(arcname)
+        entries.append((arcname, file_path))
 
     try:
         bundled = build_zip_response(entries, download_name="output_files.zip")
@@ -439,44 +502,36 @@ def delete_output_files_bulk():
     if not data or not isinstance(data.get("files"), list) or not data["files"]:
         return jsonify({"error": "Missing 'files' list"}), 400
 
-    by_cluster = _parse_requested_files(data)
-    if not by_cluster:
+    requested = _parse_requested_files(data)
+    if not requested:
         return jsonify({"error": "No valid files"}), 400
 
-    subs = JobSubmission.query.filter(
-        JobSubmission.cluster_id.in_(list(by_cluster.keys()))
-    ).all()
-    sub_by_cluster = {s.cluster_id: s for s in subs}
+    sub_by_cluster = {
+        s.cluster_id: s
+        for s in JobSubmission.query.filter(
+            JobSubmission.cluster_id.in_({cid for cid, _, _ in requested})
+        ).all()
+    }
 
     deleted: list[str] = []
     failed: list[dict] = []
     try:
-        for cid, files in by_cluster.items():
+        for cid, fname, root in requested:
             submission = sub_by_cluster.get(cid)
-            for fname, root in files:
-                if submission is None:
-                    failed.append(
-                        {"filename": f"{cid}/{fname}", "error": "no output destination"}
-                    )
-                    continue
-                try:
-                    file_path = _allowed_output_file(submission, fname, root)
-                except Exception:  # noqa: BLE001 — traversal → fail that file
-                    failed.append(
-                        {"filename": f"{cid}/{fname}", "error": "invalid path"}
-                    )
-                    continue
-                if not file_path.is_file():
-                    failed.append({"filename": f"{cid}/{fname}", "error": "not found"})
-                    continue
-                try:
-                    file_path.unlink()
-                    deleted.append(f"{cid}/{fname}")
-                except Exception:
-                    logger.exception("Failed to delete output file %s/%s", cid, fname)
-                    failed.append(
-                        {"filename": f"{cid}/{fname}", "error": "delete failed"}
-                    )
+            try:
+                file_path = _allowed_output_file(submission, fname, root)
+            except Exception:  # noqa: BLE001 — traversal → fail that file
+                failed.append({"filename": f"{cid}/{fname}", "error": "invalid path"})
+                continue
+            if not file_path.is_file():
+                failed.append({"filename": f"{cid}/{fname}", "error": "not found"})
+                continue
+            try:
+                file_path.unlink()
+                deleted.append(f"{cid}/{fname}")
+            except Exception:
+                logger.exception("Failed to delete output file %s/%s", cid, fname)
+                failed.append({"filename": f"{cid}/{fname}", "error": "delete failed"})
 
         message = f"Deleted {len(deleted)} file(s)"
         if failed:
@@ -491,12 +546,13 @@ def delete_output_files_bulk():
 def download_output_file(cluster_id: int, filename: str):
     """Download a specific output file for a given job."""
     submission = JobSubmission.query.filter_by(cluster_id=cluster_id).first()
-    if not submission:
+    root_value = request.args.get("root")
+    if not submission and not root_value:
         return jsonify(
             {"error": f"Output destination not found for cluster {cluster_id}"}
         ), 404
 
-    file_path = _allowed_output_file(submission, filename, request.args.get("root"))
+    file_path = _allowed_output_file(submission, filename, root_value)
 
     if not file_path.is_file():
         return jsonify({"error": f"Output file not found: {filename}"}), 404
@@ -518,12 +574,13 @@ def download_output_file(cluster_id: int, filename: str):
 def delete_output_file(cluster_id: int, filename: str):
     """Delete an output file for a given job."""
     submission = JobSubmission.query.filter_by(cluster_id=cluster_id).first()
-    if not submission:
+    root_value = request.args.get("root")
+    if not submission and not root_value:
         return jsonify(
             {"error": f"Output destination not found for cluster {cluster_id}"}
         ), 404
 
-    file_path = _allowed_output_file(submission, filename, request.args.get("root"))
+    file_path = _allowed_output_file(submission, filename, root_value)
 
     if not file_path.is_file():
         return jsonify({"error": f"Output file not found: {filename}"}), 404
