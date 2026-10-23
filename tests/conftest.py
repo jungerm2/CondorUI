@@ -80,3 +80,42 @@ def live_server(app):
 
     server.shutdown()
     thread.join(timeout=2)
+
+
+@pytest.fixture()
+def secure_app(tmp_path):
+    """App with per-test isolated directories, for path-safety tests.
+
+    Exposes the directories via ``app.extensions["test_dirs"]`` so tests can
+    plant marker files outside the base dirs and assert they were untouched.
+    """
+    dirs = {
+        "upload_dir": tmp_path / "uploads",
+        "osdf_root": tmp_path / "osdf",
+        "output_dir": tmp_path / "outputs",
+        "logs_dir": tmp_path / "logs",
+        "templates_dir": tmp_path / "templates",
+    }
+    app = create_app(
+        {
+            "TESTING": True,
+            "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
+            "UPLOAD_DIR": str(dirs["upload_dir"]),
+            "OSDF_ROOT_PATH": str(dirs["osdf_root"]),
+            "OUTPUT_DIR": str(dirs["output_dir"]),
+            "JOB_LOGS_DIR": str(dirs["logs_dir"]),
+            "TEMPLATES_DIR": str(dirs["templates_dir"]),
+            "EXECUTABLES_DIR": str(tmp_path / "executables"),
+            "SERVER_NAME": "localhost",
+        }
+    )
+    with app.app_context():
+        _db.create_all()
+
+    app.extensions["test_dirs"] = {"tmp_path": tmp_path, **dirs}
+    return app
+
+
+@pytest.fixture()
+def secure_client(secure_app):
+    return secure_app.test_client()

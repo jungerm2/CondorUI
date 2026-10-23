@@ -1,11 +1,11 @@
 """Database models for tracking submissions and templates."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app import db
 
 
-class JobSubmission(db.Model):
+class JobSubmission(db.Model):  # type: ignore[name-defined]
     """Record of a job submission made through the web UI."""
 
     __tablename__ = "job_submissions"
@@ -16,14 +16,14 @@ class JobSubmission(db.Model):
     submit_description = db.Column(db.Text, nullable=False)  # JSON string
     num_procs = db.Column(db.Integer, nullable=False, default=1)
     submitted_at = db.Column(
-        db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+        db.DateTime, nullable=False, default=lambda: datetime.now(UTC)
     )
     log_path = db.Column(db.String(1024), nullable=True)  # Resolved UserLog path
     out_path = db.Column(db.String(1024), nullable=True)  # Resolved Out (stdout) path
     err_path = db.Column(db.String(1024), nullable=True)  # Resolved Err (stderr) path
     output_destination = db.Column(
         db.String(1024), nullable=True
-    )  # Resolved output_destination
+    )  # Resolved output path (output_destination or output_directory)
     transfer_output_remaps = db.Column(
         db.Text, nullable=True
     )  # Resolved transfer_output_remaps
@@ -37,7 +37,11 @@ class JobSubmission(db.Model):
             "name": self.name,
             "submit_description": self.submit_description,
             "num_procs": self.num_procs,
-            "submitted_at": self.submitted_at.isoformat() + "Z",
+            # Normalize to UTC so the suffix is always "Z" (naive values are assumed UTC)
+            "submitted_at": self.submitted_at.replace(tzinfo=UTC)
+            .astimezone(UTC)
+            .isoformat()
+            .replace("+00:00", "Z"),
             "log_path": self.log_path,
             "out_path": self.out_path,
             "err_path": self.err_path,

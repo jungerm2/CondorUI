@@ -87,6 +87,40 @@ def resolve_commands(jobs: list[dict]) -> None:
 # to both, parameterized by the base directory and an optional filter.
 
 
+def safe_filename(name: str) -> str:
+    """Sanitize a user-supplied filename to a single path component.
+
+    Strips any directory components (e.g., ``../../etc/passwd`` →
+    ``passwd``) and rejects empty/dot-only names.  Raises ``ValueError``
+    for names that have no usable component.
+    """
+    cleaned = Path(str(name)).name
+    if cleaned in ("", ".", ".."):
+        raise ValueError(f"Invalid filename: {name!r}")
+    return cleaned
+
+
+def safe_path_component(name: str) -> str:
+    """Legacy alias of :func:`safe_filename`."""
+    return safe_filename(name)
+
+
+def safe_join(base_dir: str, *relative: str) -> Path:
+    """Join *relative* path components under *base_dir*, safely.
+
+    Resolves the final path and verifies it stays inside *base_dir*.
+    Raises ``ValueError`` if the path escapes the base directory (e.g.,
+    via ``..`` components or symlinks pointing outside).
+
+    Returns the resolved absolute ``Path``.
+    """
+    base = Path(base_dir).resolve()
+    target = base.joinpath(*relative).resolve()
+    if not target.is_relative_to(base):
+        raise ValueError(f"Path escapes base directory: {'/'.join(relative)!r}")
+    return target
+
+
 def scan_uuid_directories(
     base_dir: str,
     *,
@@ -168,6 +202,8 @@ def save_uploaded_stream(
     subdir.mkdir(parents=True, exist_ok=True)
 
     # Save with original filename: dest_dir/uuid/original_filename
+    # Strip any path components so a hostile client header cannot escape dest_dir
+    original_filename = safe_path_component(original_filename)
     dest_path = subdir / original_filename
     with open(dest_path, "wb") as f:
         shutil.copyfileobj(stream, f, length=1024 * 1024)
