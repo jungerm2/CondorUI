@@ -6,11 +6,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Web UI for submitting and monitoring HTCondor jobs">
     <title>{% block title %}Condor Web UI{% endblock %}</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
-        rel="stylesheet">
     <link rel="stylesheet" href="/static/css/style.css">
     <script>
         // Apply saved theme immediately to prevent flash
@@ -45,7 +40,7 @@
                 <svg class="logo-icon icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                     <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
                 </svg>
-                <span class="logo-text">&nbsp;&nbsp;&nbsp;Condor UI</span>
+                <span class="logo-text">Condor UI</span>
             </div>
             <button class="sidebar-collapse-btn" id="sidebar-collapse-btn" title="Collapse Sidebar">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -176,6 +171,34 @@
     <main class="main-content">
         {% block content %}{% endblock %}
     </main>
+
+    <!-- Shared file preview modal: opened from the output files, input
+         files, executables, and containers pages via openFilePreview() -->
+    <div class="modal-overlay" id="file-preview-modal">
+        <div class="modal" style="max-width: 760px;">
+            <div class="modal-header">
+                <h2 id="file-preview-filename" style="font-size: 1rem; word-break: break-all;">Preview</h2>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <a href="#" id="file-preview-download" class="btn btn-ghost btn-sm" download>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                            <polyline points="7,10 12,15 17,10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                        Download
+                    </a>
+                    <button class="btn btn-ghost btn-sm modal-close-btn" data-modal="file-preview-modal" style="padding: 4px 8px;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div class="modal-body" id="file-preview-body" style="max-height: 70vh; overflow: auto;">
+            </div>
+        </div>
+    </div>
 
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>

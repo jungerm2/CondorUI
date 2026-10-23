@@ -13,17 +13,43 @@ function toast(message, type = 'info') {
     const toastEl = document.createElement('div');
     toastEl.className = `toast toast-${type}`;
     toastEl.textContent = message;
+    // Errors are announced assertively, everything else politely
+    toastEl.setAttribute('role', type === 'error' ? 'alert' : 'status');
 
     container.appendChild(toastEl);
 
     // Fade in
     setTimeout(() => toastEl.classList.add('visible'), 10);
 
-    // Remove after 5 seconds
+    // Remove after 5 seconds (animate out via the shared 'removing' state)
     setTimeout(() => {
-        toastEl.classList.remove('visible');
+        toastEl.classList.add('removing');
         setTimeout(() => toastEl.remove(), 300);
     }, 5000);
+}
+
+// Toast promise rejections that no caller caught. Sites that catch and toast
+// their own errors never reach this, so no duplicate notifications appear.
+// This gives every api() failure a visible surface even in call sites with
+// no catch block.
+window.addEventListener('unhandledrejection', (e) => {
+    toast(e.reason && e.reason.message ? e.reason.message : 'Unexpected error', 'error');
+    e.preventDefault();
+});
+
+// Show a list page's empty-state element as a transient loading placeholder.
+// The page's render function rewrites the whole element or its <p> once real
+// data arrives; the original message is remembered in a data attribute so
+// the render's empty branch can still restore it.
+function showListLoading(elId, msg = 'Loading…') {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    el.style.display = 'block';
+    const p = el.querySelector('p');
+    if (p) {
+        p.dataset.emptyText = p.textContent;
+        p.textContent = msg;
+    }
 }
 
 // API client wrapper with timeout
@@ -62,26 +88,228 @@ async function api(endpoint, options = {}) {
     }
 }
 
-// Simple escaping to prevent XSS in innerHTML
+// Simple escaping to prevent XSS in innerHTML (quotes included, so the
+// result is also safe inside double- or single-quoted attributes)
 function escHtml(str) {
     if (str == null) return '';
-    const div = document.createElement('div');
-    div.textContent = String(str);
-    return div.innerHTML;
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
-// Modal helpers (shared across pages)
+// Wire modal close buttons and backdrop-click dismissal; the markup pattern
+// is uniform across every page, so this runs once from common.js
+function initModals() {
+    document.querySelectorAll('.modal-close-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const modalId = btn.dataset.modal;
+            if (modalId) closeModal(modalId);
+        });
+    });
+    document.querySelectorAll('.modal-overlay').forEach(overlay => {
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                overlay.classList.remove('active');
+            }
+        });
+    });
+}
+
+// Modal helpers (shared across pages). Escape closes the dialog, focus moves
+// to the first focusable element on open and returns to the previously
+// focused element on close.
+let modalReturnFocus = null;
+let modalKeyHandler = null;
+
 function openModal(id) {
-    document.getElementById(id).classList.add('active');
+    const modal = document.getElementById(id);
+    if (!modal) return;
+    modal.classList.add('active');
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modalReturnFocus = document.activeElement;
+    const first = modal.querySelector(
+        'input:not([type="hidden"]):not([disabled]), select, textarea, button:not([disabled])'
+    );
+    if (first) first.focus();
+    modalKeyHandler = (e) => {
+        if (e.key === 'Escape') closeModal(id);
+    };
+    document.addEventListener('keydown', modalKeyHandler);
 }
 
 function closeModal(id) {
-    document.getElementById(id).classList.remove('active');
+    const modal = document.getElementById(id);
+    if (!modal) return;
+    modal.classList.remove('active');
+    if (modalKeyHandler) {
+        document.removeEventListener('keydown', modalKeyHandler);
+        modalKeyHandler = null;
+    }
+    if (modalReturnFocus && document.contains(modalReturnFocus) &&
+        typeof modalReturnFocus.focus === 'function') {
+        modalReturnFocus.focus();
+    }
+    modalReturnFocus = null;
 }
 
 // ---------------------------------------------------------------------------
 // Shared Sort & Search Utilities (DRY for table-based pages)
 // ---------------------------------------------------------------------------
+
+/**
+ * Make a table row's click toggle its row checkbox (a common list-page
+ * pattern). Clicks on a checkbox or on anything matching excludeSelectors
+ * (e.g. links) pass through untouched.
+ */
+function bindRowClickToggle(tr, cbSelector, excludeSelectors = []) {
+    tr.addEventListener('click', (e) => {
+        if (e.target.closest('input[type="checkbox"]')) return;
+        for (const sel of excludeSelectors) {
+            if (e.target.closest(sel)) return;
+        }
+        const cb = tr.querySelector(cbSelector);
+        if (cb) {
+            cb.checked = !cb.checked;
+            cb.dispatchEvent(new Event('change'));
+        }
+    });
+}
+
+/**
+ * Update a list page's tri-state select-all checkbox from the current
+ * selection. `keyFn` maps an item to its selection key (e.g. filename);
+ * selectedSet is a Set keyed the same way.
+ */
+function updateSelectAllState(selectAllEl, items, selectedSet, keyFn) {
+    if (!selectAllEl) return;
+    if (items.length > 0) {
+        const allSelected = items.every(item => selectedSet.has(keyFn(item)));
+        selectAllEl.checked = allSelected;
+        selectAllEl.indeterminate = !allSelected && items.some(item => selectedSet.has(keyFn(item)));
+    } else {
+        selectAllEl.checked = false;
+        selectAllEl.indeterminate = false;
+    }
+}
+
+/** Extensions a browser can already open itself — never re-wrap these. */
+const ARCHIVE_EXTENSIONS = ['.zip', '.tar', '.gz', '.tgz', '.7z', '.bz2', '.xz', '.sif', '.simg'];
+const IMAGE_PREVIEW_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.bmp', '.avif'];
+const TEXT_PREVIEW_EXTENSIONS = [
+    '.txt', '.log', '.json', '.yaml', '.yml', '.md', '.ini', '.cfg', '.conf',
+    '.xml', '.csv', '.tsv', '.py', '.sh', '.bash', '.c', '.h', '.cpp', '.hpp',
+    '.js', '.html', '.css', '.sql', '.toml', '.env', '.properties', '.sub',
+];
+
+function fileIsArchive(name) {
+    const lower = String(name).toLowerCase();
+    return ARCHIVE_EXTENSIONS.some(ext => lower.endsWith(ext));
+}
+
+/**
+ * Initiate a browser download for one file's URL.  Multiple direct
+ * downloads may make the browser ask for permission — that is expected
+ * bulk behavior, not an error.
+ */
+function triggerDirectDownload(url) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+}
+
+/**
+ * Standard bulk download for a list-page selection.  Items that are
+ * already archives (zips, tars, container images) download directly
+ * through their single-file endpoint instead of being re-zipped; the
+ * remaining plain files are POSTed together to the bulk zip endpoint.
+ *
+ * singleUrl(item) -> per-row download href
+ * zipUrl          -> bulk endpoint, e.g. /api/output-files/bulk-download
+ * zipBody(items)  -> request body for the zip endpoint (page-specific keying)
+ */
+async function bulkDownloadSelection(items, { singleUrl, zipUrl, zipBody }) {
+    if (!items.length) return;
+    const direct = items.filter(it => fileIsArchive(it.filename));
+    const rest = items.filter(it => !fileIsArchive(it.filename));
+
+    try {
+        direct.forEach(item => triggerDirectDownload(singleUrl(item)));
+        if (rest.length > 0) {
+            const resp = await fetch(zipUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(zipBody(rest)),
+            });
+            if (!resp.ok) {
+                const data = await resp.json().catch(() => ({}));
+                throw new Error(data.error || `Download failed with status ${resp.status}`);
+            }
+            const skipped = resp.headers.get('X-Skipped-Files');
+            if (skipped) toast(`Skipped ${skipped.split(',').length} missing file(s)`, 'warning');
+            if (direct.length > 0) toast(`Downloading ${direct.length} archive(s) directly`);
+            const url = URL.createObjectURL(await resp.blob());
+            triggerDirectDownload(url);
+            URL.revokeObjectURL(url);
+        } else {
+            toast(`Downloading ${items.length} file(s) directly`);
+        }
+    } catch (err) {
+        toast(`Failed to download files: ${err.message}`, 'error');
+    }
+}
+
+/**
+ * Open the shared preview modal.  The type decision happens on the file's
+ * name, so binaries like container images are never fetched just to be
+ * refused; only images and known-text files pull their content.
+ */
+async function openFilePreview({ name, previewUrl, downloadUrl }) {
+    $('#file-preview-filename').textContent = name;
+    const body = $('#file-preview-body');
+    $('#file-preview-download').href = downloadUrl || previewUrl;
+
+    const lower = name.toLowerCase();
+    const isImage = IMAGE_PREVIEW_EXTENSIONS.some(ext => lower.endsWith(ext));
+    const isText = TEXT_PREVIEW_EXTENSIONS.some(ext => lower.endsWith(ext));
+    if (!isImage && !isText) {
+        body.innerHTML = `<p class="hint">No inline preview for ${escHtml(name)}. Use Download instead.</p>`;
+        openModal('file-preview-modal');
+        return;
+    }
+
+    body.innerHTML = '<p class="hint">Loading preview...</p>';
+    openModal('file-preview-modal');
+    try {
+        const resp = await fetch(previewUrl);
+        if (!resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            throw new Error(data.error || `Preview failed with status ${resp.status}`);
+        }
+        if (isImage) {
+            const url = URL.createObjectURL(await resp.blob());
+            body.innerHTML = `<img src="${url}" alt="${escHtml(name)}" style="max-width: 100%; max-height: 60vh; display: block; margin: 0 auto;">`;
+        } else {
+            const text = await resp.text();
+            const pre = document.createElement('pre');
+            pre.className = 'file-preview-text';
+            // Clamp huge text files to a readable slice
+            pre.textContent = text.length > 200_000
+                ? `${text.slice(0, 200_000)}\n\n… (truncated, ${formatFileSize(text.length)} total)`
+                : text;
+            body.innerHTML = '';
+            body.appendChild(pre);
+        }
+    } catch (err) {
+        body.innerHTML = `<p class="hint">Failed to load preview: ${escHtml(err.message)}</p>`;
+    }
+}
 
 /**
  * Sort a copy of the data array by the given field, using a getter function.
@@ -123,8 +351,24 @@ function filterData(data, query, getterFns) {
     });
 }
 
+// Make every sortable table header keyboard-activatable: focusable, Enter or
+// Space triggers its click handler (wired per page), and announced via
+// aria-sort which updateSortArrows implementations keep current
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('th.sortable').forEach(th => {
+        th.tabIndex = 0;
+        th.setAttribute('aria-sort', 'none');
+        th.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                th.click();
+            }
+        });
+    });
+});
+
 /**
- * Update sort arrow indicators (▲/▼) on sortable table headers.
+ * Update sort arrow indicators on sortable table headers.
  *
  * @param {HTMLElement} table - The <table> element.
  * @param {string} sortField - The currently active sort field.
@@ -136,11 +380,10 @@ function updateSortArrows(table, sortField, sortAsc) {
         const arrow = th.querySelector('.sort-arrow');
         if (!arrow) return;
         const field = th.dataset.sort;
-        if (field === sortField) {
-            arrow.textContent = sortAsc ? ' ▲' : ' ▼';
-        } else {
-            arrow.textContent = '';
-        }
+        const active = field === sortField;
+        arrow.classList.toggle('asc', active && sortAsc);
+        arrow.classList.toggle('desc', active && !sortAsc);
+        th.setAttribute('aria-sort', active ? (sortAsc ? 'ascending' : 'descending') : 'none');
     });
 }
 
@@ -183,12 +426,20 @@ function formatDuration(seconds) {
     if (!seconds && seconds !== 0) return '—';
     if (seconds <= 0) return '—';
     if (seconds < 60) return `${seconds}s`;
+    // Two significant units, longest first (45s, 3m 45s, 2h 14m, 3d 4h)
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
-    if (mins < 60) return `${mins}m ${secs}s`;
+    if (mins < 60) {
+        return secs ? `${mins}m ${secs}s` : `${mins}m`;
+    }
     const hours = Math.floor(mins / 60);
     const remMins = mins % 60;
-    return `${hours}h ${remMins}m`;
+    if (hours < 24) {
+        return remMins ? `${hours}h ${remMins}m` : `${hours}h`;
+    }
+    const days = Math.floor(hours / 24);
+    const remH = hours % 24;
+    return remH ? `${days}d ${remH}h` : `${days}d`;
 }
 
 /**
@@ -326,26 +577,29 @@ function initTheme() {
 
 // Connection Status Monitor
 function initConnectionMonitor() {
-    const container = $('.connection-status');
-    const statusDot = container ? container.querySelector('.status-dot') : null;
-    const statusText = container ? container.querySelector('.status-text') : null;
-
-    if (!container || !statusDot || !statusText) return;
+    const containers = $$('.connection-status');
+    if (!containers.length) return;
 
     async function checkStatus() {
         try {
             const response = await fetch('/api/health');
             if (response.ok) {
-                container.classList.remove('disconnected');
-                container.classList.add('connected');
-                statusText.textContent = 'Connected';
+                containers.forEach(container => {
+                    container.classList.remove('disconnected');
+                    container.classList.add('connected');
+                    const el = container.querySelector('.status-text');
+                    if (el) el.textContent = 'Connected';
+                });
             } else {
                 throw new Error('Not OK');
             }
         } catch (error) {
-            container.classList.remove('connected');
-            container.classList.add('disconnected');
-            statusText.textContent = 'Disconnected';
+            containers.forEach(container => {
+                container.classList.remove('connected');
+                container.classList.add('disconnected');
+                const el = container.querySelector('.status-text');
+                if (el) el.textContent = 'Disconnected';
+            });
         }
     }
 
@@ -510,9 +764,13 @@ function openQeditDialog(jobs, options = {}) {
         datalist.appendChild(opt);
     });
 
-    function closeModal() { overlay.remove(); }
+    function closeModal() { overlay.remove(); document.removeEventListener('keydown', escHandler); }
+    const escHandler = (e) => { if (e.key === 'Escape') closeModal(); };
+    document.addEventListener('keydown', escHandler);
     closeBtns.forEach(btn => btn.addEventListener('click', closeModal));
     overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
+    // Focus the non-destructive Cancel button, following dialog conventions
+    closeBtns[closeBtns.length - 1].focus();
 
     // Build the attribute field for the current mode: a curated dropdown in
     // basic mode, or a free-text input (backed by the datalist) in advanced mode.
@@ -635,8 +893,9 @@ function openQeditDialog(jobs, options = {}) {
         attrField.addEventListener('change', () => updateValueHint(row));
         updateValueHint(row);
 
-        // Focus the value input
-        setTimeout(() => valueInput.focus(), 50);
+        // Focus synchronously — a deferred focus() steals focus from whatever
+        // the user is typing in (or a fill is mid-way into) at that moment
+        valueInput.focus();
         return row;
     }
 
@@ -774,8 +1033,11 @@ function showConfirmModal(message, options = {}) {
 
     function closeConfirm() {
         overlay.remove();
+        document.removeEventListener('keydown', escHandler);
         if (onCancel) onCancel();
     }
+    const escHandler = (e) => { if (e.key === 'Escape') closeConfirm(); };
+    document.addEventListener('keydown', escHandler);
 
     // Close buttons
     overlay.querySelectorAll('.modal-close-btn').forEach(btn => {
@@ -784,11 +1046,22 @@ function showConfirmModal(message, options = {}) {
     overlay.addEventListener('click', (e) => {
         if (e.target === overlay) closeConfirm();
     });
+    // Focus the non-destructive Cancel button, following dialog conventions
+    const closeButtons = overlay.querySelectorAll('.modal-close-btn');
+    closeButtons[closeButtons.length - 1].focus();
 
-    // Confirm button
-    overlay.querySelector('#confirm-modal-btn').addEventListener('click', () => {
-        overlay.remove();
-        if (onConfirm) onConfirm();
+    // Confirm button — call onConfirm first (it may read DOM elements inside
+    // the overlay, e.g. checkboxes), then close. Await promises so the overlay
+    // stays up while an async action runs.
+    const confirmBtn = overlay.querySelector('#confirm-modal-btn');
+    confirmBtn.addEventListener('click', async () => {
+        confirmBtn.disabled = true;
+        try {
+            if (onConfirm) await onConfirm(overlay);
+        } finally {
+            document.removeEventListener('keydown', escHandler);
+            overlay.remove();
+        }
     });
 }
 
@@ -810,44 +1083,59 @@ function showConfirmModal(message, options = {}) {
  */
 function createProgressTracker(progressFill, progressText, options = {}) {
     const { prefix = '' } = options;
-    let lastUpdateTime = Date.now();
-    let lastLoadedBytes = 0;
-    const speedSamples = [];
-    const MAX_SPEED_SAMPLES = 10;
+    // Browser progress events fire per chunk (several times a second);
+    // writing the bar and the text on every event makes the width
+    // transition stutter and the speed readout swing. Throttle the DOM to
+    // a steady cadence and estimate speed over a rolling window instead
+    // of per-event spikes.
+    const UI_INTERVAL = 250; // ms between DOM updates
+    const SPEED_WINDOW = 3000; // rolling speed-estimate window (ms)
+    let lastRender = 0;
+    let samples = []; // [{ t, loaded }]
+    let shownPct = -1;
+
+    const fmtRate = (bps) => {
+        if (bps >= 1024 * 1024) return `${(bps / (1024 * 1024)).toFixed(1)} MB/s`;
+        if (bps >= 1024) return `${(bps / 1024).toFixed(1)} KB/s`;
+        return `${Math.round(bps)} B/s`;
+    };
 
     return (e) => {
         const now = Date.now();
-        const elapsed = (now - lastUpdateTime) / 1000;
+        const done = e.loaded >= e.total;
 
-        const pct = e.percent.toFixed(1);
-        progressFill.style.width = pct + '%';
+        samples.push({ t: now, loaded: e.loaded });
+        while (samples.length > 1 && now - samples[0].t > SPEED_WINDOW) {
+            samples.shift();
+        }
+
+        const due = done || now - lastRender >= UI_INTERVAL;
+        if (!due) return;
+        lastRender = now;
+
+        // Whole percent, monotonic — sub-percent steps only add noise
+        const pct = e.total > 0 ? Math.floor(Math.min(100, e.percent)) : 100;
+        if (pct > shownPct) shownPct = pct;
+        progressFill.style.width = `${shownPct}%`;
+
+        // Speed from the rolling window (needs a small span to be sane)
+        let avgSpeed = 0;
+        const first = samples[0];
+        const span = (now - first.t) / 1000;
+        if (span > 0.5) {
+            avgSpeed = (e.loaded - first.loaded) / span;
+        }
 
         const uploadedMb = (e.loaded / (1024 * 1024)).toFixed(1);
         const totalMb = (e.total / (1024 * 1024)).toFixed(1);
+        let text = prefix ? `${prefix} — ` : '';
+        text += `${uploadedMb} MB / ${totalMb} MB (${pct}%)`;
 
-        // Calculate instantaneous speed
-        if (elapsed > 0) {
-            const instantSpeed = (e.loaded - lastLoadedBytes) / elapsed;
-            if (instantSpeed > 0) {
-                speedSamples.push(instantSpeed);
-                if (speedSamples.length > MAX_SPEED_SAMPLES) {
-                    speedSamples.shift();
-                }
-            }
-        }
-
-        let text = '';
-        if (prefix) text = prefix + ' — ';
-
-        // ETA from average speed
-        if (speedSamples.length > 0) {
-            const avgSpeed = speedSamples.reduce((a, b) => a + b, 0) / speedSamples.length;
-            const remainingBytes = e.total - e.loaded;
-            const etaSeconds = remainingBytes / avgSpeed;
-
+        if (avgSpeed > 0 && !done) {
+            const etaSeconds = (e.total - e.loaded) / avgSpeed;
             let etaStr = '';
             if (etaSeconds < 60) {
-                etaStr = `${Math.round(etaSeconds)}s`;
+                etaStr = `${Math.max(1, Math.round(etaSeconds))}s`;
             } else if (etaSeconds < 3600) {
                 const mins = Math.floor(etaSeconds / 60);
                 const secs = Math.round(etaSeconds % 60);
@@ -857,24 +1145,10 @@ function createProgressTracker(progressFill, progressText, options = {}) {
                 const mins = Math.floor((etaSeconds % 3600) / 60);
                 etaStr = `${hrs}h ${mins}m`;
             }
-
-            let speedStr = '';
-            if (avgSpeed >= 1024 * 1024) {
-                speedStr = `${(avgSpeed / (1024 * 1024)).toFixed(1)} MB/s`;
-            } else if (avgSpeed >= 1024) {
-                speedStr = `${(avgSpeed / 1024).toFixed(1)} KB/s`;
-            } else {
-                speedStr = `${Math.round(avgSpeed)} B/s`;
-            }
-
-            text += `${uploadedMb} MB / ${totalMb} MB (${pct}%) — ${speedStr}, ETA: ${etaStr}`;
-        } else {
-            text += `${uploadedMb} MB / ${totalMb} MB (${pct}%)`;
+            text += ` — ${fmtRate(avgSpeed)}, ETA: ${etaStr}`;
         }
 
         progressText.textContent = text;
-        lastUpdateTime = now;
-        lastLoadedBytes = e.loaded;
     };
 }
 
