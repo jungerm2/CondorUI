@@ -17,6 +17,7 @@ from app.condor import (
     DEFAULT_CONSTRAINT,
     act_on_job,
     query_jobs,
+    read_job_log_completions,
 )
 from app.models import JobSubmission
 
@@ -109,7 +110,7 @@ def _build_job_entry(
 
     qdate = int(sub.submitted_at.timestamp()) if sub.submitted_at else 0
 
-    return {
+    entry = {
         "ClusterId": sub.cluster_id,
         "ProcId": proc_id,
         "JobStatus": 4,
@@ -140,6 +141,20 @@ def _build_job_entry(
         "CumulativeRemoteSysCpu": 0,
         "CumulativeRemoteUserCpu": 0,
     }
+
+    # The DB knows how a job was submitted, not how it ended.  Fill the
+    # completion columns from the job's own UserLog: local file I/O, no
+    # schedd history scan.  Cache the parsed map per submission so a cluster
+    # with many procs reads its log once per request.
+    if sub.log_path:
+        completions = getattr(sub, "_completion_fields", None)
+        if completions is None:
+            completions = read_job_log_completions(sub.log_path)
+            sub._completion_fields = completions
+        fields = completions.get((sub.cluster_id, proc_id))
+        if fields:
+            entry.update(fields)
+    return entry
 
 
 @api_bp.route("/history")

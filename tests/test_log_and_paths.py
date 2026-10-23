@@ -1,10 +1,33 @@
 """Tests for UserLog event filtering and per-proc stdout/stderr path resolution."""
 
+from datetime import datetime
+
 from app.condor import (
     _path_with_proc,
     _pick_per_proc_path,
     filter_job_log_events,
+    read_job_log_completions,
 )
+
+# Full terminated-event body: the event reader requires the usage/resource
+# detail lines, not just the header and exit line.
+TERMINATED_EVENT = """005 ({cluster}.{proc:03d}.000) {date} Job terminated.
+    (1) Normal termination (return value {return_value})
+        Usr 0 00:00:00, Sys 0 00:00:00  -  Run Remote Usage
+        Usr 0 00:00:00, Sys 0 00:00:00  -  Run Local Usage
+        Usr 0 00:00:00, Sys 0 00:00:00  -  Total Remote Usage
+        Usr 0 00:00:00, Sys 0 00:00:00  -  Total Local Usage
+    0  -  Run Bytes Sent By Job
+    27848  -  Run Bytes Received By Job
+    0  -  Total Bytes Sent By Job
+    27848  -  Total Bytes Received By Job
+    Partitionable Resources :    Usage  Request Allocated
+       Cpus                 :                 1         1
+       Disk (KB)            :       40       30   4203309
+       Memory (MB)          :        1        1         1
+...
+"""
+
 
 MIXED_LOG = """000 (100.000.000) 02/10 14:22:01 Job submitted.
     Detail line for proc 0
@@ -86,3 +109,66 @@ class TestPickPerProcPath:
         proc0 = str(tmp_path / "job.0.out")
         ca = str(tmp_path / "other.resolved")
         assert _pick_per_proc_path(proc0, ca, 7) == ca
+
+
+class TestJobLogCompletions:
+    def _write_log(self, tmp_path, body: str) -> str:
+        path = tmp_path / "job.log"
+        path.write_text(body)
+        return str(path)
+
+    def test_completion_date_wall_time_and_exit_code(self, tmp_path):
+        body = (
+            "000 (100.000.000) 2020-07-10 10:44:00 Job submitted from host: <x>\n"
+            "...\n"
+            "001 (100.000.000) 2020-07-10 10:45:00 Job executing on host: <x>\n"
+            "...\n"
+            + TERMINATED_EVENT.format(
+                cluster=100,
+                proc=0,
+                date="2020-07-10 10:46:00",
+                return_value=0,
+            )
+            + "001 (100.001.000) 2020-07-10 10:45:00 Job executing on host: <x>\n"
+            "...\n"
+            + TERMINATED_EVENT.format(
+                cluster=100,
+                proc=1,
+                date="2020-07-10 10:45:30",
+                return_value=1,
+            )
+        )
+        completions = read_job_log_completions(self._write_log(tmp_path, body))
+
+        assert completions[(100, 0)] == {
+            "CompletionDate": int(datetime(2020, 7, 10, 10, 46).timestamp()),
+            "RemoteWallClockTime": 60,
+            "LastRemoteWallClockTime": 60,
+            "ExitCode": 0,
+            "ExitBySignal": False,
+        }
+        assert completions[(100, 1)]["LastRemoteWallClockTime"] == 30
+        assert completions[(100, 1)]["ExitCode"] == 1
+
+    def test_unfinished_tail_is_ignored(self, tmp_path):
+        body = (
+            "001 (100.000.000) 2020-07-10 10:45:00 Job executing on host: <x>\n"
+            "...\n"
+            + TERMINATED_EVENT.format(
+                cluster=100,
+                proc=0,
+                date="2020-07-10 10:46:00",
+                return_value=0,
+            )
+            + "001 (100.001.000) 2020-07-10 10:46:00 Job executing on host: <x>\n"
+        )
+        completions = read_job_log_completions(self._write_log(tmp_path, body))
+
+        assert (100, 0) in completions
+        assert (100, 1) not in completions
+
+    def test_missing_and_empty_logs(self, tmp_path):
+        assert read_job_log_completions(str(tmp_path / "missing.log")) == {}
+        empty = tmp_path / "empty.log"
+        empty.write_text("")
+        assert read_job_log_completions(str(empty)) == {}

@@ -945,3 +945,162 @@ def filter_job_log_events(content: str, cluster_id: int, proc_id: int = 0) -> st
     if not kept:
         return content  # Unparseable/foreign format — don't erase data
     return "".join(kept)
+
+
+# ---------------------------------------------------------------------------
+# Completion facts from UserLogs
+# ---------------------------------------------------------------------------
+
+# A finished job's UserLog survives even after the schedd history has rolled
+# over, and reading it is local I/O.  The dashboard used to get these fields
+# from a constrained schedd.history scan on every load; that scan walked the
+# whole history file and could exceed the query timeout (fe35348).
+MAX_COMPLETION_LOG_BYTES = 64 * 1024 * 1024
+_EVENT_TERMINATOR_RE = re.compile(rb"(?m)^\.\.\.[ \t\r]*$")
+
+# Finished logs are immutable, so cache by path/size/mtime.  A changed file
+# gets a new key and the old entry ages out.
+_completion_cache: TTLCache = TTLCache(maxsize=256, ttl=3600.0)
+_completion_cache_lock = Lock()
+
+
+def read_job_log_completions(log_path: str) -> dict[tuple[int, int], dict]:
+    """Extract completion facts from an HTCondor UserLog.
+
+    Returns ``{(ClusterId, ProcId): fields}`` with ``CompletionDate`` and,
+    when the log contains the matching execute event, wall-clock and exit
+    fields.  Wall time is the sum of execute→terminate/evict intervals;
+    suspension is reported separately because the dashboard subtracts
+    ``CumulativeSuspensionTime``.
+
+    ``JobEventLog`` handles the event format and year-less timestamps.  We
+    stop after the number of complete events counted in the file so an
+    unfinished tail of a live log never makes the reader wait for more.
+    """
+    if not log_path:
+        return {}
+    try:
+        stat = Path(log_path).stat()
+    except OSError:
+        return {}
+    if stat.st_size == 0:
+        return {}
+    if stat.st_size > MAX_COMPLETION_LOG_BYTES:
+        logger.warning("Skipping oversized job log for completion data: %s", log_path)
+        return {}
+
+    key = (str(log_path), stat.st_size, stat.st_mtime_ns)
+    with _completion_cache_lock:
+        cached = _completion_cache.get(key)
+    if cached is not None:
+        return cached
+
+    try:
+        # Every complete event ends with a line containing just "...".
+        # Counting terminators lets us read exactly that many events: at EOF
+        # JobEventLog waits for appended events (up to its deadline), and a
+        # partial trailing event would otherwise stall this request.
+        data = Path(log_path).read_bytes()
+        event_count = len(_EVENT_TERMINATOR_RE.findall(data))
+        completions = (
+            _parse_completion_events(log_path, event_count) if event_count else {}
+        )
+    except Exception:
+        logger.warning(
+            "Could not parse job log for completion data: %s", log_path, exc_info=True
+        )
+        completions = {}
+
+    with _completion_cache_lock:
+        _completion_cache[key] = completions
+    return completions
+
+
+def _parse_completion_events(
+    log_path: str, event_count: int
+) -> dict[tuple[int, int], dict]:
+    """Walk the complete events in *log_path* and keep termination facts."""
+    runs: dict[tuple[int, int], dict] = {}
+    log = htcondor.JobEventLog(log_path)
+    try:
+        events = log.events(1)
+        for _ in range(event_count):
+            try:
+                event = next(events)
+            except StopIteration:
+                break
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Stopped reading job log at a malformed event: %s", log_path
+                )
+                break
+
+            cluster, proc = int(event.cluster), int(event.proc)
+            if cluster < 0 or proc < 0:
+                continue  # cluster-wide events have no proc id
+            state = runs.setdefault(
+                (cluster, proc),
+                {
+                    "run_start": None,
+                    "suspended_at": None,
+                    "wall": 0.0,
+                    "suspension": 0.0,
+                    "completion": None,
+                    "exit_code": None,
+                    "by_signal": None,
+                },
+            )
+            event_type = int(event.type)
+            timestamp = int(event.timestamp)
+            if event_type == 1:  # JOB_EXECUTE
+                state["run_start"] = timestamp
+            elif event_type == 10:  # JOB_SUSPENDED
+                state["suspended_at"] = timestamp
+            elif event_type == 11:  # JOB_UNSUSPENDED
+                if state["suspended_at"] is not None:
+                    state["suspension"] += max(0, timestamp - state["suspended_at"])
+                    state["suspended_at"] = None
+            elif event_type in (4, 5, 9):  # EVICTED, TERMINATED, ABORTED
+                _close_log_run(state, timestamp)
+                if event_type in (5, 9):
+                    state["completion"] = timestamp
+                    normal = event.get("TerminatedNormally")
+                    return_value = event.get("ReturnValue")
+                    if normal is not None:
+                        state["by_signal"] = not bool(normal)
+                        if return_value is not None:
+                            state["exit_code"] = int(return_value)
+    finally:
+        try:
+            log.close()
+        except Exception:
+            logger.debug("Error closing job event log: %s", log_path, exc_info=True)
+
+    result: dict[tuple[int, int], dict] = {}
+    for key, state in runs.items():
+        if state["completion"] is None:
+            continue
+        entry: dict = {"CompletionDate": int(state["completion"])}
+        wall = round(state["wall"])
+        if wall > 0:
+            entry["RemoteWallClockTime"] = wall
+            entry["LastRemoteWallClockTime"] = wall
+        suspension = round(state["suspension"])
+        if suspension > 0:
+            entry["CumulativeSuspensionTime"] = suspension
+        if state["exit_code"] is not None:
+            entry["ExitCode"] = int(state["exit_code"])
+        if state["by_signal"] is not None:
+            entry["ExitBySignal"] = bool(state["by_signal"])
+        result[key] = entry
+    return result
+
+
+def _close_log_run(state: dict, timestamp: int) -> None:
+    """Close an open execution interval and any suspension at *timestamp*."""
+    if state["run_start"] is not None:
+        state["wall"] += max(0, timestamp - state["run_start"])
+        state["run_start"] = None
+    if state["suspended_at"] is not None:
+        state["suspension"] += max(0, timestamp - state["suspended_at"])
+        state["suspended_at"] = None

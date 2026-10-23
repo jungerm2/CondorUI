@@ -21,6 +21,25 @@ def _ts(epoch: int) -> datetime:
     return datetime.fromtimestamp(epoch, tz=UTC)
 
 
+def _terminated_event(cluster_id: int, proc_id: int, when: str, rc: int) -> str:
+    return f"""005 ({cluster_id}.{proc_id:03d}.000) {when} Job terminated.
+    (1) Normal termination (return value {rc})
+        Usr 0 00:00:00, Sys 0 00:00:00  -  Run Remote Usage
+        Usr 0 00:00:00, Sys 0 00:00:00  -  Run Local Usage
+        Usr 0 00:00:00, Sys 0 00:00:00  -  Total Remote Usage
+        Usr 0 00:00:00, Sys 0 00:00:00  -  Total Local Usage
+    0  -  Run Bytes Sent By Job
+    27848  -  Run Bytes Received By Job
+    0  -  Total Bytes Sent By Job
+    27848  -  Total Bytes Received By Job
+    Partitionable Resources :    Usage  Request Allocated
+       Cpus                 :                 1         1
+       Disk (KB)            :       40       30   4203309
+       Memory (MB)          :        1        1         1
+...
+"""
+
+
 @pytest.fixture
 def no_daemon(monkeypatch):
     monkeypatch.setattr("app.api.daemon_available", lambda: False)
@@ -133,3 +152,38 @@ def test_history_list_never_scans_schedd_history(app, sample_subs, monkeypatch):
     assert resp.status_code == 200
     assert resp.get_json()["count"] == 4  # clusters 12 (1 proc) + 11 (3 procs)
     assert submits == []
+
+
+def test_history_fills_completion_fields_from_userlog(app, no_daemon, tmp_path):
+    """Completed rows get their finish facts from the job's own UserLog."""
+    log_path = tmp_path / "4242.log"
+    log_path.write_text(
+        "001 (4242.000.000) 2020-07-10 10:45:00 Job executing on host: <x>\n"
+        "...\n" + _terminated_event(4242, 0, "2020-07-10 10:46:00", 0)
+    )
+
+    with app.app_context():
+        db.session.add(
+            JobSubmission(
+                cluster_id=4242,
+                name="finished-job",
+                owner="alice",
+                num_procs=1,
+                submitted_at=_ts(1800000000),
+                submit_description="{}",
+                log_path=str(log_path),
+            )
+        )
+        db.session.commit()
+
+    try:
+        data = _fetch(app, "?grouped=0&limit=10")
+        job = next(j for j in data["jobs"] if j["ClusterId"] == 4242)
+        assert job["CompletionDate"] == int(datetime(2020, 7, 10, 10, 46).timestamp())
+        assert job["LastRemoteWallClockTime"] == 60
+        assert job["ExitCode"] == 0
+    finally:
+        # This app fixture shares an in-memory DB across the session.
+        with app.app_context():
+            JobSubmission.query.filter_by(cluster_id=4242).delete()
+            db.session.commit()
