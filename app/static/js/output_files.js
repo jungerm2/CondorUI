@@ -82,6 +82,7 @@ function buildOutputFileRow(f) {
     const dir = parts.join('/');
 
     const tr = document.createElement('tr');
+    tr.className = 'output-file-row';
     tr.innerHTML = `
         <td style="text-align: center;">
             <input type="checkbox" class="output-row-checkbox" data-key="${escHtml(key)}" ${isChecked ? 'checked' : ''}>
@@ -298,7 +299,11 @@ function renderOutputFiles() {
                         ${idHtml}
                     </span>
                     <span class="output-group-meta">${totalCount} file${totalCount === 1 ? '' : 's'} · ${formatFileSize(group.totalBytes)}</span>
-                    <span class="expand-chevron ${collapsed ? '' : 'expanded'}" aria-hidden="true"></span>
+                    <span class="expand-chevron ${collapsed ? '' : 'expanded'}" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="9 6 15 12 9 18" />
+                        </svg>
+                    </span>
                 </div>
             </td>
         `;

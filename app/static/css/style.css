@@ -1446,25 +1446,40 @@ details.card[open] .card-body {
 /* ===== Grouped Row Styles ===== */
 .group-header {
     cursor: pointer;
-    background: rgba(100, 120, 180, 0.03);
+    background: var(--bg-secondary);
 }
 .group-header:hover {
-    background: rgba(100, 120, 180, 0.08);
+    background: var(--bg-card-hover);
 }
-.group-header td:first-child {
-    position: relative;
+.light-theme .group-header {
+    background: #eef2f8;
+}
+.light-theme .group-header:hover {
+    background: #e7eef8;
+}
+.group-header td {
+    padding: 12px 16px;
+    border-top: 1px solid var(--border-color);
+    border-bottom: 1px solid rgba(148, 163, 208, 0.09);
+}
+.light-theme .group-header td {
+    border-bottom-color: rgba(28, 39, 76, 0.07);
+}
+/* Output files sit visually inside their job band */
+.output-file-row td:nth-child(2) {
+    padding-left: 24px;
 }
 /* Output job header: name left, counts after it, expander pinned right */
 .output-group-header {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     min-width: 0;
 }
 .output-group-name {
     display: flex;
-    align-items: baseline;
-    gap: 6px;
+    align-items: center;
+    gap: 8px;
     min-width: 0;
     overflow: hidden;
     white-space: nowrap;
@@ -1474,31 +1489,56 @@ details.card[open] .card-body {
     overflow: hidden;
     text-overflow: ellipsis;
     color: var(--accent-cyan);
+    font-size: 0.9rem;
+    font-weight: 650;
+    text-decoration: none;
+}
+.output-group-name a:hover {
+    text-decoration: underline;
 }
 .output-group-id {
     color: var(--text-muted);
+    font-size: 0.76rem;
+    font-weight: 400;
 }
 .output-group-meta {
     color: var(--text-muted);
-    margin-left: 4px;
+    margin-left: 2px;
+    padding-left: 10px;
+    border-left: 1px solid var(--border-color);
+    font-size: 0.76rem;
     white-space: nowrap;
+    flex-shrink: 0;
 }
-/* Group expander: a drawn chevron, not a typed glyph */
+/* Group expander: drawn stroke chevron, not a clipped or typed glyph */
 .expand-chevron {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 10px;
-    height: 10px;
+    width: 24px;
+    height: 24px;
     margin-left: auto;
     flex-shrink: 0;
-    background: var(--text-muted);
-    clip-path: polygon(0 25%, 50% 87%, 100% 25%, 100% 45%, 50% 100%, 0 45%);
-    transition: transform 0.2s ease;
-    transform: rotate(-90deg);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    transform-origin: center;
+    transition: transform var(--transition), color var(--transition),
+        background var(--transition);
+}
+.expand-chevron svg {
+    display: block;
+    width: 16px;
+    height: 16px;
 }
 .expand-chevron.expanded {
-    transform: rotate(0);
+    transform: rotate(90deg);
+}
+.group-header:hover .expand-chevron {
+    color: var(--accent-cyan);
+    background: rgba(148, 163, 208, 0.08);
+}
+.light-theme .group-header:hover .expand-chevron {
+    background: rgba(28, 39, 76, 0.05);
 }
 .group-subrow {
     background: rgba(100, 120, 180, 0.02);

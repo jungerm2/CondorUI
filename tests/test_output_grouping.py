@@ -63,6 +63,7 @@ def test_groups_sort_newest_first_and_expander_is_right(
             const row = document.querySelectorAll('tr.group-header')[index];
             const group = row.querySelector('.output-group-header');
             const chevron = row.querySelector('.expand-chevron');
+            const fileRow = document.querySelector('tr.output-file-row');
             const rowBox = row.getBoundingClientRect();
             const chevronBox = chevron.getBoundingClientRect();
             return {
@@ -70,11 +71,16 @@ def test_groups_sort_newest_first_and_expander_is_right(
                 rowLeft: rowBox.left,
                 rowWidth: rowBox.width,
                 chevronRight: chevronBox.right,
+                chevronSvg: Boolean(chevron.querySelector('svg')),
+                groupBg: getComputedStyle(row).backgroundColor,
+                fileBg: fileRow ? getComputedStyle(fileRow).backgroundColor : null,
             };
         }""",
         newer_index,
     )
     assert geometry["isLast"], "expander must be the last item in the header"
+    assert geometry["chevronSvg"], "expander must be a drawn SVG chevron"
+    assert geometry["groupBg"] != geometry["fileBg"], geometry
     assert (
         geometry["chevronRight"] > geometry["rowLeft"] + geometry["rowWidth"] * 0.8
     ), geometry
