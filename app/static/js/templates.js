@@ -73,11 +73,11 @@ function renderTemplatesGrid(templates) {
                     Download
                 </button>
             </div>
-            <div class="card-body" style="flex-grow: 1; padding: 12px 16px;">
+            <div class="card-body" style="flex-grow: 1; padding: 12px 20px;">
                 <pre class="monospace" style="background: var(--bg-secondary); padding: 8px; border-radius: 4px; font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: pre-wrap; max-height: 100px;">${escHtml(descLines)}</pre>
                 <span style="font-size: 0.75rem; color: var(--text-muted);">Modified: ${tmpl.updated_at ? formatDateIso(tmpl.updated_at) : '—'}</span>
             </div>
-            <div class="card-footer" style="display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border-color); padding: 12px 16px; background: var(--bg-secondary);">
+            <div class="card-footer" style="display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border-color); padding: 12px 20px; background: var(--bg-secondary);">
                 <button class="btn btn-ghost btn-sm rename-tmpl-btn" data-name="${escHtml(tmpl.name)}" title="Rename template">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                         <path d="M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>

@@ -107,7 +107,7 @@ function buildOutputFileRow(f) {
                         <line x1="12" y1="15" x2="12" y2="3" />
                     </svg>
                 </a>
-                <button class="btn btn-ghost btn-sm output-delete-btn" data-cluster-id="${f.cluster_id}" data-filename="${escHtml(f.filename)}" data-root="${escHtml(f.root || '')}" data-path="${escHtml(f.path || '')}" title="Delete" style="color: var(--danger-color, #f87171);">
+                <button class="btn btn-ghost btn-sm output-delete-btn" data-cluster-id="${f.cluster_id}" data-filename="${escHtml(f.filename)}" data-root="${escHtml(f.root || '')}" data-path="${escHtml(f.path || '')}" title="Delete" style="color: var(--status-held);">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                         <polyline points="3,6 5,6 21,6" />
                         <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
