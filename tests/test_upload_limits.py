@@ -1,28 +1,4 @@
-"""Large streamed uploads and legacy loose-file layouts."""
-
-from pathlib import Path
-
-
-def test_flat_input_file_is_listed(secure_app, secure_client):
-    upload_dir = Path(secure_app.config["UPLOAD_DIR"])
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    (upload_dir / "loose.txt").write_text("loose")
-
-    resp = secure_client.get("/api/files")
-
-    assert resp.status_code == 200
-    assert [f["original_name"] for f in resp.get_json()["files"]] == ["loose.txt"]
-
-
-def test_flat_container_is_listed(secure_app, secure_client):
-    container_dir = Path(secure_app.config["OSDF_ROOT_PATH"]) / "containers"
-    container_dir.mkdir(parents=True)
-    (container_dir / "loose.sif").write_bytes(b"sif")
-
-    resp = secure_client.get("/api/containers")
-
-    assert resp.status_code == 200
-    assert [c["name"] for c in resp.get_json()["containers"]] == ["Loose"]
+"""Large streamed uploads use the larger upload limit."""
 
 
 def test_streamed_upload_uses_larger_limit(secure_app, secure_client):

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from flask import abort, current_app, jsonify, request, send_file
@@ -30,26 +30,35 @@ def _build_file_entry(
     rel_name: str,
     original_name: str,
     file_path: Path,
-    *,
-    size: int,
-    uploaded_at: float,
-    osdf_path: str | None = None,
+    stat: os.stat_result,
 ) -> dict:
-    """Build a file dict from an already-scanned directory entry.
+    """Build a file dict for the frontend, checking both local and OSDF locations.
 
-    The OSDF location is supplied by the caller (the OSDF tree is scanned in
-    the same request) so local files never trigger a second stat on a slow
-    network mount just to discover that they are not staged.
+    A file may be in either UPLOAD_DIR (local) or OSDF_ROOT_PATH/uploads/
+    (staged).  This function checks both locations and sets the appropriate
+    fields.
     """
+    osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
+    osdf_path = None
+    if osdf_root:
+        candidate = Path(osdf_root) / "uploads" / rel_name
+        if candidate.exists():
+            osdf_path = str(candidate)
+
     base_uri = current_app.config.get("OSDF_BASE_URI", "osdf:///")
+    if osdf_path:
+        uri = _osdf_uri(base_uri, osdf_path)
+    else:
+        uri = str(file_path)
+
     return {
         "filename": rel_name,
         "original_name": original_name,
         "local_path": str(file_path) if not osdf_path else None,
         "osdf_path": osdf_path,
-        "uri": _osdf_uri(base_uri, osdf_path) if osdf_path else str(file_path),
-        "size": size,
-        "uploaded_at": uploaded_at,
+        "uri": uri,
+        "size": stat.st_size,
+        "uploaded_at": stat.st_mtime,
     }
 
 
@@ -64,43 +73,29 @@ def list_files():
     """
     upload_dir = current_app.config["UPLOAD_DIR"]
     osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
-    osdf_uploads = Path(osdf_root) / "uploads" if osdf_root else None
-
-    # The OSDF staging mount is often networked, so scan it concurrently with
-    # the local tree and scan its UUID subdirectories in parallel.
-    if osdf_uploads is not None:
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            osdf_future = pool.submit(
-                scan_uuid_directories, str(osdf_uploads), parallel=True
-            )
-            local_future = pool.submit(scan_uuid_directories, upload_dir)
-            osdf_entries = osdf_future.result()
-            local_entries = local_future.result()
-    else:
-        osdf_entries = []
-        local_entries = scan_uuid_directories(upload_dir)
 
     # Build a set of seen filenames to avoid duplicates
     seen = set()
     files = []
 
-    if osdf_uploads is not None:
-        for entry in osdf_entries:
+    # 1. Scan OSDF uploads directory first (takes precedence)
+    if osdf_root:
+        osdf_uploads = str(Path(osdf_root) / "uploads")
+        for entry in scan_uuid_directories(osdf_uploads):
             rel_name = entry["filename"]
             seen.add(rel_name)
-            file_path = osdf_uploads / rel_name
+            file_path = Path(osdf_uploads) / rel_name
             files.append(
                 _build_file_entry(
                     rel_name,
                     entry["original_name"],
                     file_path,
-                    size=entry["size"],
-                    uploaded_at=entry["modified_at"],
-                    osdf_path=str(file_path),
+                    file_path.stat(),
                 )
             )
 
-    for entry in local_entries:
+    # 2. Scan local upload directory for files not already in OSDF
+    for entry in scan_uuid_directories(upload_dir):
         rel_name = entry["filename"]
         if rel_name in seen:
             continue
@@ -111,8 +106,7 @@ def list_files():
                 rel_name,
                 entry["original_name"],
                 file_path,
-                size=entry["size"],
-                uploaded_at=entry["modified_at"],
+                file_path.stat(),
             )
         )
 

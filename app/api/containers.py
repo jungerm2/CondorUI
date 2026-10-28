@@ -35,12 +35,10 @@ def list_containers():
     """List all container images."""
     osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
     if not osdf_root:
-        return jsonify({"error": "OSDF root path is not configured"}), 400
-    if not Path(osdf_root).is_dir():
-        return jsonify({"error": f"OSDF root path does not exist: {osdf_root}"}), 400
+        return jsonify({"containers": [], "count": 0})
 
     containers_dir = str(Path(osdf_root) / "containers")
-    raw = scan_uuid_directories(containers_dir, file_filter=".sif", parallel=True)
+    raw = scan_uuid_directories(containers_dir, file_filter=".sif")
     containers = []
     base_uri = current_app.config.get("OSDF_BASE_URI", "osdf:///")
     for entry in raw:

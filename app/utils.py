@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import shutil
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -128,15 +126,12 @@ def scan_uuid_directories(
     *,
     file_filter: str | None = None,
     extra_fields: dict | None = None,
-    parallel: bool = False,
 ) -> list[dict]:
-    """Scan a directory for uploaded files.
+    """Scan a directory of UUID-named subdirectories for files.
 
-    New uploads live in UUID-named subdirectories, but loose files directly
-    under *base_dir* are accepted too so files copied in from an older layout
-    remain visible.  Returns file dicts in filesystem order; callers sort them
-    for display.  ``os.scandir`` avoids a stat per directory entry, which keeps
-    large or network-backed directories responsive.
+    Each subdirectory under *base_dir* is expected to be a UUID directory
+    containing a single file.  Returns a list of file dicts sorted by
+    modification time (newest first).
 
     Args:
         base_dir: The base directory to scan (e.g., UPLOAD_DIR).
@@ -144,71 +139,37 @@ def scan_uuid_directories(
                      If None, all files are included.
         extra_fields: Optional dict of extra fields to include in each
                       file dict (e.g., ``{"osdf_path": None}``).
-        parallel: Scan UUID subdirectories concurrently. Use for network-backed
-                  staging directories where per-directory latency dominates.
 
     Returns:
         List of file dicts with keys: filename, original_name, size,
         modified_at, and any extra_fields provided.
     """
     base_path = Path(base_dir)
-    if not base_path.is_dir():
+    if not base_path.exists():
         return []
 
-    def build_item(entry: os.DirEntry, rel_name: str) -> dict | None:
-        if file_filter and not entry.name.endswith(file_filter):
-            return None
-        try:
-            stat = entry.stat(follow_symlinks=False)
-        except OSError:
-            return None
-        item = {
-            "filename": rel_name,
-            "original_name": entry.name,
-            "size": stat.st_size,
-            "modified_at": stat.st_mtime,
-        }
-        if extra_fields:
-            item.update(extra_fields)
-        return item
-
-    def scan_subdir(subdir: tuple[str, str]) -> list[dict]:
-        name, path = subdir
-        found = []
-        try:
-            with os.scandir(path) as children:
-                for child in children:
-                    if child.is_file(follow_symlinks=False):
-                        item = build_item(child, f"{name}/{child.name}")
-                        if item is not None:
-                            found.append(item)
-        except OSError:
-            pass
-        return found
-
-    files: list[dict] = []
-    subdirs: list[tuple[str, str]] = []
-    try:
-        entries = os.scandir(base_path)
-    except OSError:
-        return []
-
-    with entries:
-        for entry in entries:
-            if entry.is_file(follow_symlinks=False):
-                item = build_item(entry, entry.name)
-                if item is not None:
-                    files.append(item)
-            elif entry.is_dir(follow_symlinks=False):
-                subdirs.append((entry.name, entry.path))
-
-    if parallel and len(subdirs) > 1:
-        with ThreadPoolExecutor(max_workers=min(8, len(subdirs))) as pool:
-            for found in pool.map(scan_subdir, subdirs):
-                files.extend(found)
-    else:
-        for subdir in subdirs:
-            files.extend(scan_subdir(subdir))
+    files = []
+    for subdir in sorted(
+        base_path.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True
+    ):
+        if not subdir.is_dir():
+            continue
+        for f in subdir.iterdir():
+            if not f.is_file():
+                continue
+            if file_filter and not f.name.endswith(file_filter):
+                continue
+            stat = f.stat()
+            rel_name = f"{subdir.name}/{f.name}"
+            entry = {
+                "filename": rel_name,
+                "original_name": f.name,
+                "size": stat.st_size,
+                "modified_at": stat.st_mtime,
+            }
+            if extra_fields:
+                entry.update(extra_fields)
+            files.append(entry)
     return files
 
 

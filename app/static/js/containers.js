@@ -39,20 +39,16 @@ async function loadContainers() {
     } catch (err) {
         if (err.message && err.message.includes('OSDF root path')) {
             osdfConfigured = false;
-            showOsdfWarning(err.message);
+            showOsdfWarning();
         } else {
             toast(`Failed to load containers: ${err.message}`, 'error');
         }
     }
 }
 
-function showOsdfWarning(message = '') {
+function showOsdfWarning() {
     const warning = $('#osdf-warning');
-    if (warning) {
-        warning.style.display = 'flex';
-        const detail = warning.querySelector('p');
-        if (detail && message) detail.textContent = message;
-    }
+    if (warning) warning.style.display = 'flex';
 
     // Disable pull button
     const pullBtn = $('#pull-container-btn');
@@ -79,8 +75,8 @@ function showOsdfWarning(message = '') {
                 <line x1="12" y1="8" x2="12" y2="12" />
                 <line x1="12" y1="16" x2="12.01" y2="16" />
             </svg>
-            <p>${escHtml(message || 'OSDF Root Path Not Configured')}</p>
-            <p class="hint">Set <code>OSDF_ROOT_PATH</code> to the mounted staging directory and restart the app.</p>
+            <p>OSDF Root Path Not Configured</p>
+            <p class="hint">Set the <code>OSDF_ROOT_PATH</code> environment variable to use containers.</p>
         `;
     }
 }
@@ -119,9 +115,6 @@ function renderContainers() {
     if (filtered.length === 0) {
         table.style.display = 'none';
         empty.style.display = 'block';
-        const p = empty.querySelector('p');
-        if (p && p.dataset.emptyText) p.textContent = p.dataset.emptyText;
-        updateSelectionUI();
         return;
     }
 
@@ -633,7 +626,6 @@ document.addEventListener('DOMContentLoaded', () => {
     initModals();
     initPullForm();
     initSifUpload();
-    showListLoading('containers-empty');
     loadContainers();
 
     // Search input
