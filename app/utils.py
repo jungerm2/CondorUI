@@ -7,6 +7,7 @@ import logging
 import os
 import shutil
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -127,6 +128,7 @@ def scan_uuid_directories(
     *,
     file_filter: str | None = None,
     extra_fields: dict | None = None,
+    parallel: bool = False,
 ) -> list[dict]:
     """Scan a directory for uploaded files.
 
@@ -142,6 +144,8 @@ def scan_uuid_directories(
                      If None, all files are included.
         extra_fields: Optional dict of extra fields to include in each
                       file dict (e.g., ``{"osdf_path": None}``).
+        parallel: Scan UUID subdirectories concurrently. Use for network-backed
+                  staging directories where per-directory latency dominates.
 
     Returns:
         List of file dicts with keys: filename, original_name, size,
@@ -151,13 +155,13 @@ def scan_uuid_directories(
     if not base_path.is_dir():
         return []
 
-    def add_file(entry: os.DirEntry, rel_name: str) -> None:
+    def build_item(entry: os.DirEntry, rel_name: str) -> dict | None:
         if file_filter and not entry.name.endswith(file_filter):
-            return
+            return None
         try:
             stat = entry.stat(follow_symlinks=False)
         except OSError:
-            return
+            return None
         item = {
             "filename": rel_name,
             "original_name": entry.name,
@@ -166,9 +170,24 @@ def scan_uuid_directories(
         }
         if extra_fields:
             item.update(extra_fields)
-        files.append(item)
+        return item
+
+    def scan_subdir(subdir: tuple[str, str]) -> list[dict]:
+        name, path = subdir
+        found = []
+        try:
+            with os.scandir(path) as children:
+                for child in children:
+                    if child.is_file(follow_symlinks=False):
+                        item = build_item(child, f"{name}/{child.name}")
+                        if item is not None:
+                            found.append(item)
+        except OSError:
+            pass
+        return found
 
     files: list[dict] = []
+    subdirs: list[tuple[str, str]] = []
     try:
         entries = os.scandir(base_path)
     except OSError:
@@ -177,15 +196,19 @@ def scan_uuid_directories(
     with entries:
         for entry in entries:
             if entry.is_file(follow_symlinks=False):
-                add_file(entry, entry.name)
+                item = build_item(entry, entry.name)
+                if item is not None:
+                    files.append(item)
             elif entry.is_dir(follow_symlinks=False):
-                try:
-                    with os.scandir(entry.path) as children:
-                        for child in children:
-                            if child.is_file(follow_symlinks=False):
-                                add_file(child, f"{entry.name}/{child.name}")
-                except OSError:
-                    continue
+                subdirs.append((entry.name, entry.path))
+
+    if parallel and len(subdirs) > 1:
+        with ThreadPoolExecutor(max_workers=min(8, len(subdirs))) as pool:
+            for found in pool.map(scan_subdir, subdirs):
+                files.extend(found)
+    else:
+        for subdir in subdirs:
+            files.extend(scan_subdir(subdir))
     return files
 
 

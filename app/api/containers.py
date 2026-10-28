@@ -40,7 +40,7 @@ def list_containers():
         return jsonify({"error": f"OSDF root path does not exist: {osdf_root}"}), 400
 
     containers_dir = str(Path(osdf_root) / "containers")
-    raw = scan_uuid_directories(containers_dir, file_filter=".sif")
+    raw = scan_uuid_directories(containers_dir, file_filter=".sif", parallel=True)
     containers = []
     base_uri = current_app.config.get("OSDF_BASE_URI", "osdf:///")
     for entry in raw:
