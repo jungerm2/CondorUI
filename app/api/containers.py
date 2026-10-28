@@ -39,6 +39,10 @@ def list_containers():
     if not osdf_root:
         return jsonify({"containers": [], "count": 0})
 
+    if not current_app.config.get("TESTING"):
+        _container_cache.attach(
+            Path(current_app.instance_path) / "osdf_containers_cache.json"
+        )
     containers_dir = str(Path(osdf_root) / "containers")
     raw, _scanning = _container_cache.get(
         containers_dir,

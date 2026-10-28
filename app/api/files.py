@@ -74,6 +74,10 @@ def list_files():
     # 1. Scan OSDF uploads directory in the background.  A slow or missing
     # staging mount must not hold up the local files the page can already show.
     if osdf_root:
+        if not current_app.config.get("TESTING"):
+            _osdf_cache.attach(
+                Path(current_app.instance_path) / "osdf_files_cache.json"
+            )
         osdf_uploads = str(Path(osdf_root) / "uploads")
         osdf_entries, _scanning = _osdf_cache.get(
             osdf_uploads, lambda: scan_uuid_directories(osdf_uploads)

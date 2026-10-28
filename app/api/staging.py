@@ -9,15 +9,21 @@ serves whatever is currently known.
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 
 class BackgroundScanCache:
-    """TTL cache for one slow directory scan."""
+    """TTL cache for one slow directory scan.
+
+    Results can optionally be persisted so a restart serves the previous
+    listing immediately while the background refresh runs.
+    """
 
     def __init__(self, ttl: float = 60.0, grace: float = 0.2) -> None:
         self._ttl = ttl
@@ -28,6 +34,16 @@ class BackgroundScanCache:
         self._data: list[dict] | None = None
         self._updated = 0.0
         self._scanning = False
+        self._storage: Path | None = None
+        self._loaded = False
+
+    def attach(self, storage: Path) -> None:
+        """Load a persisted listing from *storage* on the next ``get``."""
+        with self._lock:
+            if self._storage == storage:
+                return
+            self._storage = storage
+            self._loaded = False
 
     def get(self, key: str, scanner) -> tuple[list[dict] | None, bool]:
         """Return ``(entries, scanning)`` and refresh stale data in the background.
@@ -37,6 +53,9 @@ class BackgroundScanCache:
         data is served immediately while a refresh runs.
         """
         with self._lock:
+            if not self._loaded:
+                self._load_locked(key)
+                self._loaded = True
             if key != self._key:
                 self._key = key
                 self._data = None
@@ -60,6 +79,33 @@ class BackgroundScanCache:
         with self._lock:
             self._updated = 0.0
 
+    def _load_locked(self, key: str) -> None:
+        if self._storage is None:
+            return
+        try:
+            payload = json.loads(self._storage.read_text(encoding="utf-8"))
+        except OSError, ValueError:
+            return
+        if payload.get("key") != key or not isinstance(payload.get("data"), list):
+            return
+        self._key = key
+        self._data = payload["data"]
+        # Treat the persisted listing as stale so it is refreshed immediately.
+        self._updated = 0.0
+
+    def _save_locked(self, data: list[dict]) -> None:
+        if self._storage is None:
+            return
+        try:
+            self._storage.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self._storage.with_name(f"{self._storage.name}.tmp")
+            temporary.write_text(
+                json.dumps({"key": self._key, "data": data}), encoding="utf-8"
+            )
+            temporary.replace(self._storage)
+        except OSError:
+            logger.warning("Could not save staging cache %s", self._storage)
+
     def _run(self, scanner) -> None:
         try:
             data = scanner()
@@ -70,4 +116,5 @@ class BackgroundScanCache:
             self._data = data
             self._updated = time.monotonic()
             self._scanning = False
+            self._save_locked(data)
         self._done.set()
