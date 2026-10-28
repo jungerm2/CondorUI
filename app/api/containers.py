@@ -22,12 +22,14 @@ from app.api.helpers import (
     build_zip_response,
     container_display_name,
 )
+from app.api.staging import BackgroundScanCache
 from app.utils import (
     save_uploaded_stream,
     scan_uuid_directories,
 )
 
 logger = logging.getLogger(__name__)
+_container_cache = BackgroundScanCache()
 
 
 @api_bp.route("/containers", methods=["GET"])
@@ -38,10 +40,14 @@ def list_containers():
         return jsonify({"containers": [], "count": 0})
 
     containers_dir = str(Path(osdf_root) / "containers")
-    raw = scan_uuid_directories(containers_dir, file_filter=".sif")
+    raw, _scanning = _container_cache.get(
+        containers_dir,
+        lambda: scan_uuid_directories(containers_dir, file_filter=".sif"),
+    )
+    pending = _scanning
     containers = []
     base_uri = current_app.config.get("OSDF_BASE_URI", "osdf:///")
-    for entry in raw:
+    for entry in raw or []:
         rel_name = entry["filename"]
         # Derive display name from filename (strip .sif)
         display_name = container_display_name(entry["original_name"])
@@ -58,7 +64,13 @@ def list_containers():
                 "created_at": entry["modified_at"],
             }
         )
-    return jsonify({"containers": containers, "count": len(containers)})
+    return jsonify(
+        {
+            "containers": containers,
+            "count": len(containers),
+            "pending": pending,
+        }
+    )
 
 
 def _prepare_pull(image_ref: str, name: str, overwrite: bool):
@@ -141,6 +153,7 @@ def pull_container():
             ), 500
 
         size = dest_path.stat().st_size
+        _container_cache.invalidate()
 
         return jsonify(
             {
@@ -305,6 +318,7 @@ def pull_container_stream():
                 return
 
             size = dest_path.stat().st_size
+            _container_cache.invalidate()
 
             yield f"event: complete\ndata: {json.dumps({'filename': unique_name, 'name': name, 'source': image_ref, 'size': size, 'created_at': dest_path.stat().st_mtime})}\n\n"
 
@@ -370,6 +384,7 @@ def upload_container():
         unique_name, size = save_uploaded_stream(
             request.stream, containers_dir, original_filename, name=name
         )
+        _container_cache.invalidate()
 
         return jsonify(
             {
@@ -415,6 +430,7 @@ def rename_container(filename: str):
         return jsonify({"error": "A container with that name already exists"}), 409
 
     file_path.rename(new_path)
+    _container_cache.invalidate()
 
     new_rel_name = f"{file_path.parent.name}/{new_path.name}"
     stat = new_path.stat()
@@ -527,5 +543,6 @@ def delete_container(filename: str):
 
     file_path.unlink()
     _remove_empty_parents(file_path.parent)
+    _container_cache.invalidate()
 
     return jsonify({"message": f"Container '{filename}' deleted"})

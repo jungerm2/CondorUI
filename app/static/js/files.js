@@ -7,16 +7,35 @@ let selectedFileFilenames = new Set();
 let uploadAbortControllers = []; // Track active uploads for cancel
 let fileSortField = 'original_name';
 let fileSortAsc = true;
+let stagedRefreshTimer = null;
 
 // formatFileSize and formatDateIso are now defined in common.js
 // These duplicates have been removed; use the shared versions instead.
 
-// Load files from API
+// Load files from API. Local files render immediately; a slow staged-directory
+// scan reports `staged_pending` and we poll until its background scan finishes.
 async function loadFiles() {
     try {
         const data = await api('/files');
         currentFiles = data.files || [];
         renderFiles();
+
+        if (data.staged_pending) {
+            if (currentFiles.length === 0) {
+                const empty = $('#files-empty');
+                const p = empty ? empty.querySelector('p') : null;
+                if (p) p.textContent = 'Loading staged files…';
+            }
+            if (!stagedRefreshTimer) {
+                stagedRefreshTimer = setTimeout(() => {
+                    stagedRefreshTimer = null;
+                    loadFiles();
+                }, 2000);
+            }
+        } else if (stagedRefreshTimer) {
+            clearTimeout(stagedRefreshTimer);
+            stagedRefreshTimer = null;
+        }
     } catch (err) {
         toast(`Failed to load files: ${err.message}`, 'error');
     }

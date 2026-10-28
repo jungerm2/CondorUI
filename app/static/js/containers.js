@@ -7,6 +7,7 @@ let deleteTargetFilename = null;
 let osdfConfigured = false;
 let containerSortField = 'name';
 let containerSortAsc = true;
+let containerRefreshTimer = null;
 
 // formatFileSize and formatDateIso are now defined in common.js
 // These duplicates have been removed; use the shared versions instead.
@@ -36,6 +37,23 @@ async function loadContainers() {
         currentContainers = data.containers || [];
         osdfConfigured = true;
         renderContainers();
+
+        if (data.pending) {
+            if (currentContainers.length === 0) {
+                const empty = $('#containers-empty');
+                const p = empty ? empty.querySelector('p') : null;
+                if (p) p.textContent = 'Loading staged containers…';
+            }
+            if (!containerRefreshTimer) {
+                containerRefreshTimer = setTimeout(() => {
+                    containerRefreshTimer = null;
+                    loadContainers();
+                }, 2000);
+            }
+        } else if (containerRefreshTimer) {
+            clearTimeout(containerRefreshTimer);
+            containerRefreshTimer = null;
+        }
     } catch (err) {
         if (err.message && err.message.includes('OSDF root path')) {
             osdfConfigured = false;
@@ -115,6 +133,8 @@ function renderContainers() {
     if (filtered.length === 0) {
         table.style.display = 'none';
         empty.style.display = 'block';
+        const p = empty.querySelector('p');
+        if (p && empty.dataset.emptyText) p.textContent = empty.dataset.emptyText;
         return;
     }
 
@@ -626,6 +646,11 @@ document.addEventListener('DOMContentLoaded', () => {
     initModals();
     initPullForm();
     initSifUpload();
+    const empty = $('#containers-empty');
+    if (empty) {
+        const p = empty.querySelector('p');
+        if (p) empty.dataset.emptyText = p.textContent;
+    }
     loadContainers();
 
     // Search input

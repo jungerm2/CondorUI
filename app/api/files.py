@@ -16,6 +16,7 @@ from app.api.helpers import (
     _safe_path,
     build_zip_response,
 )
+from app.api.staging import BackgroundScanCache
 from app.utils import (
     safe_filename,
     save_uploaded_stream,
@@ -23,6 +24,7 @@ from app.utils import (
 )
 
 logger = logging.getLogger(__name__)
+_osdf_cache = BackgroundScanCache()
 
 
 def _build_file_entry(
@@ -67,13 +69,17 @@ def list_files():
     # Build a set of seen filenames to avoid duplicates
     seen = set()
     files = []
+    staged_pending = False
 
-    # 1. Scan OSDF uploads directory first (takes precedence).  Do not probe
-    # the OSDF path again for every local file: that turns one staged-tree
-    # listing into one extra network round-trip per local upload.
+    # 1. Scan OSDF uploads directory in the background.  A slow or missing
+    # staging mount must not hold up the local files the page can already show.
     if osdf_root:
         osdf_uploads = str(Path(osdf_root) / "uploads")
-        for entry in scan_uuid_directories(osdf_uploads):
+        osdf_entries, _scanning = _osdf_cache.get(
+            osdf_uploads, lambda: scan_uuid_directories(osdf_uploads)
+        )
+        staged_pending = _scanning
+        for entry in osdf_entries or []:
             rel_name = entry["filename"]
             seen.add(rel_name)
             file_path = Path(osdf_uploads) / rel_name
@@ -108,7 +114,13 @@ def list_files():
     # Sort by uploaded_at descending
     files.sort(key=lambda f: f.get("uploaded_at", 0), reverse=True)
 
-    return jsonify({"files": files, "count": len(files)})
+    return jsonify(
+        {
+            "files": files,
+            "count": len(files),
+            "staged_pending": staged_pending,
+        }
+    )
 
 
 @api_bp.route("/files", methods=["POST"])
@@ -335,6 +347,8 @@ def delete_file(filename: str):
 
     if not deleted_local and not deleted_osdf:
         return jsonify({"error": "File not found"}), 404
+    if deleted_osdf:
+        _osdf_cache.invalidate()
 
     return jsonify({"message": f"File '{filename}' deleted"})
 
@@ -364,6 +378,7 @@ def stage_file(filename: str):
 
     # Clean up empty parent directories from the source location
     _remove_empty_parents(file_path.parent)
+    _osdf_cache.invalidate()
 
     stat = osdf_dest.stat()
     base_uri = current_app.config.get("OSDF_BASE_URI", "osdf:///")
@@ -401,6 +416,7 @@ def unstage_file(filename: str):
 
     # Clean up empty parent directories from the OSDF source location
     _remove_empty_parents(osdf_path.parent)
+    _osdf_cache.invalidate()
 
     stat = local_dest.stat()
 
