@@ -46,6 +46,8 @@ def upload_executable():
       - X-Upload-Filename: original filename (required)
       - X-Overwrite: "true" to replace an existing executable with the same name
     """
+    # Streamed uploads have a larger cap than ordinary JSON/form requests.
+    request.max_content_length = current_app.config["MAX_UPLOAD_LENGTH"]
     original_filename = request.headers.get("X-Upload-Filename", "").strip()
     if not original_filename:
         return jsonify({"error": "Missing 'X-Upload-Filename' header"}), 400

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import uuid
 from pathlib import Path
@@ -127,11 +128,13 @@ def scan_uuid_directories(
     file_filter: str | None = None,
     extra_fields: dict | None = None,
 ) -> list[dict]:
-    """Scan a directory of UUID-named subdirectories for files.
+    """Scan a directory for uploaded files.
 
-    Each subdirectory under *base_dir* is expected to be a UUID directory
-    containing a single file.  Returns a list of file dicts sorted by
-    modification time (newest first).
+    New uploads live in UUID-named subdirectories, but loose files directly
+    under *base_dir* are accepted too so files copied in from an older layout
+    remain visible.  Returns file dicts in filesystem order; callers sort them
+    for display.  ``os.scandir`` avoids a stat per directory entry, which keeps
+    large or network-backed directories responsive.
 
     Args:
         base_dir: The base directory to scan (e.g., UPLOAD_DIR).
@@ -145,31 +148,44 @@ def scan_uuid_directories(
         modified_at, and any extra_fields provided.
     """
     base_path = Path(base_dir)
-    if not base_path.exists():
+    if not base_path.is_dir():
         return []
 
-    files = []
-    for subdir in sorted(
-        base_path.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True
-    ):
-        if not subdir.is_dir():
-            continue
-        for f in subdir.iterdir():
-            if not f.is_file():
-                continue
-            if file_filter and not f.name.endswith(file_filter):
-                continue
-            stat = f.stat()
-            rel_name = f"{subdir.name}/{f.name}"
-            entry = {
-                "filename": rel_name,
-                "original_name": f.name,
-                "size": stat.st_size,
-                "modified_at": stat.st_mtime,
-            }
-            if extra_fields:
-                entry.update(extra_fields)
-            files.append(entry)
+    def add_file(entry: os.DirEntry, rel_name: str) -> None:
+        if file_filter and not entry.name.endswith(file_filter):
+            return
+        try:
+            stat = entry.stat(follow_symlinks=False)
+        except OSError:
+            return
+        item = {
+            "filename": rel_name,
+            "original_name": entry.name,
+            "size": stat.st_size,
+            "modified_at": stat.st_mtime,
+        }
+        if extra_fields:
+            item.update(extra_fields)
+        files.append(item)
+
+    files: list[dict] = []
+    try:
+        entries = os.scandir(base_path)
+    except OSError:
+        return []
+
+    with entries:
+        for entry in entries:
+            if entry.is_file(follow_symlinks=False):
+                add_file(entry, entry.name)
+            elif entry.is_dir(follow_symlinks=False):
+                try:
+                    with os.scandir(entry.path) as children:
+                        for child in children:
+                            if child.is_file(follow_symlinks=False):
+                                add_file(child, f"{entry.name}/{child.name}")
+                except OSError:
+                    continue
     return files
 
 

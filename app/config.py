@@ -48,8 +48,13 @@ class Config:
     # Directory for submit templates (stored as .json files)
     TEMPLATES_DIR = os.environ.get("TEMPLATES_DIR", str(BASE_DIR / "templates"))
 
-    # Maximum upload size — containers can be very large.
-    # Default: 10 GB. Override with MAX_CONTENT_LENGTH (bytes).
+    # Maximum request size for ordinary JSON/form requests. Large file uploads
+    # stream to disk and use MAX_UPLOAD_LENGTH instead.
     MAX_CONTENT_LENGTH = int(
         os.environ.get("MAX_CONTENT_LENGTH", str(10 * 1024 * 1024 * 1024))
+    )
+    # Maximum size of an input-file, executable, or container upload. Datasets
+    # and .sif images routinely exceed the 10 GB JSON request limit.
+    MAX_UPLOAD_LENGTH = int(
+        os.environ.get("MAX_UPLOAD_LENGTH", str(100 * 1024 * 1024 * 1024))
     )

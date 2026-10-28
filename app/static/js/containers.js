@@ -39,16 +39,20 @@ async function loadContainers() {
     } catch (err) {
         if (err.message && err.message.includes('OSDF root path')) {
             osdfConfigured = false;
-            showOsdfWarning();
+            showOsdfWarning(err.message);
         } else {
             toast(`Failed to load containers: ${err.message}`, 'error');
         }
     }
 }
 
-function showOsdfWarning() {
+function showOsdfWarning(message = '') {
     const warning = $('#osdf-warning');
-    if (warning) warning.style.display = 'flex';
+    if (warning) {
+        warning.style.display = 'flex';
+        const detail = warning.querySelector('p');
+        if (detail && message) detail.textContent = message;
+    }
 
     // Disable pull button
     const pullBtn = $('#pull-container-btn');
@@ -75,8 +79,8 @@ function showOsdfWarning() {
                 <line x1="12" y1="8" x2="12" y2="12" />
                 <line x1="12" y1="16" x2="12.01" y2="16" />
             </svg>
-            <p>OSDF Root Path Not Configured</p>
-            <p class="hint">Set the <code>OSDF_ROOT_PATH</code> environment variable to use containers.</p>
+            <p>${escHtml(message || 'OSDF Root Path Not Configured')}</p>
+            <p class="hint">Set <code>OSDF_ROOT_PATH</code> to the mounted staging directory and restart the app.</p>
         `;
     }
 }
@@ -115,6 +119,9 @@ function renderContainers() {
     if (filtered.length === 0) {
         table.style.display = 'none';
         empty.style.display = 'block';
+        const p = empty.querySelector('p');
+        if (p && p.dataset.emptyText) p.textContent = p.dataset.emptyText;
+        updateSelectionUI();
         return;
     }
 
@@ -248,6 +255,13 @@ async function handleBulkDownload() {
 // SSE pull — streams apptainer output live with progress bar support
 // ---------------------------------------------------------------------------
 let pullEventSource = null;
+let pullGuardActive = false;
+
+function finishPullGuard() {
+    if (!pullGuardActive) return;
+    pullGuardActive = false;
+    endNavigationGuard();
+}
 
 async function handlePull() {
     const imageRef = $('#pull-image-ref').value.trim();
@@ -298,6 +312,8 @@ async function handlePull() {
     if (name) params.set('name', name);
     if (conflict) params.set('overwrite', 'true');
 
+    pullGuardActive = true;
+    beginNavigationGuard('Container conversion is still in progress. Are you sure you want to leave?');
     pullEventSource = new EventSource(`/api/containers/pull/stream?${params}`);
 
     pullEventSource.addEventListener('start', (e) => {
@@ -332,6 +348,7 @@ async function handlePull() {
     pullEventSource.addEventListener('complete', (e) => {
         pullEventSource.close();
         pullEventSource = null;
+        finishPullGuard();
         // Hide spinner
         const spinner = $('#pull-spinner');
         if (spinner) spinner.style.display = 'none';
@@ -370,6 +387,7 @@ async function handlePull() {
         toast(`Pull failed: ${e.data || 'Connection lost'}`, 'error');
         pullEventSource.close();
         pullEventSource = null;
+        finishPullGuard();
         // Do NOT call resetPullUI() — keep the log visible so user can see the error
         // Just re-enable the pull button and stop button
         const pullBtn = $('#pull-container-btn');
@@ -417,6 +435,7 @@ function stopPull() {
     if (pullEventSource) {
         pullEventSource.close();
         pullEventSource = null;
+        finishPullGuard();
         $('#pull-log-output').textContent += '\n— Pull cancelled by user —\n';
         toast('Pull cancelled', 'warning');
         resetPullUI();
@@ -458,6 +477,7 @@ async function handleSifUpload(file) {
 
     const onProgress = createProgressTracker(progressFill, progressText);
 
+    beginNavigationGuard('Container upload is still in progress. Are you sure you want to leave?');
     const { promise } = uploadFileRaw(file, '/api/containers/upload', {
         name: name,
         filenameHeader: 'X-Container-Filename',
@@ -480,7 +500,7 @@ async function handleSifUpload(file) {
         progressText.textContent = `Failed: ${msg}`;
         progressText.classList.add('progress-error');
         toast(msg, 'error');
-    });
+    }).finally(endNavigationGuard);
 }
 
 function resetUploadUI() {
@@ -613,6 +633,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initModals();
     initPullForm();
     initSifUpload();
+    showListLoading('containers-empty');
     loadContainers();
 
     // Search input

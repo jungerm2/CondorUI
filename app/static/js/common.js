@@ -52,6 +52,30 @@ function showListLoading(elId, msg = 'Loading…') {
     }
 }
 
+// Warn before leaving while an upload or container operation is in progress.
+// The browser controls the prompt text; this only arms/disarms the guard.
+let activeNavigationGuards = 0;
+let navigationGuardHandler = null;
+
+function beginNavigationGuard(message = 'An upload is still in progress. Are you sure you want to leave?') {
+    activeNavigationGuards += 1;
+    if (navigationGuardHandler) return;
+    navigationGuardHandler = (event) => {
+        event.preventDefault();
+        event.returnValue = message;
+        return message;
+    };
+    window.addEventListener('beforeunload', navigationGuardHandler);
+}
+
+function endNavigationGuard() {
+    activeNavigationGuards = Math.max(0, activeNavigationGuards - 1);
+    if (activeNavigationGuards === 0 && navigationGuardHandler) {
+        window.removeEventListener('beforeunload', navigationGuardHandler);
+        navigationGuardHandler = null;
+    }
+}
+
 // API client wrapper with timeout
 async function api(endpoint, options = {}) {
     const url = `${API_BASE}${endpoint}`;
@@ -1216,6 +1240,10 @@ function uploadFileRaw(file, url, options = {}) {
 
     const promise = new Promise((resolve, reject) => {
         xhr.addEventListener('load', () => {
+            if (xhr.status === 413) {
+                reject(new Error('File is larger than the server upload limit'));
+                return;
+            }
             try {
                 const data = JSON.parse(xhr.responseText);
                 if (xhr.status >= 200 && xhr.status < 300) {

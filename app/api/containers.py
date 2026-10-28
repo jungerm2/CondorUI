@@ -35,7 +35,9 @@ def list_containers():
     """List all container images."""
     osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
     if not osdf_root:
-        return jsonify({"containers": [], "count": 0})
+        return jsonify({"error": "OSDF root path is not configured"}), 400
+    if not Path(osdf_root).is_dir():
+        return jsonify({"error": f"OSDF root path does not exist: {osdf_root}"}), 400
 
     containers_dir = str(Path(osdf_root) / "containers")
     raw = scan_uuid_directories(containers_dir, file_filter=".sif")
@@ -334,6 +336,8 @@ def upload_container():
       - X-Container-Name: optional display name
       - X-Overwrite: "true" to replace an existing container with the same name
     """
+    # Streamed uploads have a larger cap than ordinary JSON/form requests.
+    request.max_content_length = current_app.config["MAX_UPLOAD_LENGTH"]
     original_filename = request.headers.get("X-Container-Filename", "").strip()
     if not original_filename:
         return jsonify({"error": "Missing 'X-Container-Filename' header"}), 400

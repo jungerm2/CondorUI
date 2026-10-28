@@ -61,7 +61,8 @@ Every setting has a sensible default; override via environment variables.
 | `OSDF_ROOT_PATH` | `/staging/${USER:0:1}/$USER/webui` | OSDF staging root; files/containers land in `uploads/` and `containers/` subdirs. |
 | `OSDF_BASE_URI` | `osdf:///chtc` | URI prefix used to build `transfer_input_files` paths. |
 | `MAX_HISTORY_RESULTS` | `200` | Default history page size. |
-| `MAX_CONTENT_LENGTH` | `10737418240` (10 GB) | Maximum upload size in bytes. |
+| `MAX_CONTENT_LENGTH` | `10737418240` (10 GB) | Maximum JSON/form request size in bytes. |
+| `MAX_UPLOAD_LENGTH` | `107374182400` (100 GB) | Maximum streamed file/container upload size in bytes. |
 | `HOST` | `0.0.0.0` | Dev-server bind address. |
 | `PORT` | `5000` | Dev-server port. |
 | `FLASK_DEBUG` | `0` | Set to `1` for auto-reload (development only). |

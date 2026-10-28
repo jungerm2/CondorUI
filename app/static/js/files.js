@@ -276,6 +276,8 @@ async function handleUpload(files) {
     let successCount = 0;
     let failCount = 0;
 
+    beginNavigationGuard('File upload is still in progress. Are you sure you want to leave?');
+
     // Upload each file in parallel
     const uploadPromises = progressItems.map(({ file, item }) => {
         const progressFill = item.querySelector('.progress-bar-fill');
@@ -333,7 +335,11 @@ async function handleUpload(files) {
     }
 
     // Wait for all uploads to finish
-    await Promise.all(uploadPromises);
+    try {
+        await Promise.all(uploadPromises);
+    } finally {
+        endNavigationGuard();
+    }
 
     uploadAbortControllers = [];
 
