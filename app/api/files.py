@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import shutil
 from pathlib import Path
 
@@ -30,21 +29,12 @@ def _build_file_entry(
     rel_name: str,
     original_name: str,
     file_path: Path,
-    stat: os.stat_result,
+    *,
+    size: int,
+    uploaded_at: float,
+    osdf_path: str | None = None,
 ) -> dict:
-    """Build a file dict for the frontend, checking both local and OSDF locations.
-
-    A file may be in either UPLOAD_DIR (local) or OSDF_ROOT_PATH/uploads/
-    (staged).  This function checks both locations and sets the appropriate
-    fields.
-    """
-    osdf_root = current_app.config.get("OSDF_ROOT_PATH", "")
-    osdf_path = None
-    if osdf_root:
-        candidate = Path(osdf_root) / "uploads" / rel_name
-        if candidate.exists():
-            osdf_path = str(candidate)
-
+    """Build a file dict from an already-resolved local or OSDF path."""
     base_uri = current_app.config.get("OSDF_BASE_URI", "osdf:///")
     if osdf_path:
         uri = _osdf_uri(base_uri, osdf_path)
@@ -57,8 +47,8 @@ def _build_file_entry(
         "local_path": str(file_path) if not osdf_path else None,
         "osdf_path": osdf_path,
         "uri": uri,
-        "size": stat.st_size,
-        "uploaded_at": stat.st_mtime,
+        "size": size,
+        "uploaded_at": uploaded_at,
     }
 
 
@@ -78,7 +68,9 @@ def list_files():
     seen = set()
     files = []
 
-    # 1. Scan OSDF uploads directory first (takes precedence)
+    # 1. Scan OSDF uploads directory first (takes precedence).  Do not probe
+    # the OSDF path again for every local file: that turns one staged-tree
+    # listing into one extra network round-trip per local upload.
     if osdf_root:
         osdf_uploads = str(Path(osdf_root) / "uploads")
         for entry in scan_uuid_directories(osdf_uploads):
@@ -90,7 +82,9 @@ def list_files():
                     rel_name,
                     entry["original_name"],
                     file_path,
-                    file_path.stat(),
+                    size=entry["size"],
+                    uploaded_at=entry["modified_at"],
+                    osdf_path=str(file_path),
                 )
             )
 
@@ -106,7 +100,8 @@ def list_files():
                 rel_name,
                 entry["original_name"],
                 file_path,
-                file_path.stat(),
+                size=entry["size"],
+                uploaded_at=entry["modified_at"],
             )
         )
 
