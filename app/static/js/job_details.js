@@ -380,15 +380,32 @@ function renderActions(statusVal, logContent, job) {
     }
 
     if (removeBtn) {
-        removeBtn.addEventListener('click', async () => {
-            if (!confirm(`Are you sure you want to remove job ${clusterId}.${procId}?`)) return;
-            try {
-                await api(`/jobs/${clusterId}.${procId}`, { method: 'DELETE' });
-                toast('Job removed successfully');
-                setTimeout(() => window.location.href = '/', 1500);
-            } catch (err) {
-                toast(`Failed to remove job: ${err.message}`, 'error');
-            }
+        removeBtn.addEventListener('click', () => {
+            showConfirmModal(
+                `Are you sure you want to remove job ${clusterId}.${procId}? ` +
+                'This removes it from the schedd and database, and deletes its logs.' +
+                '<br><br><label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.85rem; color: var(--text-secondary);">' +
+                '<input type="checkbox" id="remove-job-outputs-checkbox" style="width: 16px; height: 16px; cursor: pointer;">' +
+                '<span>Also delete output files</span></label>',
+                {
+                    title: 'Remove Job',
+                    confirmText: 'Remove Job',
+                    confirmClass: 'btn-danger',
+                    onConfirm: async () => {
+                        const deleteOutputs = $('#remove-job-outputs-checkbox')?.checked || false;
+                        try {
+                            await api(
+                                `/jobs/${clusterId}.${procId}?delete_outputs=${deleteOutputs}`,
+                                { method: 'DELETE' }
+                            );
+                            toast('Job removed successfully');
+                            setTimeout(() => window.location.href = '/', 1500);
+                        } catch (err) {
+                            toast(`Failed to remove job: ${err.message}`, 'error');
+                        }
+                    },
+                }
+            );
         });
     }
 

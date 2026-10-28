@@ -285,6 +285,46 @@ def _collect_output_files(
     return entries
 
 
+def delete_output_files_for_submission(sub: JobSubmission) -> int:
+    """Delete every output file attributed to *sub*.
+
+    Covers the recorded output destination (plain path, ``file://`` or
+    ``osdf://`` URI), per-proc sibling directories, transfer remaps, and the
+    default ``OUTPUT_DIR/<cluster_id>`` tree.  Only regular files are removed;
+    symlinks are left untouched.  Returns the number of files deleted.
+    """
+    meta = {"name": sub.name, "command": sub.cmd or ""}
+    seen: set[Path] = set()
+    entries = _collect_output_files(sub, meta, seen)
+
+    configured_root = _configured_output_root()
+    if configured_root is not None:
+        default_root = configured_root / str(sub.cluster_id)
+        if default_root.is_dir() and not default_root.is_symlink():
+            for path in _iter_files(default_root):
+                resolved = path.resolve()
+                if resolved in seen:
+                    continue
+                entry = _output_file_entry(
+                    path, default_root, sub.cluster_id, meta, proc_id=0
+                )
+                if entry is not None:
+                    seen.add(resolved)
+                    entries.append(entry)
+
+    deleted = 0
+    for entry in entries:
+        path = Path(entry["path"])
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            path.unlink()
+            deleted += 1
+        except OSError:
+            logger.exception("Failed to delete output file %s", path)
+    return deleted
+
+
 def _allowed_output_file(
     sub: JobSubmission | None, filename: str, root_value: str | None
 ) -> Path:

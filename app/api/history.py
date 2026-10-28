@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import shutil
 from pathlib import Path
 
 from flask import current_app, jsonify, request
@@ -13,6 +12,7 @@ from sqlalchemy import String, cast, func, or_
 from app import api as _api
 from app import db
 from app.api import api_bp
+from app.api.output_files import delete_output_files_for_submission
 from app.condor import (
     DEFAULT_CONSTRAINT,
     act_on_job,
@@ -636,20 +636,25 @@ def delete_history():
 
                 # 2. Delete from local DB
                 submission = JobSubmission.query.filter_by(cluster_id=cid).first()
+                deleted_outputs = 0
                 if submission:
                     # 3. Remove individual log/out/err files from disk
                     for path_attr in ("log_path", "out_path", "err_path"):
                         file_path = getattr(submission, path_attr, None)
                         if file_path and Path(file_path).exists():
                             Path(file_path).unlink()
-                    # 4. Optionally remove output directory from disk
-                    if delete_outputs and submission.output_destination:
-                        output_path = Path(submission.output_destination)
-                        if output_path.exists():
-                            shutil.rmtree(output_path, ignore_errors=True)
+                    # 4. Optionally remove output files from disk
+                    if delete_outputs:
+                        deleted_outputs = delete_output_files_for_submission(submission)
                     db.session.delete(submission)
 
-            results.append({"cluster_id": cid, "success": True})
+            results.append(
+                {
+                    "cluster_id": cid,
+                    "success": True,
+                    "deleted_output_files": deleted_outputs,
+                }
+            )
         except Exception as e:  # noqa: BLE001
             logger.error("Failed to delete cluster %d: %s", cid, e)
             db.session.rollback()  # Rollback the failed nested transaction

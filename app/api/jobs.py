@@ -11,6 +11,7 @@ from app import api as _api
 from app import db
 from app.api import api_bp
 from app.api.history import _build_job_entry
+from app.api.output_files import delete_output_files_for_submission
 from app.condor import (
     DEFAULT_CONSTRAINT,
     act_on_job,
@@ -189,7 +190,10 @@ def release_clusters():
 
 @api_bp.route("/jobs/<job_id>", methods=["DELETE"])
 def remove_job(job_id):
-    """Remove a job from the schedd, DB, and delete its log/out/err files."""
+    """Remove a job from the schedd, DB, and delete its log/out/err files.
+
+    Pass ``?delete_outputs=true`` to also remove the job's output files.
+    """
     try:
         # Parse cluster_id from job_id (format: "<clusterId>.<procId>" or just "<clusterId>")
         cluster_id = int(job_id.split(".")[0])
@@ -205,15 +209,23 @@ def remove_job(job_id):
 
         # 2. Delete from local DB and remove log/out/err files
         submission = JobSubmission.query.filter_by(cluster_id=cluster_id).first()
+        deleted_outputs = 0
         if submission:
             for path_attr in ("log_path", "out_path", "err_path"):
                 file_path = getattr(submission, path_attr, None)
                 if file_path and Path(file_path).exists():
                     Path(file_path).unlink()
+            if request.args.get("delete_outputs", "").lower() == "true":
+                deleted_outputs = delete_output_files_for_submission(submission)
             db.session.delete(submission)
             db.session.commit()
 
-        return jsonify({"message": f"Job {job_id} removed"})
+        return jsonify(
+            {
+                "message": f"Job {job_id} removed",
+                "deleted_output_files": deleted_outputs,
+            }
+        )
     except Exception:
         db.session.rollback()
         logger.exception("Failed to remove job %s", job_id)
