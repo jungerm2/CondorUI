@@ -1,6 +1,7 @@
 """HTCondor Web UI — Flask application factory."""
 
 import os
+import threading
 
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
@@ -54,5 +55,16 @@ def create_app(config_override: dict | None = None) -> Flask:
         from app import models  # noqa: F401
 
         db.create_all()
+
+    # Warm the slow staging listings without delaying startup.
+    if not app.config.get("TESTING"):
+        from app.api.containers import prewarm_container_listing
+        from app.api.files import prewarm_staged_listing
+
+        def _prewarm_staging() -> None:
+            prewarm_staged_listing(app)
+            prewarm_container_listing(app)
+
+        threading.Thread(target=_prewarm_staging, daemon=True).start()
 
     return app

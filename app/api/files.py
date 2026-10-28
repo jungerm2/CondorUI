@@ -27,6 +27,16 @@ logger = logging.getLogger(__name__)
 _osdf_cache = BackgroundScanCache()
 
 
+def prewarm_staged_listing(app) -> None:
+    """Start the staged-file scan at startup so the first page load is cached."""
+    osdf_root = app.config.get("OSDF_ROOT_PATH", "")
+    if not osdf_root:
+        return
+    path = str(Path(osdf_root) / "uploads")
+    _osdf_cache.attach(Path(app.instance_path) / "osdf_files_cache.json")
+    _osdf_cache.get(path, lambda: scan_uuid_directories(path))
+
+
 def _build_file_entry(
     rel_name: str,
     original_name: str,

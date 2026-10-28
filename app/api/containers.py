@@ -32,6 +32,16 @@ logger = logging.getLogger(__name__)
 _container_cache = BackgroundScanCache()
 
 
+def prewarm_container_listing(app) -> None:
+    """Start the container scan at startup so the first page load is cached."""
+    osdf_root = app.config.get("OSDF_ROOT_PATH", "")
+    if not osdf_root:
+        return
+    path = str(Path(osdf_root) / "containers")
+    _container_cache.attach(Path(app.instance_path) / "osdf_containers_cache.json")
+    _container_cache.get(path, lambda: scan_uuid_directories(path, file_filter=".sif"))
+
+
 @api_bp.route("/containers", methods=["GET"])
 def list_containers():
     """List all container images."""
