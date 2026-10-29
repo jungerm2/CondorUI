@@ -641,30 +641,56 @@ async function submitRenders() {
     }
 }
 
+function showSubmitStatus(payloads) {
+    const panel = $('#renders-submit-status');
+    panel.style.display = '';
+    panel.innerHTML = `
+        <div class="submit-card-header"><h3 id="renders-status-title">Submitting…</h3></div>
+        <div class="submit-card-body" id="renders-status-list">
+            ${payloads.map((p, i) => `
+                <p class="hint" data-status-row="${i}">
+                    <span class="monospace">${escHtml(p.name)}</span> — queued
+                </p>`).join('')}
+        </div>`;
+    panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function setStatusRow(i, html) {
+    const row = $(`[data-status-row="${i}"]`);
+    if (row) row.innerHTML = html;
+}
+
 async function submitPayloads(payloads) {
     saveLastValues();
-    const resultsEl = $('#renders-results');
-    resultsEl.style.display = '';
-    resultsEl.innerHTML = '<h3>Submitted Clusters</h3>';
+    showSubmitStatus(payloads);
     let failed = 0;
-    for (const p of payloads) {
+    for (const [i, p] of payloads.entries()) {
+        setStatusRow(i, `<span class="monospace">${escHtml(p.name)}</span> — submitting…`);
         try {
             const res = await api('/submit', {
                 method: 'POST',
                 body: JSON.stringify({ name: p.name, submit: p.submit, count: p.count }),
             });
-            resultsEl.innerHTML += `
-                <p class="hint">Submitted <a href="/job/${res.cluster_id}"
+            setStatusRow(i, `Submitted <a href="/job/${res.cluster_id}"
                 style="color: var(--accent-cyan);">cluster ${res.cluster_id}</a>
-                (${res.num_procs} proc(s)) — ${escHtml(p.name)}</p>`;
+                (${res.num_procs} proc(s)) — <span class="monospace">${escHtml(p.name)}</span>`);
         } catch (err) {
             failed++;
-            resultsEl.innerHTML += `<p class="hint" style="color: ${WARNING_COLOR};">
-                Submission failed: ${escHtml(p.name)} — ${escHtml(err.message)}</p>`;
+            setStatusRow(i, `<span style="color: ${WARNING_COLOR};">Failed — ${escHtml(p.name)}: ${escHtml(err.message)}</span>`);
         }
     }
-    toast(failed ? `Submitted with ${failed} failure(s)` : `Submitted ${payloads.length} cluster(s)`,
-        failed ? 'warning' : 'info');
+    const title = $('#renders-status-title');
+    if (failed === 0) {
+        title.textContent = `Submitted ${payloads.length} cluster(s)`;
+        $('#renders-status-list').insertAdjacentHTML('beforeend',
+            '<p class="hint">Opening the dashboard…</p>');
+        setTimeout(() => { window.location.href = '/'; }, 1500);
+    } else {
+        title.textContent = `Submitted with ${failed} failure(s)`;
+        $('#renders-status-list').insertAdjacentHTML('beforeend',
+            '<p class="hint">Fix the failures above and submit again — successful clusters are already queued.</p>');
+        toast(`Submitted with ${failed} failure(s)`, 'warning');
+    }
 }
 
 // ----- Init -----

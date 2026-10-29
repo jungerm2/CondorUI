@@ -444,6 +444,8 @@
         </div>
 
         <!-- Actions -->
+        <!-- Submission status: live per-cluster rows, replaces bottom-of-page log -->
+        <div class="submit-card" id="renders-submit-status" style="display: none;"></div>
         <div id="renders-batch-errors" style="display: none;"></div>
         <div class="submit-actions">
             <p class="hint" id="renders-batch-estimate" style="margin: 0 auto 0 0; align-self: center;"></p>
@@ -456,8 +458,6 @@
             </button>
         </div>
 
-        <!-- Results: links to the dashboard history only -->
-        <div id="renders-results" style="display: none;"></div>
     </div>
 </section>
 {% endblock %}
