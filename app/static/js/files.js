@@ -69,6 +69,7 @@ function updateSelectionUI() {
 
     // Update select-all checkbox
     updateSelectAllState($('#file-select-all'), currentFiles, selectedFileFilenames, f => f.filename);
+    syncGroupCheckboxes();
 }
 
 // Get sortable value for a file
@@ -80,6 +81,89 @@ function getFileSortValue(item, field) {
         case 'location': return item.osdf_path ? 'osdf' : 'local';
         default: return 0;
     }
+}
+
+const collapsedFileGroups = new Set();
+
+function fileDisplayName(f) {
+    return f.display_name || f.original_name || f.filename;
+}
+
+// Folder uploads group by their top-level folder; loose files share "Files".
+function fileGroup(f) {
+    const display = fileDisplayName(f);
+    const cut = display.indexOf('/');
+    if (cut === -1) return { key: '__files__', name: 'Files', inner: display };
+    return { key: display.slice(0, cut), name: display.slice(0, cut), inner: display.slice(cut + 1) };
+}
+
+function groupFiles(files) {
+    const groups = new Map();
+    files.forEach(f => {
+        const { key, name, inner } = fileGroup(f);
+        if (!groups.has(key)) groups.set(key, { key, name, files: [], totalBytes: 0 });
+        const group = groups.get(key);
+        group.files.push({ ...f, _inner: inner });
+        group.totalBytes += f.size || 0;
+    });
+    return [...groups.values()].sort((a, b) => {
+        if (a.key === '__files__') return 1;
+        if (b.key === '__files__') return -1;
+        return a.name.localeCompare(b.name);
+    });
+}
+
+function syncGroupCheckboxes() {
+    const groups = groupFiles(currentFiles);
+    document.querySelectorAll('.file-group-checkbox').forEach(cb => {
+        const group = groups.find(g => g.key === cb.dataset.groupKey);
+        if (!group) return;
+        const selected = group.files.filter(f => selectedFileFilenames.has(f.filename)).length;
+        cb.checked = selected === group.files.length;
+        cb.indeterminate = selected > 0 && selected < group.files.length;
+    });
+}
+
+function buildFileRow(f) {
+    const isOsdf = !!f.osdf_path;
+    const locationLabel = isOsdf ? 'OSDF' : 'Local';
+    const locationClass = isOsdf ? 'badge-osdf' : 'badge-local';
+    const isChecked = selectedFileFilenames.has(f.filename);
+    const inner = f._inner || fileDisplayName(f);
+    const parts = inner.split('/');
+    const base = parts.pop() || inner;
+    const dir = parts.join('/');
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+        <td style="text-align: center;">
+            <input type="checkbox" class="file-row-checkbox" data-file-filename="${escHtml(f.filename)}" ${isChecked ? 'checked' : ''}>
+        </td>
+        <td class="monospace" title="${escHtml(fileDisplayName(f))}">
+            ${dir ? `<span class="file-folder" style="margin-left: ${(parts.length - 1) * 14}px;">${escHtml(dir)}/</span>` : ''}${escHtml(base)}
+        </td>
+        <td>${formatFileSize(f.size)}</td>
+        <td>${formatDate(f.uploaded_at)}</td>
+        <td><span class="badge ${locationClass}">${locationLabel}</span></td>
+        <td>
+            <div class="action-btns">
+                <button class="btn btn-ghost btn-sm file-preview-btn" data-filename="${escHtml(f.filename)}" title="Preview">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                        <circle cx="12" cy="12" r="3" />
+                    </svg>
+                </button>
+                <a href="/api/files/${escHtml(f.filename.split('/').map(encodeURIComponent).join('/'))}/download" class="btn btn-ghost btn-sm" title="Download" download>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                        <polyline points="7,10 12,15 17,10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                </a>
+            </div>
+        </td>
+    `;
+    return tr;
 }
 
 // Render file list
@@ -114,44 +198,64 @@ function renderFiles() {
     table.style.display = '';
     empty.style.display = 'none';
 
-    filtered.forEach(f => {
-        const isOsdf = !!f.osdf_path;
-        const locationLabel = isOsdf ? 'OSDF' : 'Local';
-        const locationClass = isOsdf ? 'badge-osdf' : 'badge-local';
-        const isChecked = selectedFileFilenames.has(f.filename);
+    const groups = groupFiles(filtered);
+    const grouped = groups.some(group => group.key !== '__files__');
 
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td style="text-align: center;">
-                <input type="checkbox" class="file-row-checkbox" data-file-filename="${escHtml(f.filename)}" ${isChecked ? 'checked' : ''}>
-            </td>
-            <td class="monospace">${escHtml(f.display_name || f.original_name)}</td>
-            <td>${formatFileSize(f.size)}</td>
-            <td>${formatDate(f.uploaded_at)}</td>
-            <td><span class="badge ${locationClass}">${locationLabel}</span></td>
-            <td>
-                <div class="action-btns">
-                    <button class="btn btn-ghost btn-sm file-preview-btn" data-filename="${escHtml(f.filename)}" title="Preview">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                            <circle cx="12" cy="12" r="3" />
-                        </svg>
-                    </button>
-                    <a href="/api/files/${escHtml(f.filename.split('/').map(encodeURIComponent).join('/'))}/download" class="btn btn-ghost btn-sm" title="Download" download>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                            <polyline points="7,10 12,15 17,10" />
-                            <line x1="12" y1="15" x2="12" y2="3" />
-                        </svg>
-                    </a>
-                </div>
-            </td>
-        `;
-        tbody.appendChild(tr);
+    if (grouped) {
+        groups.forEach(group => {
+            const collapsed = collapsedFileGroups.has(group.key);
+            const selected = group.files.filter(f => selectedFileFilenames.has(f.filename)).length;
+            const gtr = document.createElement('tr');
+            gtr.className = 'group-header';
+            gtr.dataset.groupKey = group.key;
+            gtr.innerHTML = `
+                <td style="text-align: center;">
+                    <input type="checkbox" class="file-group-checkbox" data-group-key="${escHtml(group.key)}">
+                </td>
+                <td colspan="5">
+                    <div class="output-group-header">
+                        <span class="output-group-name">
+                            <span class="output-group-label">${escHtml(group.name)}${group.key === '__files__' ? '' : '/'}</span>
+                        </span>
+                        <span class="output-group-meta">${group.files.length} file${group.files.length === 1 ? '' : 's'} · ${formatFileSize(group.totalBytes)}</span>
+                        <span class="expand-chevron ${collapsed ? '' : 'expanded'}" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="9 6 15 12 9 18" />
+                            </svg>
+                        </span>
+                    </div>
+                </td>
+            `;
+            const gcb = gtr.querySelector('.file-group-checkbox');
+            gcb.checked = selected === group.files.length;
+            gcb.indeterminate = selected > 0 && selected < group.files.length;
+            gcb.addEventListener('change', () => {
+                group.files.forEach(f => {
+                    if (gcb.checked) selectedFileFilenames.add(f.filename);
+                    else selectedFileFilenames.delete(f.filename);
+                });
+                tbody.querySelectorAll('.file-row-checkbox').forEach(row => {
+                    row.checked = selectedFileFilenames.has(row.dataset.fileFilename);
+                });
+                updateSelectionUI();
+            });
+            tbody.appendChild(gtr);
 
-        // Row click toggles checkbox (actions get their own handlers)
-        bindRowClickToggle(tr, '.file-row-checkbox', ['a', 'button']);
-    });
+            if (!collapsed) {
+                group.files.forEach(f => {
+                    const tr = buildFileRow(f);
+                    tbody.appendChild(tr);
+                    bindRowClickToggle(tr, '.file-row-checkbox', ['a', 'button']);
+                });
+            }
+        });
+    } else {
+        filtered.forEach(f => {
+            const tr = buildFileRow(f);
+            tbody.appendChild(tr);
+            bindRowClickToggle(tr, '.file-row-checkbox', ['a', 'button']);
+        });
+    }
 
     // Bind checkbox events
     tbody.querySelectorAll('.file-row-checkbox').forEach(cb => {
@@ -163,6 +267,16 @@ function renderFiles() {
                 selectedFileFilenames.delete(filename);
             }
             updateSelectionUI();
+        });
+    });
+
+    tbody.querySelectorAll('tr.group-header').forEach(tr => {
+        tr.addEventListener('click', (e) => {
+            if (e.target.closest('input')) return;
+            const key = tr.dataset.groupKey;
+            if (collapsedFileGroups.has(key)) collapsedFileGroups.delete(key);
+            else collapsedFileGroups.add(key);
+            renderFiles();
         });
     });
 
@@ -242,12 +356,12 @@ async function handleUpload(files, { folder = false } = {}) {
     const fileList = Array.from(files);
     if (fileList.length === 0) return;
 
-    const batch = folder
-        ? (crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '') : Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join(''))
+    const firstFolderPath = folder ? (fileList[0].webkitRelativePath || fileList[0].name) : '';
+    const folderRoot = folder
+        ? (firstFolderPath.includes('/') ? firstFolderPath.split('/')[0] : 'folder-upload')
         : null;
 
-    // Folder uploads get a fresh batch root, so they cannot collide with
-    // existing top-level filenames.
+    // Folder uploads replace files at the same relative path.
     const conflicts = folder ? [] : getFileConflicts(fileList);
     if (conflicts.length > 0) {
         const detail = conflicts.slice(0, 5).join(', ');
@@ -282,17 +396,20 @@ async function handleUpload(files, { folder = false } = {}) {
     uploadAbortControllers = [];
 
     // Determine if we need to use overwrite mode
-    const overwrite = conflicts.length > 0;
+    const overwrite = folder || conflicts.length > 0;
 
     // Create a progress item for each file
-    const uploadItems = fileList.map(file => ({
-        file,
-        relativePath: folder ? (file.webkitRelativePath || file.name) : file.name,
-    }));
-    const progressItems = uploadItems.map(({ file, relativePath }) => {
+    const uploadItems = fileList.map(file => {
+        const relativePath = folder ? (file.webkitRelativePath || file.name) : file.name;
+        const uploadPath = folder && relativePath.startsWith(`${folderRoot}/`)
+            ? relativePath.slice(folderRoot.length + 1)
+            : (folder ? file.name : relativePath);
+        return { file, relativePath, uploadPath };
+    });
+    const progressItems = uploadItems.map(({ file, relativePath, uploadPath }) => {
         const item = createProgressItem(file, relativePath);
         progressList.appendChild(item);
-        return { file, relativePath, item, aborted: false };
+        return { file, relativePath, uploadPath, item, aborted: false };
     });
 
     // Add a cancel-all button if multiple files
@@ -309,7 +426,7 @@ async function handleUpload(files, { folder = false } = {}) {
     beginNavigationGuard('File upload is still in progress. Are you sure you want to leave?');
 
     // Upload each file in parallel
-    const uploadPromises = progressItems.map(({ file, relativePath, item }) => {
+    const uploadPromises = progressItems.map(({ file, relativePath, uploadPath, item }) => {
         const progressFill = item.querySelector('.progress-bar-fill');
         const progressText = item.querySelector('.progress-text');
         const cancelBtn = item.querySelector('.upload-cancel-btn');
@@ -317,9 +434,9 @@ async function handleUpload(files, { folder = false } = {}) {
         const onProgress = createProgressTracker(progressFill, progressText);
         const headers = {
             ...(overwrite ? { 'X-Overwrite': 'true' } : {}),
-            ...(batch ? {
-                'X-Upload-Batch': batch,
-                'X-Upload-Relative-Path': encodeURIComponent(relativePath),
+            ...(folderRoot ? {
+                'X-Upload-Folder': encodeURIComponent(folderRoot),
+                'X-Upload-Relative-Path': encodeURIComponent(uploadPath),
             } : {}),
         };
 

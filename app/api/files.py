@@ -56,7 +56,8 @@ def _build_file_entry(
     else:
         uri = str(file_path)
 
-    display_name = rel_name.split("/", 1)[1] if "/" in rel_name else original_name
+    head, sep, rest = rel_name.partition("/")
+    display_name = rest if sep and re.fullmatch(r"[0-9a-f]{32}", head) else rel_name
 
     return {
         "filename": rel_name,
@@ -152,7 +153,7 @@ def upload_files():
       - Content-Type: application/octet-stream
       - X-Upload-Filename: original filename (required)
       - X-Overwrite: "true" to replace an existing file with the same name
-      - X-Upload-Batch / X-Upload-Relative-Path: folder uploads
+      - X-Upload-Folder / X-Upload-Relative-Path: folder uploads
     """
     # Streamed uploads have a larger cap than ordinary JSON/form requests.
     request.max_content_length = current_app.config["MAX_UPLOAD_LENGTH"]
@@ -169,14 +170,18 @@ def upload_files():
 
     overwrite = request.headers.get("X-Overwrite", "").strip().lower() == "true"
     upload_dir = current_app.config["UPLOAD_DIR"]
-    batch = request.headers.get("X-Upload-Batch", "").strip()
+    folder_root = unquote(request.headers.get("X-Upload-Folder", "").strip())
     relative = unquote(request.headers.get("X-Upload-Relative-Path", "").strip())
-    folder_upload = bool(batch or relative)
+    folder_upload = bool(folder_root or relative)
     parts: list[str] = []
 
     if folder_upload:
-        if not batch or not relative or not re.fullmatch(r"[0-9a-f]{32}", batch):
+        if not folder_root or not relative:
             return jsonify({"error": "Invalid folder upload headers"}), 400
+        try:
+            root = safe_filename(folder_root)
+        except ValueError:
+            return jsonify({"error": "Invalid folder name"}), 400
         try:
             parts = [
                 safe_filename(part)
@@ -188,7 +193,7 @@ def upload_files():
         if not parts:
             return jsonify({"error": "Invalid relative path"}), 400
         try:
-            destination = safe_join(upload_dir, batch, *parts)
+            destination = safe_join(upload_dir, root, *parts)
         except ValueError:
             return jsonify({"error": "Invalid relative path"}), 400
         if destination.exists() and not overwrite:
@@ -212,12 +217,14 @@ def upload_files():
             request.stream,
             upload_dir,
             original_filename,
-            root_name=batch if folder_upload else None,
+            root_name=root if folder_upload else None,
             relative_path=relative if folder_upload else None,
         )
 
         upload_path = Path(upload_dir) / unique_name
-        display_name = Path(*parts).as_posix() if folder_upload else original_filename
+        display_name = (
+            f"{root}/{Path(*parts).as_posix()}" if folder_upload else original_filename
+        )
 
         return jsonify(
             {

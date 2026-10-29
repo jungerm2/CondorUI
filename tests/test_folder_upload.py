@@ -3,16 +3,16 @@
 from pathlib import Path
 from urllib.parse import quote
 
-BATCH = "a" * 32
+ROOT = "inputs"
 
 
-def _upload(client, relative, data=b"data", batch=BATCH):
+def _upload(client, relative, data=b"data", root=ROOT):
     return client.post(
         "/api/files",
         data=data,
         headers={
             "X-Upload-Filename": Path(relative).name,
-            "X-Upload-Batch": batch,
+            "X-Upload-Folder": root,
             "X-Upload-Relative-Path": quote(relative),
         },
     )
@@ -28,15 +28,15 @@ def test_folder_upload_preserves_nested_path(secure_app, secure_client):
 
     assert resp.status_code == 201, resp.get_json()
     uploaded = resp.get_json()
-    expected = f"{BATCH}/{relative}"
+    expected = f"{ROOT}/{relative}"
     assert uploaded["filename"] == expected
     assert uploaded["original_name"] == "0001.txt"
-    assert uploaded["display_name"] == relative
+    assert uploaded["display_name"] == expected
     assert Path(uploaded["local_path"]).is_file()
 
     files = secure_client.get("/api/files").get_json()["files"]
     entry = next(f for f in files if f["filename"] == expected)
-    assert entry["display_name"] == relative
+    assert entry["display_name"] == expected
     assert entry["original_name"] == "0001.txt"
 
     download = secure_client.get(f"/api/files/{_url_path(expected)}/download")
@@ -55,7 +55,7 @@ def test_folder_upload_rejects_traversal(secure_app, secure_client):
 
 def test_nested_file_can_be_renamed(secure_app, secure_client):
     relative = "dataset/frames/0001.txt"
-    expected = f"{BATCH}/{relative}"
+    expected = f"{ROOT}/{relative}"
     assert _upload(secure_client, relative).status_code == 201
 
     resp = secure_client.put(
@@ -63,10 +63,10 @@ def test_nested_file_can_be_renamed(secure_app, secure_client):
     )
 
     assert resp.status_code == 200, resp.get_json()
-    assert resp.get_json()["filename"] == f"{BATCH}/dataset/frames/renamed.txt"
+    assert resp.get_json()["filename"] == f"{ROOT}/dataset/frames/renamed.txt"
     assert (
         Path(secure_app.config["UPLOAD_DIR"])
-        / BATCH
+        / ROOT
         / "dataset"
         / "frames"
         / "renamed.txt"
