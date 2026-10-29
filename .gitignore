@@ -14,7 +14,11 @@ instance/
 uploads/
 outputs/
 condor_job_logs/
-executables/
+# Runtime data and caches (executables/* is the installed-executables dir;
+# the two in-tree render scripts are re-included below)
+executables/*
+!executables/render.py
+!executables/render_multicam.py
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
