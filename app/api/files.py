@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 from pathlib import Path
+from urllib.parse import unquote
 
 from flask import abort, current_app, jsonify, request, send_file
 
@@ -19,6 +21,7 @@ from app.api.helpers import (
 from app.api.staging import BackgroundScanCache
 from app.utils import (
     safe_filename,
+    safe_join,
     save_uploaded_stream,
     scan_uuid_directories,
 )
@@ -34,7 +37,7 @@ def prewarm_staged_listing(app) -> None:
         return
     path = str(Path(osdf_root) / "uploads")
     _osdf_cache.attach(Path(app.instance_path) / "osdf_files_cache.json")
-    _osdf_cache.get(path, lambda: scan_uuid_directories(path))
+    _osdf_cache.get(path, lambda: scan_uuid_directories(path, recursive=True))
 
 
 def _build_file_entry(
@@ -53,9 +56,12 @@ def _build_file_entry(
     else:
         uri = str(file_path)
 
+    display_name = rel_name.split("/", 1)[1] if "/" in rel_name else original_name
+
     return {
         "filename": rel_name,
         "original_name": original_name,
+        "display_name": display_name,
         "local_path": str(file_path) if not osdf_path else None,
         "osdf_path": osdf_path,
         "uri": uri,
@@ -90,7 +96,8 @@ def list_files():
             )
         osdf_uploads = str(Path(osdf_root) / "uploads")
         osdf_entries, _scanning = _osdf_cache.get(
-            osdf_uploads, lambda: scan_uuid_directories(osdf_uploads)
+            osdf_uploads,
+            lambda: scan_uuid_directories(osdf_uploads, recursive=True),
         )
         staged_pending = _scanning
         for entry in osdf_entries or []:
@@ -109,7 +116,7 @@ def list_files():
             )
 
     # 2. Scan local upload directory for files not already in OSDF
-    for entry in scan_uuid_directories(upload_dir):
+    for entry in scan_uuid_directories(upload_dir, recursive=True):
         rel_name = entry["filename"]
         if rel_name in seen:
             continue
@@ -145,6 +152,7 @@ def upload_files():
       - Content-Type: application/octet-stream
       - X-Upload-Filename: original filename (required)
       - X-Overwrite: "true" to replace an existing file with the same name
+      - X-Upload-Batch / X-Upload-Relative-Path: folder uploads
     """
     # Streamed uploads have a larger cap than ordinary JSON/form requests.
     request.max_content_length = current_app.config["MAX_UPLOAD_LENGTH"]
@@ -161,29 +169,61 @@ def upload_files():
 
     overwrite = request.headers.get("X-Overwrite", "").strip().lower() == "true"
     upload_dir = current_app.config["UPLOAD_DIR"]
+    batch = request.headers.get("X-Upload-Batch", "").strip()
+    relative = unquote(request.headers.get("X-Upload-Relative-Path", "").strip())
+    folder_upload = bool(batch or relative)
+    parts: list[str] = []
 
-    # Check if a file with the same original_name already exists
-    existing = _find_existing_file_by_original_name(upload_dir, original_filename)
-    if existing:
-        if not overwrite:
-            return jsonify({"error": f"File '{original_filename}' already exists"}), 409
-        # Delete the existing entry (UUID directory + file)
-        existing_path = Path(upload_dir) / existing["filename"]
-        if existing_path.exists():
-            existing_path.unlink()
-            _remove_empty_parents(existing_path.parent)
+    if folder_upload:
+        if not batch or not relative or not re.fullmatch(r"[0-9a-f]{32}", batch):
+            return jsonify({"error": "Invalid folder upload headers"}), 400
+        try:
+            parts = [
+                safe_filename(part)
+                for part in relative.replace("\\", "/").split("/")
+                if part not in ("", ".")
+            ]
+        except ValueError:
+            return jsonify({"error": "Invalid relative path"}), 400
+        if not parts:
+            return jsonify({"error": "Invalid relative path"}), 400
+        try:
+            destination = safe_join(upload_dir, batch, *parts)
+        except ValueError:
+            return jsonify({"error": "Invalid relative path"}), 400
+        if destination.exists() and not overwrite:
+            return jsonify({"error": "File already exists"}), 409
+    else:
+        # Check if a file with the same original_name already exists
+        existing = _find_existing_file_by_original_name(upload_dir, original_filename)
+        if existing:
+            if not overwrite:
+                return jsonify(
+                    {"error": f"File '{original_filename}' already exists"}
+                ), 409
+            # Delete the existing entry (UUID directory + file)
+            existing_path = Path(upload_dir) / existing["filename"]
+            if existing_path.exists():
+                existing_path.unlink()
+                _remove_empty_parents(existing_path.parent)
 
     try:
         unique_name, size = save_uploaded_stream(
-            request.stream, upload_dir, original_filename
+            request.stream,
+            upload_dir,
+            original_filename,
+            root_name=batch if folder_upload else None,
+            relative_path=relative if folder_upload else None,
         )
 
         upload_path = Path(upload_dir) / unique_name
+        display_name = Path(*parts).as_posix() if folder_upload else original_filename
 
         return jsonify(
             {
                 "filename": unique_name,
-                "original_name": original_filename,
+                "original_name": parts[-1] if folder_upload else original_filename,
+                "display_name": display_name,
                 "local_path": str(upload_path),
                 "osdf_path": None,
                 "uri": str(upload_path),
@@ -315,7 +355,8 @@ def rename_file(filename: str):
 
     file_path.rename(new_path)
 
-    new_rel_name = f"{file_path.parent.name}/{new_name}"
+    parent_rel = filename.rsplit("/", 1)[0] if "/" in filename else ""
+    new_rel_name = f"{parent_rel}/{new_name}" if parent_rel else new_name
     stat = new_path.stat()
 
     base_uri = current_app.config.get("OSDF_BASE_URI", "osdf:///")

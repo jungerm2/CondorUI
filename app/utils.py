@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import uuid
 from pathlib import Path
@@ -126,50 +127,69 @@ def scan_uuid_directories(
     *,
     file_filter: str | None = None,
     extra_fields: dict | None = None,
+    recursive: bool = False,
 ) -> list[dict]:
-    """Scan a directory of UUID-named subdirectories for files.
+    """Scan UUID-named subdirectories for uploaded files.
 
-    Each subdirectory under *base_dir* is expected to be a UUID directory
-    containing a single file.  Returns a list of file dicts sorted by
-    modification time (newest first).
-
-    Args:
-        base_dir: The base directory to scan (e.g., UPLOAD_DIR).
-        file_filter: Optional glob/suffix filter (e.g., ``.sif``).
-                     If None, all files are included.
-        extra_fields: Optional dict of extra fields to include in each
-                      file dict (e.g., ``{"osdf_path": None}``).
-
-    Returns:
-        List of file dicts with keys: filename, original_name, size,
-        modified_at, and any extra_fields provided.
+    ``recursive`` walks nested folders inside each UUID directory, preserving
+    relative paths in ``filename``.
     """
     base_path = Path(base_dir)
-    if not base_path.exists():
+    if not base_path.is_dir():
         return []
 
-    files = []
-    for subdir in sorted(
-        base_path.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True
-    ):
-        if not subdir.is_dir():
+    def entry_for(path: Path, rel_name: str) -> dict | None:
+        if file_filter and not path.name.endswith(file_filter):
+            return None
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        entry = {
+            "filename": rel_name,
+            "original_name": path.name,
+            "size": stat.st_size,
+            "modified_at": stat.st_mtime,
+        }
+        if extra_fields:
+            entry.update(extra_fields)
+        return entry
+
+    files: list[dict] = []
+    try:
+        subdirs = sorted(
+            base_path.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True
+        )
+    except OSError:
+        return []
+
+    for subdir in subdirs:
+        if not subdir.is_dir() or subdir.is_symlink():
             continue
-        for f in subdir.iterdir():
-            if not f.is_file():
+        if recursive:
+            for dirpath, dirnames, filenames in os.walk(subdir):
+                dirnames[:] = [
+                    name for name in dirnames if not (Path(dirpath) / name).is_symlink()
+                ]
+                for name in filenames:
+                    path = Path(dirpath) / name
+                    if path.is_symlink() or not path.is_file():
+                        continue
+                    rel = path.relative_to(subdir).as_posix()
+                    entry = entry_for(path, f"{subdir.name}/{rel}")
+                    if entry:
+                        files.append(entry)
+        else:
+            try:
+                children = subdir.iterdir()
+            except OSError:
                 continue
-            if file_filter and not f.name.endswith(file_filter):
-                continue
-            stat = f.stat()
-            rel_name = f"{subdir.name}/{f.name}"
-            entry = {
-                "filename": rel_name,
-                "original_name": f.name,
-                "size": stat.st_size,
-                "modified_at": stat.st_mtime,
-            }
-            if extra_fields:
-                entry.update(extra_fields)
-            files.append(entry)
+            for path in children:
+                if not path.is_file() or path.is_symlink():
+                    continue
+                entry = entry_for(path, f"{subdir.name}/{path.name}")
+                if entry:
+                    files.append(entry)
     return files
 
 
@@ -179,39 +199,46 @@ def scan_uuid_directories(
 
 
 def save_uploaded_stream(
-    stream, dest_dir: str, original_filename: str, name: str | None = None
+    stream,
+    dest_dir: str,
+    original_filename: str,
+    name: str | None = None,
+    *,
+    root_name: str | None = None,
+    relative_path: str | None = None,
 ) -> tuple[str, int]:
-    """Stream a raw uploaded file to disk with a unique name.
+    """Stream a raw uploaded file to disk.
 
-    Args:
-        stream: A file-like object to read from (e.g. request.stream).
-        dest_dir: Directory to save the file into.
-        original_filename: The original filename for extension detection.
-        name: Optional display name (used for the safe filename base).
-              Falls back to original filename without extension.
-
-    Returns:
-        (unique_name, size) tuple.
+    Folder uploads pass one shared ``root_name`` and a ``relative_path`` so
+    files keep their directory tree; single uploads keep the UUID layout.
     """
     dest_path_obj = Path(dest_dir)
     dest_path_obj.mkdir(parents=True, exist_ok=True)
 
-    # Create UUID directory structure: dest_dir/uuid/
-    file_uuid = uuid.uuid4().hex
-    subdir = dest_path_obj / file_uuid
-    subdir.mkdir(parents=True, exist_ok=True)
+    if root_name is not None:
+        if not relative_path:
+            raise ValueError("Missing relative path")
+        parts = [
+            safe_path_component(part)
+            for part in relative_path.replace("\\", "/").split("/")
+            if part not in ("", ".")
+        ]
+        if not parts:
+            raise ValueError("Invalid relative path")
+        root = safe_path_component(root_name)
+        dest_path = safe_join(str(dest_path_obj), root, *parts)
+        rel_name = f"{root}/{Path(*parts).as_posix()}"
+    else:
+        # Strip any path components so a hostile client header cannot escape dest_dir
+        original_filename = safe_path_component(original_filename)
+        subdir = dest_path_obj / uuid.uuid4().hex
+        dest_path = subdir / original_filename
+        rel_name = f"{subdir.name}/{original_filename}"
 
-    # Save with original filename: dest_dir/uuid/original_filename
-    # Strip any path components so a hostile client header cannot escape dest_dir
-    original_filename = safe_path_component(original_filename)
-    dest_path = subdir / original_filename
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
     with open(dest_path, "wb") as f:
         shutil.copyfileobj(stream, f, length=1024 * 1024)
-
-    # Return the relative unique name (uuid/original_filename)
-    rel_name = f"{file_uuid}/{original_filename}"
-    size = dest_path.stat().st_size
-    return rel_name, size
+    return rel_name, dest_path.stat().st_size
 
 
 def make_uuid_filename(dest_dir: str, original_filename: str) -> str:

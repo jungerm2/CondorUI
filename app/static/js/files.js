@@ -74,7 +74,7 @@ function updateSelectionUI() {
 // Get sortable value for a file
 function getFileSortValue(item, field) {
     switch (field) {
-        case 'original_name': return (item.original_name || '').toLowerCase();
+        case 'original_name': return (item.display_name || item.original_name || '').toLowerCase();
         case 'size': return item.size || 0;
         case 'uploaded_at': return item.uploaded_at || 0;
         case 'location': return item.osdf_path ? 'osdf' : 'local';
@@ -93,7 +93,7 @@ function renderFiles() {
     // Apply search filter
     const query = $('#file-search') ? $('#file-search').value : '';
     let filtered = filterData(currentFiles, query, [
-        item => item.original_name,
+        item => item.display_name || item.original_name,
         item => item.osdf_path ? 'OSDF' : 'Local',
     ]);
 
@@ -125,7 +125,7 @@ function renderFiles() {
             <td style="text-align: center;">
                 <input type="checkbox" class="file-row-checkbox" data-file-filename="${escHtml(f.filename)}" ${isChecked ? 'checked' : ''}>
             </td>
-            <td class="monospace">${escHtml(f.original_name)}</td>
+            <td class="monospace">${escHtml(f.display_name || f.original_name)}</td>
             <td>${formatFileSize(f.size)}</td>
             <td>${formatDate(f.uploaded_at)}</td>
             <td><span class="badge ${locationClass}">${locationLabel}</span></td>
@@ -170,7 +170,7 @@ function renderFiles() {
     tbody.querySelectorAll('.file-preview-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const f = currentFiles.find(item => item.filename === btn.dataset.filename);
-            const name = f ? f.original_name : btn.dataset.filename;
+            const name = f ? (f.display_name || f.original_name) : btn.dataset.filename;
             openFilePreview({
                 name,
                 previewUrl: `/api/files/${btn.dataset.filename.split('/').map(encodeURIComponent).join('/')}/preview`,
@@ -206,14 +206,14 @@ async function handleBulkDownload() {
 // Upload with per-file progress bars and cancel
 // ---------------------------------------------------------------------------
 
-function createProgressItem(file) {
+function createProgressItem(file, displayName = file.name) {
     const container = document.createElement('div');
     container.className = 'upload-progress-item';
     container.id = `upload-progress-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
     container.innerHTML = `
         <div class="upload-progress-header">
-            <span class="upload-progress-filename" title="${escHtml(file.name)}">${escHtml(file.name)}</span>
+            <span class="upload-progress-filename" title="${escHtml(displayName)}">${escHtml(displayName)}</span>
             <button class="btn btn-ghost btn-sm upload-cancel-btn" title="Cancel upload" style="padding: 2px 6px; flex-shrink: 0;">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                     <line x1="18" y1="6" x2="6" y2="18" />
@@ -238,12 +238,17 @@ function getFileConflicts(files) {
 }
 
 // Upload files — each file sent as raw request body, each with its own progress bar
-async function handleUpload(files) {
+async function handleUpload(files, { folder = false } = {}) {
     const fileList = Array.from(files);
     if (fileList.length === 0) return;
 
-    // Check for conflicts with existing files
-    const conflicts = getFileConflicts(fileList);
+    const batch = folder
+        ? (crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '') : Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join(''))
+        : null;
+
+    // Folder uploads get a fresh batch root, so they cannot collide with
+    // existing top-level filenames.
+    const conflicts = folder ? [] : getFileConflicts(fileList);
     if (conflicts.length > 0) {
         const detail = conflicts.slice(0, 5).join(', ');
         const suffix = conflicts.length > 5 ? `, and ${conflicts.length - 5} more...` : '';
@@ -269,6 +274,8 @@ async function handleUpload(files) {
     selectedFileFilenames.clear();
 
     dropzone.style.display = 'none';
+    const folderRow = $('#file-folder-row');
+    if (folderRow) folderRow.style.display = 'none';
     progressList.style.display = 'block';
     progressList.innerHTML = '';
 
@@ -278,10 +285,14 @@ async function handleUpload(files) {
     const overwrite = conflicts.length > 0;
 
     // Create a progress item for each file
-    const progressItems = fileList.map(file => {
-        const item = createProgressItem(file);
+    const uploadItems = fileList.map(file => ({
+        file,
+        relativePath: folder ? (file.webkitRelativePath || file.name) : file.name,
+    }));
+    const progressItems = uploadItems.map(({ file, relativePath }) => {
+        const item = createProgressItem(file, relativePath);
         progressList.appendChild(item);
-        return { file, item, aborted: false };
+        return { file, relativePath, item, aborted: false };
     });
 
     // Add a cancel-all button if multiple files
@@ -298,17 +309,24 @@ async function handleUpload(files) {
     beginNavigationGuard('File upload is still in progress. Are you sure you want to leave?');
 
     // Upload each file in parallel
-    const uploadPromises = progressItems.map(({ file, item }) => {
+    const uploadPromises = progressItems.map(({ file, relativePath, item }) => {
         const progressFill = item.querySelector('.progress-bar-fill');
         const progressText = item.querySelector('.progress-text');
         const cancelBtn = item.querySelector('.upload-cancel-btn');
 
         const onProgress = createProgressTracker(progressFill, progressText);
+        const headers = {
+            ...(overwrite ? { 'X-Overwrite': 'true' } : {}),
+            ...(batch ? {
+                'X-Upload-Batch': batch,
+                'X-Upload-Relative-Path': encodeURIComponent(relativePath),
+            } : {}),
+        };
 
         const { promise, abort } = uploadFileRaw(file, '/api/files', {
             filenameHeader: 'X-Upload-Filename',
             onProgress,
-            extraHeaders: overwrite ? { 'X-Overwrite': 'true' } : {},
+            extraHeaders: headers,
         });
 
         // Store abort for cancel-all
@@ -338,7 +356,7 @@ async function handleUpload(files) {
             progressText.textContent = `Failed: ${err.message}`;
             progressText.classList.add('progress-error');
             cancelBtn.disabled = true;
-            toast(`Failed to upload '${file.name}': ${err.message}`, 'error');
+            toast(`Failed to upload '${relativePath}': ${err.message}`, 'error');
         });
     });
 
@@ -369,6 +387,7 @@ async function handleUpload(files) {
         setTimeout(() => {
             progressList.style.display = 'none';
             dropzone.style.display = '';
+            if (folderRow) folderRow.style.display = 'flex';
         }, 4000);
         await loadFiles();
     } else if (failCount > 0) {
@@ -585,6 +604,18 @@ function initUploadDropzone() {
             fileInput.value = '';
         }
     });
+
+    const folderInput = $('#file-folder-input');
+    const folderBtn = $('#file-folder-btn');
+    if (folderInput && folderBtn) {
+        folderBtn.addEventListener('click', () => folderInput.click());
+        folderInput.addEventListener('change', () => {
+            if (folderInput.files.length) {
+                handleUpload(folderInput.files, { folder: true });
+                folderInput.value = '';
+            }
+        });
+    }
 }
 
 document.addEventListener('DOMContentLoaded', () => {

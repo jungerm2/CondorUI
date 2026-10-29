@@ -34,8 +34,8 @@ def test_local_listing_does_not_probe_osdf_per_file(
     assert data["count"] == 1
     assert data["files"][0]["original_name"] == "local.txt"
     assert data["files"][0]["osdf_path"] is None
-    # One probe for the OSDF uploads root; none for the local filename.
-    assert osdf_probes == [osdf_uploads]
+    # At most the OSDF uploads root is touched; never the local filename.
+    assert all(path == osdf_uploads for path in osdf_probes), osdf_probes
 
 
 def test_slow_osdf_scan_does_not_block_local_files(

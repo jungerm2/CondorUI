@@ -156,7 +156,7 @@ async function loadServerFiles() {
                 </svg>
             </div>
             <div class="submit-file-info">
-                <span class="submit-file-name monospace">${escHtml(f.original_name)}</span>
+                <span class="submit-file-name monospace">${escHtml(f.display_name || f.original_name)}</span>
                 <span class="submit-file-meta">${formatFileSize(f.size)} · ${locationLabel}</span>
             </div>
         `;
