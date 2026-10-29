@@ -3,6 +3,35 @@
 import time
 from pathlib import Path
 
+import pytest
+from werkzeug.exceptions import ClientDisconnected
+
+from app.utils import save_uploaded_stream
+
+
+class _DisconnectingStream:
+    def __init__(self):
+        self._read_once = False
+
+    def read(self, _size):
+        if not self._read_once:
+            self._read_once = True
+            return b"partial"
+        raise ClientDisconnected()
+
+
+def test_cancelled_upload_leaves_no_partial_file(tmp_path):
+    with pytest.raises(ClientDisconnected):
+        save_uploaded_stream(
+            _DisconnectingStream(),
+            str(tmp_path),
+            "file.bin",
+            root_name="inputs",
+            relative_path="nested/file.bin",
+        )
+
+    assert not any(path.is_file() for path in tmp_path.rglob("*"))
+
 
 def test_slow_container_scan_returns_pending(secure_app, secure_client, monkeypatch):
     containers_dir = str(Path(secure_app.config["OSDF_ROOT_PATH"]) / "containers")

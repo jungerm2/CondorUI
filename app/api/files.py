@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from flask import abort, current_app, jsonify, request, send_file
+from werkzeug.exceptions import ClientDisconnected
 
 from app.api import api_bp
 from app.api.helpers import (
@@ -238,6 +239,9 @@ def upload_files():
                 "uploaded_at": upload_path.stat().st_mtime,
             }
         ), 201
+    except ClientDisconnected:
+        logger.info("File upload cancelled by client")
+        return "", 499
     except Exception:
         logger.exception("File upload failed")
         return jsonify({"error": "File upload failed"}), 500

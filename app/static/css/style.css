@@ -1747,6 +1747,10 @@ details.card[open] .card-body {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
     margin-bottom: 8px;
+    transition: opacity 0.3s ease;
+}
+.upload-progress-item.upload-dismissing {
+    opacity: 0;
 }
 
 /* Header row: filename + cancel button */

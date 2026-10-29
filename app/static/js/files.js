@@ -383,17 +383,35 @@ async function handleUpload(files, { folder = false } = {}) {
 
     const dropzone = $('#file-dropzone');
     const progressList = $('#file-upload-progress-list');
+    const folderBtn = $('#file-folder-btn');
+    const cancelAllBtn = $('#file-cancel-all-btn');
 
     // Clear any previous selection when starting a new upload
     selectedFileFilenames.clear();
 
     dropzone.style.display = 'none';
-    const folderRow = $('#file-folder-row');
-    if (folderRow) folderRow.style.display = 'none';
+    if (folderBtn) folderBtn.style.display = 'none';
     progressList.style.display = 'block';
     progressList.innerHTML = '';
 
     uploadAbortControllers = [];
+
+    // Completed rows disappear on their own; failed rows stay visible.
+    const restoreUploadUI = () => {
+        progressList.style.display = 'none';
+        dropzone.style.display = '';
+        if (folderBtn) folderBtn.style.display = '';
+        if (cancelAllBtn) cancelAllBtn.style.display = 'none';
+    };
+    const dismissItem = (item) => {
+        setTimeout(() => {
+            item.classList.add('upload-dismissing');
+            setTimeout(() => {
+                item.remove();
+                if (!progressList.querySelector('.upload-progress-item')) restoreUploadUI();
+            }, 300);
+        }, 1500);
+    };
 
     // Determine if we need to use overwrite mode
     const overwrite = folder || conflicts.length > 0;
@@ -412,12 +430,16 @@ async function handleUpload(files, { folder = false } = {}) {
         return { file, relativePath, uploadPath, item, aborted: false };
     });
 
-    // Add a cancel-all button if multiple files
-    if (fileList.length > 1) {
-        const cancelAllRow = document.createElement('div');
-        cancelAllRow.className = 'upload-progress-cancel-all';
-        cancelAllRow.innerHTML = `<button class="btn btn-ghost btn-sm" id="cancel-all-uploads-btn">Cancel All</button>`;
-        progressList.appendChild(cancelAllRow);
+    if (cancelAllBtn) {
+        cancelAllBtn.style.display = fileList.length > 1 ? '' : 'none';
+        cancelAllBtn.disabled = false;
+        cancelAllBtn.textContent = 'Cancel All';
+        cancelAllBtn.onclick = () => {
+            uploadAbortControllers.forEach(abort => abort());
+            uploadAbortControllers = [];
+            cancelAllBtn.disabled = true;
+            cancelAllBtn.textContent = 'Cancelling...';
+        };
     }
 
     let successCount = 0;
@@ -464,6 +486,7 @@ async function handleUpload(files, { folder = false } = {}) {
             progressText.textContent = 'Complete';
             progressText.classList.add('progress-success');
             cancelBtn.disabled = true;
+            dismissItem(item);
         }).catch((err) => {
             if (err.name === 'AbortError') {
                 // Already handled by cancel button
@@ -477,17 +500,6 @@ async function handleUpload(files, { folder = false } = {}) {
         });
     });
 
-    // Cancel-all handler
-    const cancelAllBtn = $('#cancel-all-uploads-btn');
-    if (cancelAllBtn) {
-        cancelAllBtn.addEventListener('click', () => {
-            uploadAbortControllers.forEach(abort => abort());
-            uploadAbortControllers = [];
-            cancelAllBtn.disabled = true;
-            cancelAllBtn.textContent = 'Cancelling...';
-        });
-    }
-
     // Wait for all uploads to finish
     try {
         await Promise.all(uploadPromises);
@@ -496,19 +508,18 @@ async function handleUpload(files, { folder = false } = {}) {
     }
 
     uploadAbortControllers = [];
+    if (cancelAllBtn) cancelAllBtn.style.display = 'none';
+    if (folderBtn) folderBtn.style.display = '';
 
-    const totalFiles = fileList.length;
     if (successCount > 0) {
         const msg = `Uploaded ${successCount} file(s)` + (failCount > 0 ? ` (${failCount} failed)` : '');
         toast(msg);
-        setTimeout(() => {
-            progressList.style.display = 'none';
-            dropzone.style.display = '';
-            if (folderRow) folderRow.style.display = 'flex';
-        }, 4000);
         await loadFiles();
     } else if (failCount > 0) {
         toast(`All ${failCount} upload(s) failed`, 'error');
+    }
+    if (failCount > 0 || (successCount === 0 && failCount === 0)) {
+        dropzone.style.display = '';
     }
     // If all were cancelled, just leave the UI showing cancelled state
 }

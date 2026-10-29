@@ -236,8 +236,14 @@ def save_uploaded_stream(
         rel_name = f"{subdir.name}/{original_filename}"
 
     dest_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(dest_path, "wb") as f:
-        shutil.copyfileobj(stream, f, length=1024 * 1024)
+    temporary = dest_path.with_name(f".{dest_path.name}.{uuid.uuid4().hex}.part")
+    try:
+        with open(temporary, "wb") as f:
+            shutil.copyfileobj(stream, f, length=1024 * 1024)
+        temporary.replace(dest_path)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
     return rel_name, dest_path.stat().st_size
 
 
