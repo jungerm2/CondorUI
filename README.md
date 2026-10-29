@@ -36,6 +36,9 @@ will show a "daemon unavailable" notice rather than failing.
   attribute, with autocomplete drawn from the job's live ClassAd.
 - **Job Submission** — three modes: Form Builder, Raw `.sub` editor, or upload a
   `.sub` file. Supports shell commands, itemdata (`queue from`), and output remaps.
+- **Renders** — dedicated page for visionsim renders: single-camera, multi-camera
+  grids, and batch submission of staged blend files (client-side split calculator
+  and editable JSON submit payload; uses the standard submit pipeline).
 - **Templates** — save, load, edit, download, and delete reusable submit descriptions.
 - **Job Details** — per-process ClassAd attributes plus log / stdout / stderr
   tailing and download.

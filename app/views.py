@@ -41,6 +41,12 @@ def containers_page():
     return render_template("containers.html", active_page="containers")
 
 
+@views_bp.route("/renders")
+def renders_page():
+    """Serve the renders page (client-side only)."""
+    return render_template("renders.html", active_page="renders")
+
+
 @views_bp.route("/history")
 def history_page():
     """Redirect to dashboard (history is now merged into the dashboard page)."""
