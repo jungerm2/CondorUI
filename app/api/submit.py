@@ -54,9 +54,9 @@ def submit():
                 "message": f"Submitted cluster {cluster_id} with {num_procs} proc(s)",
             }
         ), 201
-    except Exception:
+    except Exception as exc:
         logger.exception("Job submission failed")
-        return jsonify({"error": "Job submission failed"}), 500
+        return jsonify({"error": f"Job submission failed: {exc}"}), 500
 
 
 @api_bp.route("/submit/file", methods=["POST"])
@@ -83,6 +83,6 @@ def submit_file():
                 "message": f"Submitted cluster {cluster_id} with {num_procs} proc(s)",
             }
         ), 201
-    except Exception:
+    except Exception as exc:
         logger.exception("Job submission from file failed")
-        return jsonify({"error": "Job submission failed"}), 500
+        return jsonify({"error": f"Job submission failed: {exc}"}), 500
