@@ -1,0 +1,18 @@
+# Credential placeholder for remote/API job submissions.
+#
+# The HTCondor Python bindings cannot run the OAuth device flow that
+# condor_submit performs, so jobs referencing osdf:// or pelican:// URLs only
+# get valid credentials while a credential-producing job is already queued.
+# Keep this held job in the queue by running, on the access point:
+#
+#     condor_submit placeholder.sub
+#
+# It stays held (JobStatus 5) forever. The dashboard hides it unless you search
+# for "placeholder"; do not remove it while the web UI is in use.
+batch_name = placeholder
+shell = sleep 300
+hold = true
+request_cpus = 1
+request_disk = 1 MB
+request_memory = 1 MB
+queue

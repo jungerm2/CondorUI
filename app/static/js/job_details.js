@@ -70,7 +70,15 @@ async function loadJobDetails() {
         $('#meta-cpus').textContent = job.RequestCpus || '—';
         $('#meta-memory').textContent = formatMemory(job.RequestMemory);
         $('#meta-disk').textContent = formatDisk(job.RequestDisk);
-        $('#meta-hold-reason').textContent = job.HoldReason || '—';
+        const holdReason = job.HoldReason || '';
+        const holdEl = $('#meta-hold-reason');
+        if (/credentials are not available/i.test(holdReason)) {
+            holdEl.innerHTML = `${escHtml(holdReason)}
+                <span class="info-icon" tabindex="0"
+                    data-tip="The Python bindings cannot refresh OAuth credentials. On the AP, run: condor_submit placeholder.sub">?</span>`;
+        } else {
+            holdEl.textContent = holdReason || '—';
+        }
         $('#meta-exit-code').textContent = job.ExitCode !== undefined ? job.ExitCode : '—';
 
         // Parse logs for usage data
