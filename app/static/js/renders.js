@@ -389,6 +389,12 @@ function addConfigArg(args, key, value) {
     args.push(`--${fullKey.replace(/_/g, '-')}=${value}`);
 }
 
+// tyro booleans are bare flags: --config.include-frames (never =True)
+function addConfigFlag(args, key) {
+    const fullKey = key.startsWith('config.') ? key : 'config.' + key;
+    args.push(`--${fullKey.replace(/_/g, '-')}`);
+}
+
 function buildConfigArgs() {
     const args = [];
     const firstNonEmpty = (id) => {
@@ -419,7 +425,7 @@ function buildConfigArgs() {
         '#renders-pass-points': 'include_points',
     };
     for (const [id, key] of Object.entries(passToFlag)) {
-        if ($(id).checked) addConfigArg(args, key, 'True');
+        if ($(id).checked) addConfigFlag(args, key);
     }
     // Advanced passthrough: one key = value per line
     $('#renders-passthrough').value.split('\n').map(l => l.trim())
