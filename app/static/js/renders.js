@@ -210,9 +210,10 @@ function renderBlendList() {
 function resolveExecName() {
     // The mode determines the executable; the dropdown was removed — tabs are
     // the single source of truth so "executable" can't contradict the mode.
-    const wanted = rendersMode === 'multi' ? 'render_multicam.py' : 'render.py';
+    const wanted = rendersMode === 'multi' ? 'render_multicam.py'
+        : rendersMode === 'playblast' ? 'playblast.py' : 'render.py';
     const match = renderExecutables.find(ex => ex.filename === wanted)
-        || renderExecutables.find(ex => /^render(_multicam)?\.py$/.test(ex.filename));
+        || renderExecutables.find(ex => /^(render(_multicam)?|playblast)\.py$/.test(ex.filename));
     return match ? 'executables/' + match.filename : '';
 }
 
@@ -272,7 +273,7 @@ function validateSplit() {
         info = hasRange
             ? `Playblast frames [${fs2}, ${fe2}] (${fe2 - fs2 + 1} frame(s), k=${k})`
             : "Playblast over the .blend file's own frame range";
-        info += ' · one job per selected file — no dry-run proc, no ground truth';
+        info += ' · one proc per selected file, all in one cluster — no dry-run, no ground truth';
     } else if (!hasRange) {
         info = 'Set a frame start and end to see the proc split.';
     } else {
@@ -456,20 +457,31 @@ function buildPayloads() {
     const researchdrive = $('#renders-researchdrive').value.trim();
     const rdSubdir = $('#renders-rd-subdir').value.trim().replace(/^\/+|\/+$/g, '');
     const rdRemap = $('#renders-rd-remap').checked && researchdrive;
-    const tarball = 'renders_$INT(ProcId,%05d).tar.gz';
     const frameStart = $('#renders-frame-start').value.trim();
     const frameEnd = $('#renders-frame-end').value.trim();
     const isPlayblast = rendersMode === 'playblast';
     const playblastVideo = $('#renders-playblast-video').checked;
+    const stem = (entry) => blendBaseName(entry.display_name).replace(/\.[^.]+$/, '');
+    // Playblasts bundle into their own tarball name so they never collide with
+    // render tarballs in the same output directory.
+    const tarball = isPlayblast
+        ? 'playblast_$INT(ProcId,%05d).tar.gz'
+        : 'renders_$INT(ProcId,%05d).tar.gz';
 
-    const makeSubmit = (entry, cliArgs) => {
+    // Config flags shared by every mode, plus the frame range and debug blend.
+    const commonArgs = () => {
+        const args = buildConfigArgs();
+        if (frameStart !== '') args.push(`--frame-start=${frameStart}`);
+        if (frameEnd !== '') args.push(`--frame-end=${frameEnd}`);
+        if (debugOut) args.push(`--output-file=${debugOut}`);
+        return args;
+    };
+
+    const makeSubmit = (extra) => {
         const submit = {
             universe: 'container',
             executable: exec,
             transfer_executable: 'True',
-            arguments: [quoteArg(blendBaseName(entry.display_name)), '--procid=$(ProcId)', `--jobs=${isPlayblast ? 1 : jobs}`, ...cliArgs.map(quoteArg)].join(' '),
-            // htcondor.Submit requires every value to be a string
-            transfer_input_files: entry.uri,
             request_cpus: String(cpus),
             request_memory: memory,
             request_disk: disk,
@@ -478,13 +490,13 @@ function buildPayloads() {
             log: '$(LogsDir)/$INT(ClusterId,%08d)/$INT(ProcId,%05d).log',
             transfer_output_files: tarball,
             output_directory: outputDir,
+            ...extra,
         };
-        submit.SceneName = blendBaseName(entry.display_name).replace(/\.[^.]+$/, '');
         if (container) submit.container_image = container;
         if (researchdrive) submit.ResearchDrive = researchdrive;
         if (rdRemap) {
-            // Include the cluster id: proc ids repeat across clusters, so a
-            // batch would otherwise overwrite each other's tarballs.
+            // Cluster-scoped: proc ids repeat across clusters, so a batch would
+            // otherwise overwrite each other's tarballs.
             const dest = rdSubdir ? `${rdSubdir}/` : '';
             submit.transfer_output_remaps =
                 `${tarball} = $(ResearchDrive)/${dest}$INT(ClusterId,%08d)/${tarball}`;
@@ -494,21 +506,49 @@ function buildPayloads() {
         return submit;
     };
 
-    return selectedBlendEntries().map((entry) => {
-        const cliArgs = buildConfigArgs();
-        if (frameStart !== '') cliArgs.push(`--frame-start=${frameStart}`);
-        if (frameEnd !== '') cliArgs.push(`--frame-end=${frameEnd}`);
-        if (isPlayblast) {
-            cliArgs.unshift('--playblast');
-            if (!playblastVideo) cliArgs.push('--no-video');
-        } else if (rendersMode === 'multi') {
+    const entries = selectedBlendEntries();
+
+    if (isPlayblast) {
+        // One cluster, one proc per scene: item data supplies each proc's blend.
+        if (entries.length === 0) return [];
+        const args = ['"$(input_name)"', '--procid=$(ProcId)', ...commonArgs().map(quoteArg)];
+        if (!playblastVideo) args.push('--no-video');
+        const itemdata = entries.map(entry => ({
+            input_uri: entry.uri,
+            input_name: blendBaseName(entry.display_name),
+            SceneName: stem(entry),
+        }));
+        return [{
+            name: entries.length > 1 ? `${nameBase} (${entries.length} playblasts)` : nameBase,
+            submit: makeSubmit({
+                arguments: args.join(' '),
+                transfer_input_files: '$(input_uri)',
+            }),
+            count: entries.length,
+            itemdata,
+        }];
+    }
+
+    return entries.map(entry => {
+        const cliArgs = commonArgs();
+        if (rendersMode === 'multi') {
             cliArgs.unshift(`--rows=${$('#renders-rows').value}`, `--cols=${$('#renders-cols').value}`,
                 `--spacing=${$('#renders-spacing').value || '0.0'}`);
         }
-        if (debugOut) cliArgs.push(`--output-file=${debugOut}`);
+        const args = [
+            quoteArg(blendBaseName(entry.display_name)),
+            '--procid=$(ProcId)',
+            `--jobs=${jobs}`,
+            ...cliArgs.map(quoteArg),
+        ].join(' ');
+        const submit = makeSubmit({
+            arguments: args,
+            transfer_input_files: entry.uri,
+            SceneName: stem(entry),
+        });
         const name = isMultiSelectMode()
             ? `${nameBase} — ${blendBaseName(entry.display_name)}` : nameBase;
-        return { name, submit: makeSubmit(entry, cliArgs), count: isPlayblast ? 1 : jobs };
+        return { name, submit, count: jobs };
     });
 }
 
@@ -517,7 +557,7 @@ function buildPayloads() {
 function validateForm() {
     const errors = [...new Set(validateSplit())];
 
-    if (!resolveExecName()) errors.push('No staged render executable (upload render.py / render_multicam.py on the Executables page)');
+    if (!resolveExecName()) errors.push('No staged render executable (upload render.py / render_multicam.py / playblast.py on the Executables page)');
     if (!$('#renders-container').value) errors.push('No container image selected');
     if ($('#renders-rd-remap').checked && !$('#renders-researchdrive').value.trim()) {
         errors.push('ResearchDrive base is required when redirecting tarballs');
@@ -535,7 +575,7 @@ function validateForm() {
         else byBase.set(base, [f]);
     }
     const dupes = [...byBase.entries()].filter(([, fs2]) => fs2.length > 1);
-    if (dupes.length > 0) {
+    if (dupes.length > 0 && rendersMode !== 'playblast') {
         errors.push(`Duplicate file name(s) selected — they would overwrite each other in the job sandbox: ${dupes.map(([b]) => b).join(', ')}`);
     }
     const allErrors = [...new Set(errors)];
@@ -558,7 +598,11 @@ function updateBatchEstimate() {
         el.textContent = '';
         return;
     }
-    const procs = rendersMode === 'playblast' ? 1 : (parseInt($('#renders-jobs').value) || 0);
+    if (rendersMode === 'playblast') {
+        el.textContent = `1 cluster(s) · ${n} proc(s)`;
+        return;
+    }
+    const procs = parseInt($('#renders-jobs').value) || 0;
     el.textContent = `${n} cluster(s) · ${n * procs} proc(s)`;
 }
 
@@ -675,7 +719,7 @@ async function submitPayloads(payloads) {
         try {
             const res = await api('/submit', {
                 method: 'POST',
-                body: JSON.stringify({ name: p.name, submit: p.submit, count: p.count }),
+                body: JSON.stringify({ name: p.name, submit: p.submit, count: p.count, itemdata: p.itemdata }),
             });
             setStatusRow(i, `Submitted <a href="/job/${res.cluster_id}"
                 style="color: var(--accent-cyan);">cluster ${res.cluster_id}</a>

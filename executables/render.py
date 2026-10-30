@@ -5,10 +5,6 @@ ProcId 0 is the dry-run over the full range; the remaining jobs-1 procs render
 contiguous subranges of [frame-start, frame-end] and package their outputs as
 ``renders_<procid>.tar.gz`` for HTCondor.
 
-``--playblast`` switches to visionsim's fast viewport preview instead: it runs
-as a single job per cluster (no dry-run, no frame splitting), writes
-``playblast/`` inside the output dir, and ignores the ground-truth passes.
-
 If the render fails, the exception propagates and no tarball is produced, so
 HTCondor surfaces the failure directly in stderr.
 
@@ -32,7 +28,7 @@ import sys
 from pathlib import Path
 
 import tyro
-from visionsim.cli.blender import render_animation, render_playblast
+from visionsim.cli.blender import render_animation
 from visionsim.simulate.config import RenderConfig
 
 FRAME_LIMIT = 1_048_574  # Blender's hard frame-number limit
@@ -64,8 +60,6 @@ def render(
     frame_end: int | None = None,
     output_file: Path | None = None,
     renders_dir: Path = Path("renders"),
-    playblast: bool = False,
-    video: bool = True,
 ) -> None:
     """Render one frame subrange of a blend-file via visionsim.
 
@@ -77,34 +71,25 @@ def render(
         procid: HTCondor ProcId within the cluster; ProcId 0 is the dry-run.
         jobs: Total number of procs: 1 dry-run plus jobs-1 renderers.
         frame_start: Start of the frame range (original blend-file numbering).
-            Required for renders; omit on a playblast to use the .blend's own range.
         frame_end: End of the frame range (original blend-file numbering).
-            Required for renders; omit on a playblast to use the .blend's own range.
         renders_dir: Dataset output directory for this proc.
         output_file: If set, write the configured blend-file here for troubleshooting.
+            Only the dry-run proc writes one; the render procs would be identical.
         config: Render configuration; same fields and flags as
             ``vsim blender.render-animation``.
-        playblast: Render a fast viewport preview instead of ground truth. Runs as
-            one job per cluster (``jobs`` is ignored); output lands in
-            ``renders_dir/playblast/``.
-        video: Playblast only. Encode an ``.mp4``; false writes a PNG sequence
-            plus ``transforms.db``.
     """
-    if not playblast:
-        if jobs < 2:
-            sys.exit("error: --jobs must be at least 2 (1 dry-run + at least 1 renderer)")
-        if not 0 <= procid < jobs:
-            sys.exit(f"error: --procid must be within [0, {jobs - 1}]")
-        if frame_start is None or frame_end is None:
-            sys.exit("error: --frame-start and --frame-end are required for renders")
-    if frame_end is not None and frame_end >= FRAME_LIMIT:
+    if jobs < 2:
+        sys.exit("error: --jobs must be at least 2 (1 dry-run + at least 1 renderer)")
+    if not 0 <= procid < jobs:
+        sys.exit(f"error: --procid must be within [0, {jobs - 1}]")
+    if frame_start is None or frame_end is None:
+        sys.exit("error: --frame-start and --frame-end are required")
+    if frame_end >= FRAME_LIMIT:
         sys.exit(f"error: --frame-end {frame_end} reaches Blender's {FRAME_LIMIT} frame limit")
 
     fs, fe = frame_start, frame_end
     k = config.keyframe_multiplier
     if k != 1.0:
-        if fs is None or fe is None:
-            sys.exit("error: --config.keyframe-multiplier needs an explicit frame range")
         if k <= 0:
             sys.exit(f"error: --config.keyframe-multiplier must be positive, got {k}")
         fs, fe = scale_frame_range(fs, fe, k)
@@ -117,22 +102,10 @@ def render(
             )
         print(f"keyframe-multiplier={k}: rendering scaled frame range [{fs}, {fe}]")
 
-    if output_file is not None:
+    if output_file is not None and procid == 0:
         output_file.parent.mkdir(parents=True, exist_ok=True)
 
-    if playblast:
-        # Playblasts always run as a single job (visionsim forces it): no
-        # dry-run proc, no frame splitting, and no ground-truth passes.
-        render_playblast(
-            blend_file,
-            renders_dir,
-            config=config,
-            frame_start=fs,
-            frame_end=fe,
-            video=video,
-            output_file=output_file,
-        )
-    elif procid == 0:
+    if procid == 0:
         render_animation(
             blend_file, renders_dir, config=config, output_file=output_file, dry_run=True
         )
@@ -144,25 +117,22 @@ def render(
             config=config,
             frame_start=start,
             frame_end=end,
-            # Every proc would write an identical debug blend; only the
-            # metadata (dry-run) proc keeps one, so skip it here.
             output_file=None,
             dry_run=False,
         )
 
-    # The debug blend is only produced by proc 0 (or the single playblast job).
-    # Bundle it into that proc's tarball so it transfers back with the outputs
-    # rather than being listed separately in transfer_output_files (which would
-    # fail on the procs that never write it).
-    if output_file is not None and (playblast or procid == 0) and output_file.exists():
-        renders_dir.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(output_file), renders_dir / output_file.name)
-
-    if not playblast and procid != 0:
+    if procid != 0:
         # transforms.db lives beside the outputs themselves (root, or
         # root/frames/ in this visionsim layout); drop them all
         for db in renders_dir.glob("**/transforms.db"):
             db.unlink(missing_ok=True)
+    else:
+        # The dry-run's debug blend rides in its tarball rather than being
+        # listed in transfer_output_files, which the other procs never write.
+        if output_file is not None and output_file.exists():
+            renders_dir.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(output_file), renders_dir / output_file.name)
+
     tar = subprocess.run(["tar", "-czf", f"renders_{procid:05d}.tar.gz", renders_dir], check=False)
     sys.exit(1 if tar.returncode else 0)
 

@@ -19,6 +19,7 @@ condor_job_logs/
 executables/*
 !executables/render.py
 !executables/render_multicam.py
+!executables/playblast.py
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
