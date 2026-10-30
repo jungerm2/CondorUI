@@ -511,7 +511,9 @@ function buildPayloads() {
     if (isPlayblast) {
         // One cluster, one proc per scene: item data supplies each proc's blend.
         if (entries.length === 0) return [];
-        const args = ['"$(input_name)"', '--procid=$(ProcId)', ...commonArgs().map(quoteArg)];
+        // Never let the arguments start with a quote: HTCondor's submit parser
+        // treats a leading quote as a fully-quoted value and rejects the rest.
+        const args = ['--procid=$(ProcId)', '"$(input_name)"', ...commonArgs().map(quoteArg)];
         if (!playblastVideo) args.push('--no-video');
         const itemdata = entries.map(entry => ({
             input_uri: entry.uri,
@@ -536,9 +538,9 @@ function buildPayloads() {
                 `--spacing=${$('#renders-spacing').value || '0.0'}`);
         }
         const args = [
-            quoteArg(blendBaseName(entry.display_name)),
             '--procid=$(ProcId)',
             `--jobs=${jobs}`,
+            quoteArg(blendBaseName(entry.display_name)),
             ...cliArgs.map(quoteArg),
         ].join(' ');
         const submit = makeSubmit({
