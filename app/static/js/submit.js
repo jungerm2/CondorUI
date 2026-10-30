@@ -521,6 +521,7 @@ function syncFormToRaw() {
     rawText += `\nqueue ${$('#job-count').value || '1'}\n`;
 
     $('#raw-submit-editor').value = rawText;
+    $('#raw-submit-editor').dispatchEvent(new Event('input'));
 }
 
 // Syncing Raw to Form
@@ -896,6 +897,7 @@ function checkSelectedTemplate() {
                 const rawBtn = $('#mode-raw-btn');
                 if (rawBtn) rawBtn.click();
                 $('#raw-submit-editor').value = submitStr;
+                $('#raw-submit-editor').dispatchEvent(new Event('input'));
                 $('#raw-job-name').value = tmpl.name;
             }
         } catch (e) {

@@ -470,6 +470,21 @@ function startDetailsAutoRefresh(statusVal) {
     }, 1000);
 }
 
+function formatSubmitValue(value) {
+    if (typeof value === 'boolean') return value ? 'true' : 'false';
+    if (Array.isArray(value)) return value.join(', ');
+    if (value === null || value === undefined) return '';
+    return String(value);
+}
+
+function submitDescriptionToText(parsed, numProcs) {
+    const lines = Object.entries(parsed)
+        .filter(([key]) => key !== 'queue')
+        .map(([key, value]) => `${key} = ${formatSubmitValue(value)}`);
+    const queue = parsed.queue ?? (numProcs || 1);
+    return `${lines.join('\n')}\n\nqueue ${queue}\n`;
+}
+
 /**
  * Load the submit file content for display in the Submit File tab.
  * Fetches it from the submissions API which queries the local DB.
@@ -484,16 +499,14 @@ async function loadSubmitFileContent(data) {
         const submission = (submissions.submissions || []).find(s => s.cluster_id === clusterId);
         if (submission && submission.submit_description) {
             let content = submission.submit_description;
-            // If it's a JSON object (from form builder), show the raw JSON
-            // (preserves comments and whitespace from the original submission)
+            // Form-built submissions store the dictionary as JSON; expand it
+            // into copy-pasteable submit-file syntax.
             if (content.trim().startsWith('{')) {
                 try {
-                    const parsed = JSON.parse(content);
-                    // Show the raw JSON string (formatted) rather than reconstructing
-                    // the .sub file, which would lose comments and whitespace
-                    content = JSON.stringify(parsed, null, 2);
+                    content = submitDescriptionToText(
+                        JSON.parse(content), submission.num_procs);
                 } catch {
-                    // Not JSON, show as-is (raw submit file content)
+                    // Not valid JSON; keep the stored text as-is.
                 }
             }
             outputEl.textContent = content;
