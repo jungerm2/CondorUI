@@ -438,10 +438,20 @@ function buildConfigArgs() {
 }
 
 // One entry per cluster submission: { name, submit, count }
-// HTCondor tokenizes `arguments` on whitespace, so any token carrying spaces
-// (camera offsets, debug paths, blend filenames) must be quoted.
-function quoteArg(token) {
-    return /\s/.test(token) ? `"${token.replace(/"/g, '\\"')}"` : token;
+// HTCondor's "new syntax" for arguments: the whole value is double-quoted,
+// arguments are space-separated, and single quotes group whitespace. This is
+// the only form that supports both spaces and quotes (the old syntax has no
+// grouping and rejects embedded double quotes).
+function buildArguments(tokens) {
+    const inner = tokens.map(token => {
+        const text = typeof token === 'string' ? token : token.text;
+        const force = typeof token === 'string' ? false : token.quote;
+        return (force || /\s/.test(text))
+            ? `'${text.replace(/'/g, "''")}'`
+            : text;
+    }).join(' ');
+    // Escape literal double quotes by doubling them (new-syntax rule).
+    return `"${inner.replace(/"/g, '""')}"`;
 }
 
 function buildPayloads() {
@@ -513,7 +523,9 @@ function buildPayloads() {
         if (entries.length === 0) return [];
         // Never let the arguments start with a quote: HTCondor's submit parser
         // treats a leading quote as a fully-quoted value and rejects the rest.
-        const args = ['--procid=$(ProcId)', '"$(input_name)"', ...commonArgs().map(quoteArg)];
+        // The blend name comes from item data and may contain spaces, so it is
+        // always single-quoted inside the double-quoted argument string.
+        const args = ['--procid=$(ProcId)', { text: '$(input_name)', quote: true }, ...commonArgs()];
         if (!playblastVideo) args.push('--no-video');
         const itemdata = entries.map(entry => ({
             input_uri: entry.uri,
@@ -523,7 +535,7 @@ function buildPayloads() {
         return [{
             name: entries.length > 1 ? `${nameBase} (${entries.length} playblasts)` : nameBase,
             submit: makeSubmit({
-                arguments: args.join(' '),
+                arguments: buildArguments(args),
                 transfer_input_files: '$(input_uri)',
             }),
             count: entries.length,
@@ -540,11 +552,11 @@ function buildPayloads() {
         const args = [
             '--procid=$(ProcId)',
             `--jobs=${jobs}`,
-            quoteArg(blendBaseName(entry.display_name)),
-            ...cliArgs.map(quoteArg),
-        ].join(' ');
+            blendBaseName(entry.display_name),
+            ...cliArgs,
+        ];
         const submit = makeSubmit({
-            arguments: args,
+            arguments: buildArguments(args),
             transfer_input_files: entry.uri,
             SceneName: stem(entry),
         });
