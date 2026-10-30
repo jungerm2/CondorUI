@@ -27,6 +27,18 @@
         flex-shrink: 0;
     }
     #panel-renders details.card summary.card-header h3 { margin: 0; }
+    /* Submission progress rides in the collapsed summary */
+    .renders-progress {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-left: auto;
+        min-width: 260px;
+        max-width: 420px;
+        flex: 1;
+    }
+    .renders-progress .progress-bar-container { flex: 1; margin: 0; }
+    .renders-progress .summary-hint { margin: 0; white-space: nowrap; }
     /* Split summary closes the Frames card as a footer band */    #renders-split-info {
         margin: 20px -20px -20px;
         padding: 12px 20px;
@@ -441,12 +453,24 @@
                 <textarea class="code-editor" id="renders-raw-editor" rows="8" spellcheck="false"></textarea>
             </div>
         </details>
+
+        <!-- Submission status: collapsed by default; progress lives in the header -->
+        <details class="card" id="renders-submit-status" style="display: none;">
+            <summary class="card-header">
+                <h3>Submission status</h3>
+                <div class="renders-progress">
+                    <div class="progress-bar-container">
+                        <div class="progress-bar-fill" id="renders-progress-fill" style="width: 0%;"></div>
+                    </div>
+                    <span class="summary-hint" id="renders-status-summary"></span>
+                </div>
+            </summary>
+            <div class="card-body" id="renders-status-list"></div>
+        </details>
+        <div id="renders-batch-errors" style="display: none;"></div>
         </div>
 
         <!-- Actions -->
-        <!-- Submission status: live per-cluster rows, replaces bottom-of-page log -->
-        <div class="submit-card" id="renders-submit-status" style="display: none;"></div>
-        <div id="renders-batch-errors" style="display: none;"></div>
         <div class="submit-actions">
             <p class="hint" id="renders-batch-estimate" style="margin: 0 auto 0 0; align-self: center;"></p>
             <button class="btn btn-primary btn-lg" id="renders-submit-btn">

@@ -694,15 +694,19 @@ async function submitRenders() {
 function showSubmitStatus(payloads) {
     const panel = $('#renders-submit-status');
     panel.style.display = '';
-    panel.innerHTML = `
-        <div class="submit-card-header"><h3 id="renders-status-title">Submitting…</h3></div>
-        <div class="submit-card-body" id="renders-status-list">
-            ${payloads.map((p, i) => `
-                <p class="hint" data-status-row="${i}">
-                    <span class="monospace">${escHtml(p.name)}</span> — queued
-                </p>`).join('')}
-        </div>`;
+    panel.open = false; // collapsed: the header carries the progress
+    $('#renders-status-list').innerHTML = payloads.map((p, i) => `
+        <p class="hint" data-status-row="${i}">
+            <span class="monospace">${escHtml(p.name)}</span> — queued
+        </p>`).join('');
+    setSubmitProgress(0, payloads.length);
     panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function setSubmitProgress(done, total, label = null) {
+    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+    $('#renders-progress-fill').style.width = `${pct}%`;
+    $('#renders-status-summary').textContent = label ?? `${done} / ${total}`;
 }
 
 function setStatusRow(i, html) {
@@ -713,7 +717,9 @@ function setStatusRow(i, html) {
 async function submitPayloads(payloads) {
     saveLastValues();
     showSubmitStatus(payloads);
+    const total = payloads.length;
     let failed = 0;
+    let done = 0;
     for (const [i, p] of payloads.entries()) {
         setStatusRow(i, `<span class="monospace">${escHtml(p.name)}</span> — submitting…`);
         try {
@@ -728,17 +734,18 @@ async function submitPayloads(payloads) {
             failed++;
             setStatusRow(i, `<span style="color: ${WARNING_COLOR};">Failed — ${escHtml(p.name)}: ${escHtml(err.message)}</span>`);
         }
+        done++;
+        setSubmitProgress(done, total);
     }
-    const title = $('#renders-status-title');
     if (failed === 0) {
-        title.textContent = `Submitted ${payloads.length} cluster(s)`;
-        $('#renders-status-list').insertAdjacentHTML('beforeend',
-            '<p class="hint">Opening the dashboard…</p>');
+        setSubmitProgress(total, total, `Submitted ${total} — opening the dashboard…`);
         setTimeout(() => { window.location.href = '/'; }, 1500);
     } else {
-        title.textContent = `Submitted with ${failed} failure(s)`;
+        // Expand on failure: the per-cluster errors are what the user needs.
+        $('#renders-submit-status').open = true;
         $('#renders-status-list').insertAdjacentHTML('beforeend',
             '<p class="hint">Fix the failures above and submit again — successful clusters are already queued.</p>');
+        setSubmitProgress(done, total, `Submitted with ${failed} failure(s)`);
         toast(`Submitted with ${failed} failure(s)`, 'warning');
     }
 }
