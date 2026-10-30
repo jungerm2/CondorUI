@@ -84,15 +84,23 @@ async function api(endpoint, options = {}) {
         ...options.headers
     };
 
-    // Add a 30-second timeout to prevent hanging
+    // A caller-supplied signal (e.g. bulk-delete cancel) must not disable the
+    // timeout: forward it into our controller instead of replacing the signal.
+    const callerSignal = options.signal;
+    const timeoutMs = options.timeoutMs ?? 30000;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    if (callerSignal) {
+        if (callerSignal.aborted) controller.abort();
+        else callerSignal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
 
+    const { signal: _signal, timeoutMs: _timeoutMs, ...fetchOptions } = options;
     try {
         const response = await fetch(url, {
-            ...options,
+            ...fetchOptions,
             headers,
-            signal: options.signal || controller.signal,
+            signal: controller.signal,
         });
         clearTimeout(timeoutId);
         const data = await response.json();
@@ -104,7 +112,9 @@ async function api(endpoint, options = {}) {
     } catch (error) {
         clearTimeout(timeoutId);
         if (error.name === 'AbortError') {
-            console.error(`API Timeout (${endpoint}): Request timed out after 30s`);
+            // Keep a user cancellation distinguishable from our own timeout.
+            if (callerSignal?.aborted) throw error;
+            console.error(`API Timeout (${endpoint}): Request timed out after ${timeoutMs}ms`);
             throw new Error('Request timed out. The server may be unavailable.');
         }
         console.error(`API Error (${endpoint}):`, error);
