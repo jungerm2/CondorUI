@@ -186,10 +186,19 @@ function formatResourceSummary(cpus, mem, disk, gpus) {
     return parts.length ? parts.join(', ') : '—';
 }
 
-function getFilteredJobs() {    const query = $('#job-search').value.toLowerCase().trim();
+function getFilteredJobs() {
+    const query = $('#job-search').value.toLowerCase().trim();
     const statusFilter = $('#status-filter').value;
 
     return currentJobs.filter(job => {
+        // The credential placeholder (see placeholder.sub) must stay queued, so
+        // keep it out of the default view where it could be bulk-removed.
+        // Searching for its name still reveals it.
+        if ((job.JobBatchName || '').toLowerCase() === 'placeholder'
+            && !query.includes('placeholder')) {
+            return false;
+        }
+
         // Status filter
         if (statusFilter && String(job.JobStatus) !== statusFilter) {
             return false;
